@@ -1,0 +1,22 @@
+{
+  "name": "UR5 ROS2 DevContainer",
+  "dockerComposeFile": ["../../setup/docker-compose.ros2.yaml"],
+  "service": "ros2",
+  "workspaceFolder": "/ros2_ws",
+  "overrideCommand": false,
+  "postCreateCommand": "./.devcontainer/ros2/setup_rosdep.sh",
+  "postStartCommand": "./.devcontainer/ros2/post_start.sh",
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "njpwerner.autodocstring"
+      ]
+    }
+  }
+}

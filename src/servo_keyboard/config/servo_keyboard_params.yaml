@@ -1,0 +1,6 @@
+/keyboard_servo:
+  ros__parameters:
+    joint_vel_cmd: 1.0
+    gripper_speed_multiplier: 0.02
+    gripper_lower_limit: 0.0
+    gripper_upper_limit: 0.7

@@ -1,0 +1,7 @@
+shoulder_pan_joint: 0.0                # Arm straight forward
+shoulder_lift_joint: -1.2              # Arm lowered a bit
+elbow_joint: 1.7                       # Forearm raised
+wrist_1_joint: -0.5                    # Wrist rotated to keep gripper vertical
+wrist_2_joint: -1.57                   # Gripper aligned vertically
+wrist_3_joint: 0.0                     # No twist
+finger_joint: 20.0                     # Preserved gripper value
