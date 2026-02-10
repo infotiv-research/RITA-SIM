@@ -1,0 +1,22 @@
+joy_node:
+  ros__parameters:
+    device_id: 0
+    deadzone: 0.1
+    autorepeat_rate: 20.0
+    coalesce_interval_ms: 1
+    sticky_buttons: false
+
+xbox_servo_node:
+  ros__parameters:
+    linear_speed_multiplier: 0.2
+    angular_speed_multiplier: 0.5
+    gripper_speed_multiplier: 0.02
+    gripper_lower_limit: 0.0
+    gripper_upper_limit: 0.7
+    use_fake_hardware: false
+    axis_linear_x: 1
+    axis_linear_y: 0
+    axis_linear_z_up: 5   # RT
+    axis_linear_z_down: 2 # LT
+    axis_angular_y: 4     # right stick vertical
+    axis_angular_z: 3     # right stick horizontal

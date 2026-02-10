@@ -1,0 +1,31 @@
+name: ros_stack     
+services:
+  ros2:
+    build:
+      context: .
+      dockerfile: ros2.Dockerfile
+      target: full-with-deps
+      args:
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    privileged: true
+    tty: true
+    stdin_open: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_GRAPHICSSYSTEM=native
+      - XAUTHORITY=/tmp/.docker.xauth
+      - USER_UID=${USER_UID:-1000}
+      - USER_GID=${USER_GID:-1000}
+    volumes:
+      - ..:/ros2_ws
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/tmp/.docker.xauth:rw
+      - ${HOME}/.gitconfig:/home/ros/.gitconfig:ro
+      - ${HOME}/.ssh:/home/ros/.ssh:ro
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/input/js0:/dev/input/js0
+      - /dev/input/js1:/dev/input/js1
+    user: "${USER_UID:-1000}:${USER_GID:-1000}"
+    shm_size: "2g"

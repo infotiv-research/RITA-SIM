@@ -1,0 +1,12 @@
+{
+    "name": "IsaacSim DevContainer",
+    "dockerComposeFile": ["../../setup/docker-compose.isaac.yaml"],
+    "service": "isaacsim",
+    "workspaceFolder": "/ros2_ws",
+    "overrideCommand": true,
+    "customizations": { "vscode": { "extensions": [
+      "ms-vscode.cpptools","ms-vscode.cmake-tools","ms-python.python","njpwerner.autodocstring"
+    ]}},
+    "remoteUser": "root"
+  }
+  

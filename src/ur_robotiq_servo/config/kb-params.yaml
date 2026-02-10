@@ -1,0 +1,6 @@
+keyboard_servo_node:
+    ros__parameters:
+      linear_speed_multiplier: 0.2
+      gripper_speed_multiplier: 0.02
+      gripper_lower_limit: 0.0
+      gripper_upper_limit: 0.70
