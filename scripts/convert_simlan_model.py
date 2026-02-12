@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a SIMLAN Gazebo model (SDF + DAE meshes) to USD for Isaac Sim.
+"""Convert a SIMLAN Gazebo model (SDF + mesh files) to USD for Isaac Sim.
 
 Usage (inside Isaac Sim Docker container):
     /isaac-sim/python.sh /ros2_ws/scripts/convert_simlan_model.py \
@@ -10,11 +10,11 @@ The script expects the SIMLAN model directory layout:
     <model_dir>/
         model.sdf
         meshes/
-            *.dae
+            *.dae / *.stl
 
 It produces:
     <output_dir>/
-        meshes/<mesh_name>.usd    (one per .dae mesh)
+        meshes/<mesh_name>.usd    (one per source mesh)
         <model_name>.usd          (composed asset with physics)
 """
 
@@ -22,6 +22,7 @@ import argparse
 import glob
 import os
 import re
+import struct
 import sys
 import xml.etree.ElementTree as ET
 
@@ -31,18 +32,35 @@ import xml.etree.ElementTree as ET
 _ISAAC_SIM = os.environ.get("ISAAC_PATH", "/isaac-sim")
 _usd_libs = glob.glob(os.path.join(_ISAAC_SIM, "extscache", "omni.usd.libs-*"))
 if _usd_libs and "pxr" not in sys.modules:
-    _usd_lib_dir = _usd_libs[0]
+    _usd_lib_dir = sorted(_usd_libs)[-1]
     if _usd_lib_dir not in sys.path:
         sys.path.insert(0, _usd_lib_dir)
-    _bin_dir = os.path.join(_usd_lib_dir, "bin")
-    if os.path.isdir(_bin_dir):
+    _candidate_lib_dirs = {
+        os.path.join(_usd_lib_dir, "lib"),
+        os.path.join(_usd_lib_dir, "bin"),
+        _usd_lib_dir,
+    }
+    # Some Isaac Sim builds place USD .so files in nested directories.
+    for _soname in ("libgf.so", "libtf.so", "libsdf.so"):
+        for _match in glob.glob(os.path.join(_usd_lib_dir, "**", _soname), recursive=True):
+            _candidate_lib_dirs.add(os.path.dirname(_match))
+
+    _existing_lib_dirs = sorted(d for d in _candidate_lib_dirs if os.path.isdir(d))
+    if _existing_lib_dirs:
         os.environ["LD_LIBRARY_PATH"] = (
-            _bin_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+            ":".join(_existing_lib_dirs) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
         )
-        # ctypes needs the path visible *now* for already-loaded libdl
+        # Preload core USD libs so dependent pxr modules resolve symbols.
         try:
             import ctypes
-            ctypes.CDLL(os.path.join(_bin_dir, "libtf.so"))
+            for _lib_dir in _existing_lib_dirs:
+                for _soname in ("libgf.so", "libtf.so"):
+                    _full = os.path.join(_lib_dir, _soname)
+                    if os.path.isfile(_full):
+                        try:
+                            ctypes.CDLL(_full)
+                        except OSError:
+                            pass
         except OSError:
             pass
 
@@ -273,14 +291,115 @@ def parse_dae(dae_path):
 
 
 # ---------------------------------------------------------------------------
+# STL parsing
+# ---------------------------------------------------------------------------
+
+def parse_stl(stl_path):
+    """Parse an STL file (ASCII or binary) and extract mesh data."""
+    with open(stl_path, "rb") as f:
+        data = f.read()
+
+    # Binary STL has exact length: 80-byte header + uint32 tri count + 50 bytes/tri
+    if len(data) >= 84:
+        tri_count = struct.unpack("<I", data[80:84])[0]
+        expected_size = 84 + tri_count * 50
+        if expected_size == len(data):
+            return _parse_binary_stl(data)
+
+    # Fallback to ASCII STL
+    text = data.decode("utf-8", errors="ignore")
+    if text.lstrip().startswith("solid"):
+        return _parse_ascii_stl(text)
+
+    raise ValueError(f"Unsupported or invalid STL file: {stl_path}")
+
+
+def _new_mesh_result():
+    return {
+        "vertices": [],
+        "normals": [],
+        "face_vertex_indices": [],
+        "face_normal_indices": [],
+        "face_vertex_counts": [],
+        "diffuse_color": None,
+        "up_axis": "Z_UP",
+    }
+
+
+def _parse_binary_stl(data):
+    result = _new_mesh_result()
+
+    tri_count = struct.unpack("<I", data[80:84])[0]
+    offset = 84
+
+    for _ in range(tri_count):
+        nx, ny, nz = struct.unpack("<fff", data[offset:offset + 12])
+        offset += 12
+
+        tri_vertices = []
+        for _ in range(3):
+            x, y, z = struct.unpack("<fff", data[offset:offset + 12])
+            offset += 12
+            tri_vertices.append((x, y, z))
+
+        offset += 2  # attribute byte count
+
+        normal_idx = len(result["normals"])
+        result["normals"].append((nx, ny, nz))
+
+        for v in tri_vertices:
+            result["vertices"].append(v)
+            result["face_vertex_indices"].append(len(result["vertices"]) - 1)
+            result["face_normal_indices"].append(normal_idx)
+
+        result["face_vertex_counts"].append(3)
+
+    return result
+
+
+def _parse_ascii_stl(text):
+    result = _new_mesh_result()
+
+    facet_re = re.compile(
+        r"facet\s+normal\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+outer\s+loop\s+"
+        r"vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+"
+        r"vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+"
+        r"vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+"
+        r"endloop\s+endfacet",
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    for match in facet_re.finditer(text):
+        nx, ny, nz = float(match.group(1)), float(match.group(2)), float(match.group(3))
+        v1 = (float(match.group(4)), float(match.group(5)), float(match.group(6)))
+        v2 = (float(match.group(7)), float(match.group(8)), float(match.group(9)))
+        v3 = (float(match.group(10)), float(match.group(11)), float(match.group(12)))
+
+        normal_idx = len(result["normals"])
+        result["normals"].append((nx, ny, nz))
+
+        for v in (v1, v2, v3):
+            result["vertices"].append(v)
+            result["face_vertex_indices"].append(len(result["vertices"]) - 1)
+            result["face_normal_indices"].append(normal_idx)
+
+        result["face_vertex_counts"].append(3)
+
+    if not result["face_vertex_counts"]:
+        raise ValueError("ASCII STL parsed with zero facets")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # USD generation
 # ---------------------------------------------------------------------------
 
-def create_mesh_usd(dae_data, output_path):
+def create_mesh_usd(mesh_data, output_path):
     """Create a USD file containing the mesh geometry and material.
 
     Args:
-        dae_data: dict from parse_dae()
+        mesh_data: dict from parse_dae() or parse_stl()
         output_path: path to write the .usd file
     """
     stage = Usd.Stage.CreateNew(output_path)
@@ -289,7 +408,8 @@ def create_mesh_usd(dae_data, output_path):
 
     # Root Xform
     mesh_name = os.path.splitext(os.path.basename(output_path))[0]
-    root_path = Sdf.Path(f"/{mesh_name}")
+    mesh_prim_name = _sanitize_prim_name(mesh_name)
+    root_path = Sdf.Path(f"/{mesh_prim_name}")
     root = UsdGeom.Xform.Define(stage, root_path)
     stage.SetDefaultPrim(root.GetPrim())
 
@@ -298,18 +418,18 @@ def create_mesh_usd(dae_data, output_path):
     mesh = UsdGeom.Mesh.Define(stage, mesh_prim_path)
 
     # Points
-    points = [Gf.Vec3f(*v) for v in dae_data["vertices"]]
+    points = [Gf.Vec3f(*v) for v in mesh_data["vertices"]]
     mesh.GetPointsAttr().Set(points)
 
     # Face vertex counts and indices
-    mesh.GetFaceVertexCountsAttr().Set(dae_data["face_vertex_counts"])
-    mesh.GetFaceVertexIndicesAttr().Set(dae_data["face_vertex_indices"])
+    mesh.GetFaceVertexCountsAttr().Set(mesh_data["face_vertex_counts"])
+    mesh.GetFaceVertexIndicesAttr().Set(mesh_data["face_vertex_indices"])
 
     # Normals (per face-vertex, i.e. "faceVarying")
-    if dae_data["normals"] and dae_data["face_normal_indices"]:
+    if mesh_data["normals"] and mesh_data["face_normal_indices"]:
         expanded_normals = [
-            Gf.Vec3f(*dae_data["normals"][ni])
-            for ni in dae_data["face_normal_indices"]
+            Gf.Vec3f(*mesh_data["normals"][ni])
+            for ni in mesh_data["face_normal_indices"]
         ]
         mesh.GetNormalsAttr().Set(expanded_normals)
         mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
@@ -318,7 +438,7 @@ def create_mesh_usd(dae_data, output_path):
     mesh.GetSubdivisionSchemeAttr().Set("none")
 
     # Material
-    if dae_data["diffuse_color"]:
+    if mesh_data["diffuse_color"]:
         mat_path = root_path.AppendChild("Material")
         material = UsdShade.Material.Define(stage, mat_path)
 
@@ -326,7 +446,7 @@ def create_mesh_usd(dae_data, output_path):
         shader = UsdShade.Shader.Define(stage, shader_path)
         shader.CreateIdAttr("UsdPreviewSurface")
 
-        r, g, b = dae_data["diffuse_color"]
+        r, g, b = mesh_data["diffuse_color"]
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(r, g, b))
         shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.8)
         shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
@@ -418,7 +538,8 @@ def create_model_usd(sdf_data, mesh_usd_paths, output_path):
             # Apply collision APIs to the referenced mesh prim
             # The mesh is at <col_xform>/<mesh_root_name>/Mesh
             mesh_basename = os.path.splitext(os.path.basename(rel_usd_path))[0]
-            collision_mesh_path = col_path.AppendChild(mesh_basename).AppendChild("Mesh")
+            mesh_root_prim_name = _sanitize_prim_name(mesh_basename)
+            collision_mesh_path = col_path.AppendChild(mesh_root_prim_name).AppendChild("Mesh")
             collision_mesh_prim = stage.OverridePrim(collision_mesh_path)
             UsdPhysics.CollisionAPI.Apply(collision_mesh_prim)
             UsdPhysics.MeshCollisionAPI.Apply(collision_mesh_prim)
@@ -458,7 +579,7 @@ def _sanitize_prim_name(name):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert a SIMLAN Gazebo model (SDF + DAE) to USD for Isaac Sim."
+        description="Convert a SIMLAN Gazebo model (SDF + DAE/STL) to USD for Isaac Sim."
     )
     parser.add_argument(
         "--sdf-dir",
@@ -493,28 +614,37 @@ def main():
             if col["mesh_uri"]:
                 mesh_uris.add(col["mesh_uri"])
 
-    # Convert each DAE mesh to USD
+    # Convert each source mesh to USD
     os.makedirs(os.path.join(output_dir, "meshes"), exist_ok=True)
     mesh_usd_paths = {}  # mesh_uri -> relative USD path
 
     for mesh_uri in sorted(mesh_uris):
-        dae_path = os.path.join(sdf_dir, mesh_uri)
-        if not os.path.isfile(dae_path):
-            print(f"  WARNING: Mesh file not found: {dae_path}, skipping")
+        mesh_path = os.path.join(sdf_dir, mesh_uri)
+        if not os.path.isfile(mesh_path):
+            print(f"  WARNING: Mesh file not found: {mesh_path}, skipping")
             continue
 
-        print(f"Parsing DAE: {dae_path}")
-        dae_data = parse_dae(dae_path)
-        print(f"  Vertices: {len(dae_data['vertices'])}, "
-              f"Triangles: {len(dae_data['face_vertex_counts'])}, "
-              f"Diffuse: {dae_data['diffuse_color']}")
+        ext = os.path.splitext(mesh_path)[1].lower()
+        if ext == ".dae":
+            print(f"Parsing DAE: {mesh_path}")
+            mesh_data = parse_dae(mesh_path)
+        elif ext == ".stl":
+            print(f"Parsing STL: {mesh_path}")
+            mesh_data = parse_stl(mesh_path)
+        else:
+            print(f"  WARNING: Unsupported mesh extension '{ext}' for {mesh_path}, skipping")
+            continue
+
+        print(f"  Vertices: {len(mesh_data['vertices'])}, "
+              f"Triangles: {len(mesh_data['face_vertex_counts'])}, "
+              f"Diffuse: {mesh_data['diffuse_color']}")
 
         # Output path: meshes/<name>.usd
         mesh_basename = os.path.splitext(os.path.basename(mesh_uri))[0]
         mesh_usd_filename = f"meshes/{mesh_basename}.usd"
         mesh_usd_abs = os.path.join(output_dir, mesh_usd_filename)
 
-        create_mesh_usd(dae_data, mesh_usd_abs)
+        create_mesh_usd(mesh_data, mesh_usd_abs)
         mesh_usd_paths[mesh_uri] = f"./{mesh_usd_filename}"
 
     # Create the composed model USD

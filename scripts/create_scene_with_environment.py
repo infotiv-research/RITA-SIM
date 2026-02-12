@@ -14,7 +14,17 @@ Then open scene_with_environment.usd in Isaac Sim instead of the original.
 """
 
 import argparse
+import glob
 import os
+import sys
+
+# Auto-detect Isaac Sim's USD libs when running inside the container.
+_ISAAC_SIM = os.environ.get("ISAAC_PATH", "/isaac-sim")
+_usd_libs = glob.glob(os.path.join(_ISAAC_SIM, "extscache", "omni.usd.libs-*"))
+if _usd_libs and "pxr" not in sys.modules:
+    _usd_lib_dir = sorted(_usd_libs)[-1]
+    if _usd_lib_dir not in sys.path:
+        sys.path.insert(0, _usd_lib_dir)
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
@@ -92,6 +102,44 @@ def main():
 
     colliders = enable_static_collisions(stage, beam_path)
     print(f"  Added collision to {colliders} beam geometry prim(s)")
+
+    # Add flow_rack from SIMLAN environment assets
+    flow_rack_path = Sdf.Path("/World/flow_rack")
+    flow_rack_prim = stage.DefinePrim(flow_rack_path, "Xform")
+    flow_rack_prim.GetReferences().AddReference(
+        "../simlan_environment/flow_rack/flow_rack.usd"
+    )
+
+    # Position the flow rack near the robot workspace (tune as needed)
+    flow_rack_xform = UsdGeom.Xformable(flow_rack_prim)
+    flow_rack_xform.AddTranslateOp().Set(Gf.Vec3d(1.4, -0.8, 0.0))
+
+    flow_rack_colliders = enable_static_collisions(stage, flow_rack_path)
+    print(f"  Added collision to {flow_rack_colliders} flow_rack geometry prim(s)")
+
+    # Add 5 stacking crates in a row beside each other.
+    # Tune base position/spacing to suit your scene layout.
+    crate_usd = "../simlan_environment/stacking_crate_isaac/stacking_crate_isaac.usd"
+    crate_base_x = 1.4
+    crate_base_y = -1.4
+    crate_base_z = 0.0
+    crate_spacing_y = 0.55
+
+    total_crate_colliders = 0
+    for i in range(5):
+        crate_path = Sdf.Path(f"/World/stacking_crate_{i + 1}")
+        crate_prim = stage.DefinePrim(crate_path, "Xform")
+        crate_prim.GetReferences().AddReference(crate_usd)
+
+        crate_xform = UsdGeom.Xformable(crate_prim)
+        crate_xform.AddTranslateOp().Set(
+            Gf.Vec3d(crate_base_x, crate_base_y + i * crate_spacing_y, crate_base_z)
+        )
+
+        total_crate_colliders += enable_static_collisions(stage, crate_path)
+
+    print("  Added 5 stacking_crate_isaac instances")
+    print(f"  Added collision to {total_crate_colliders} stacking_crate_isaac geometry prim(s)")
 
     root_layer.Save()
     print(f"  Created: {output_path}")
