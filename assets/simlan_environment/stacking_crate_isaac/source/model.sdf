@@ -1,0 +1,83 @@
+<sdf version="1.6">
+  <model name="stacking_crate_isaac">
+    <static>false</static>
+    <link name="new_link">
+      <collision name="Cube">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Cube.001.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <collision name="Cube.001">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Cube.002.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <collision name="Cube.002">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Cube.004.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <collision name="Cube.003">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Cube.005.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <collision name="Cube.004">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Cube.006.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <inertial>
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <mass>1.00000</mass>
+        <inertia>
+          <ixx>0.01075</ixx>
+          <ixy>0.00000</ixy>
+          <ixz>-0.00000</ixz>
+          <iyy>0.02074</iyy>
+          <iyz>0.00000</iyz>
+          <izz>0.02616</izz>
+        </inertia>
+      </inertial>
+
+      <visual name="node0">
+        <pose>0.00000 0.00000 0.00000 0.00000 0.00000 0.00000</pose>
+        <geometry>
+          <mesh>
+            <uri>model://stacking_crate_isaac/meshes/Body.dae</uri>
+            <scale>1.00000 1.00000 1.00000</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <diffuse>0.03137 0.05098 0.35294 1.00000</diffuse>
+          <specular>1.00000 1.00000 1.00000 0.20392</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

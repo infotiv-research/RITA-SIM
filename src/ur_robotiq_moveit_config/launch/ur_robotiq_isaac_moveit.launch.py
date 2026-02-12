@@ -2,12 +2,11 @@ import os
 import yaml
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, LogInfo
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch_ros.parameter_descriptions import ParameterFile
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -43,6 +42,18 @@ def launch_setup(context, *args, **kwargs):
     isaac_arm_topic = LaunchConfiguration("isaac_arm_topic")
     isaac_gripper_topic = LaunchConfiguration("isaac_gripper_topic")
     servo_out_topic = LaunchConfiguration("servo_out_topic")
+    enable_joint_state_filter = LaunchConfiguration("enable_joint_state_filter")
+    raw_joint_states_topic = LaunchConfiguration("raw_joint_states_topic")
+    moveit_joint_states_topic = LaunchConfiguration("moveit_joint_states_topic")
+    publish_environment_collisions = LaunchConfiguration("publish_environment_collisions")
+    environment_collision_world_frame = LaunchConfiguration("environment_collision_world_frame")
+    environment_collision_publish_rate_hz = LaunchConfiguration(
+        "environment_collision_publish_rate_hz"
+    )
+    simlan_assets_root = LaunchConfiguration("simlan_assets_root")
+    stacking_crate_frame_prefix = LaunchConfiguration("stacking_crate_frame_prefix")
+    flow_rack_frame_hint = LaunchConfiguration("flow_rack_frame_hint")
+    robot_arm_beam_frame_hint = LaunchConfiguration("robot_arm_beam_frame_hint")
 
     # Packages / files
     ur_description_package = "ur_description"
@@ -145,11 +156,42 @@ def launch_setup(context, *args, **kwargs):
         "warehouse_host": warehouse_sqlite_path,
     }
 
-    # move_group (remap to Isaac joint states so TF follows sim)
+    # Filter raw Isaac joint states so mimic joints are reconstructed from finger_joint.
+    # This avoids malformed gripper poses in MoveIt/RViz when Isaac publishes explicit mimic joints.
+    moveit_joint_state_filter_node = Node(
+        package="joint_state_publisher",
+        executable="joint_state_publisher",
+        name="moveit_joint_state_filter",
+        condition=IfCondition(enable_joint_state_filter),
+        arguments=[
+            PathJoinSubstitution(
+                [FindPackageShare(ur_robotiq_description_package), "urdf", "ur_robotiq.urdf"]
+            )
+        ],
+        output="screen",
+        parameters=[
+            {
+                "source_list": ["raw_joint_states"],
+                "rate": 100.0,
+                "publish_default_positions": False,
+                "publish_default_velocities": False,
+                "publish_default_efforts": False,
+                "use_mimic_tags": True,
+            },
+            {"use_sim_time": False},
+        ],
+        remappings=[
+            ("raw_joint_states", raw_joint_states_topic),
+            ("joint_states", moveit_joint_states_topic),
+        ],
+    )
+
+    # move_group uses filtered joint states for consistent gripper kinematics
     move_group_node = Node(
         package="moveit_ros_move_group",
         executable="move_group",
         output="screen",
+        remappings=[("/joint_states", moveit_joint_states_topic)],
         parameters=[
             robot_description,
             robot_description_semantic,
@@ -172,6 +214,7 @@ def launch_setup(context, *args, **kwargs):
         name="rviz2_moveit",
         output="log",
         arguments=["-d", rviz_config_file, "--ros-args", "--log-level", "error"],
+        remappings=[("/joint_states", moveit_joint_states_topic)],
         parameters=[
             robot_description,
             robot_description_semantic,
@@ -182,11 +225,44 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
-    
-    return [move_group_node, rviz_node]
+    environment_collision_node = Node(
+        package=moveit_config_package,
+        executable="isaac_environment_collision_publisher.py",
+        name="isaac_environment_collision_publisher",
+        condition=IfCondition(publish_environment_collisions),
+        output="screen",
+        parameters=[
+            {
+                "assets_root": simlan_assets_root,
+                "world_frame": environment_collision_world_frame,
+                "publish_rate_hz": environment_collision_publish_rate_hz,
+                "stacking_crate_frame_prefix": stacking_crate_frame_prefix,
+                "flow_rack_frame_hint": flow_rack_frame_hint,
+                "robot_arm_beam_frame_hint": robot_arm_beam_frame_hint,
+                "enable_stacking_crates": True,
+                "enable_flow_rack": True,
+                "enable_robot_arm_beam": True,
+                "use_sim_time": use_sim_time,
+            }
+        ],
+    )
+
+    return [moveit_joint_state_filter_node, move_group_node, environment_collision_node, rviz_node]
 
 
 def generate_launch_description():
+    default_simlan_assets_root = os.path.abspath(
+        os.path.join(
+            get_package_share_directory("ur_robotiq_moveit_config"),
+            "..",
+            "..",
+            "..",
+            "..",
+            "assets",
+            "simlan_environment",
+        )
+    )
+
     declared_arguments = [
         # UR
         DeclareLaunchArgument(
@@ -212,6 +288,56 @@ def generate_launch_description():
         DeclareLaunchArgument("prefix", default_value='""'),
         DeclareLaunchArgument("launch_rviz", default_value="true"),
         DeclareLaunchArgument("launch_servo", default_value="true"),
+        DeclareLaunchArgument(
+            "enable_joint_state_filter",
+            default_value="false",
+            description="Enable filtering/reconstruction of mimic joints for MoveIt/RViz.",
+        ),
+        DeclareLaunchArgument(
+            "raw_joint_states_topic",
+            default_value="/joint_states",
+            description="Raw joint state stream (typically published by Isaac Sim).",
+        ),
+        DeclareLaunchArgument(
+            "moveit_joint_states_topic",
+            default_value="/joint_states",
+            description="Filtered joint state stream consumed by move_group and RViz.",
+        ),
+        DeclareLaunchArgument(
+            "publish_environment_collisions",
+            default_value="true",
+            description="Publish Isaac environment collisions to MoveIt planning scene.",
+        ),
+        DeclareLaunchArgument(
+            "environment_collision_world_frame",
+            default_value="world",
+            description="World frame used for planning-scene collision objects.",
+        ),
+        DeclareLaunchArgument(
+            "environment_collision_publish_rate_hz",
+            default_value="30.0",
+            description="Update rate for environment collision objects.",
+        ),
+        DeclareLaunchArgument(
+            "simlan_assets_root",
+            default_value=default_simlan_assets_root,
+            description="Path to assets/simlan_environment directory containing source SDFs.",
+        ),
+        DeclareLaunchArgument(
+            "stacking_crate_frame_prefix",
+            default_value="stacking_crate_isaac",
+            description="Substring used to discover stacking crate TF frames.",
+        ),
+        DeclareLaunchArgument(
+            "flow_rack_frame_hint",
+            default_value="flow_rack",
+            description="Substring used to discover flow rack TF frame.",
+        ),
+        DeclareLaunchArgument(
+            "robot_arm_beam_frame_hint",
+            default_value="robot_arm_beam",
+            description="Substring used to discover robot arm beam TF frame.",
+        ),
 
         # Xbox / joy
         DeclareLaunchArgument("joy_dev", default_value="/dev/input/js0"),
