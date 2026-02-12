@@ -103,7 +103,7 @@
      trajectory_port="$(arg trajectory_port)"
 
      >
-    <origin xyz="0 0 0" rpy="0 0 0" />          <!-- position robot in the world -->
+    <origin xyz="-1.3 0.2 1.5" rpy="-1.57079632679 -1.57079632679 -1.57079632679" />          <!-- position robot in the world -->
     </xacro:ur_robot>
 
    <xacro:robotiq_gripper name="$(arg tf_prefix)gripper"
