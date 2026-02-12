@@ -40,6 +40,10 @@
   <exec_depend>rviz_default_plugins</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>xacro</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>shape_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
 
   <exec_depend>ur_robotiq_description</exec_depend>
   <exec_depend>ur_description</exec_depend>
