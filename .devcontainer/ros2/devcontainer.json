@@ -1,5 +1,5 @@
 {
-  "name": "UR5 ROS2 DevContainer",
+  "name": "UR10 ROS2 DevContainer",
   "dockerComposeFile": ["../../setup/docker-compose.ros2.yaml"],
   "service": "ros2",
   "workspaceFolder": "/ros2_ws",
