@@ -1,4 +1,8 @@
 import os
+import hashlib
+import shutil
+import subprocess
+import tempfile
 import yaml
 
 from launch import LaunchDescription
@@ -20,6 +24,50 @@ def load_yaml(package_name, file_path):
         return None
 
 
+def generate_runtime_urdf(
+    xacro_file,
+    ur_type,
+    joint_limit_params,
+    kinematics_params,
+    physical_params,
+    visual_params,
+    safety_limits,
+    safety_pos_margin,
+    safety_k_position,
+    prefix,
+):
+    xacro_executable = shutil.which("xacro")
+    if xacro_executable is None:
+        raise RuntimeError("xacro executable not found in PATH")
+
+    xacro_cmd = [
+        xacro_executable,
+        xacro_file,
+        "robot_ip:=xxx.yyy.zzz.www",
+        f"joint_limit_params:={joint_limit_params}",
+        f"kinematics_params:={kinematics_params}",
+        f"physical_params:={physical_params}",
+        f"visual_params:={visual_params}",
+        f"safety_limits:={safety_limits}",
+        f"safety_pos_margin:={safety_pos_margin}",
+        f"safety_k_position:={safety_k_position}",
+        "name:=ur",
+        f"ur_type:={ur_type}",
+        "script_filename:=ros_control.urscript",
+        "input_recipe_filename:=rtde_input_recipe.txt",
+        "output_recipe_filename:=rtde_output_recipe.txt",
+        f"prefix:={prefix}",
+    ]
+    urdf_content = subprocess.check_output(xacro_cmd, text=True)
+
+    cmd_fingerprint = hashlib.sha256(" ".join(xacro_cmd).encode("utf-8")).hexdigest()[:16]
+    urdf_path = os.path.join(tempfile.gettempdir(), f"ur_robotiq_runtime_{cmd_fingerprint}.urdf")
+    with open(urdf_path, "w", encoding="utf-8") as f:
+        f.write(urdf_content)
+
+    return urdf_content, urdf_path
+
+
 def launch_setup(context, *args, **kwargs):
     # Args
     ur_type = LaunchConfiguration("ur_type")
@@ -33,6 +81,30 @@ def launch_setup(context, *args, **kwargs):
     use_sim_time = LaunchConfiguration("use_sim_time")
     launch_rviz = LaunchConfiguration("launch_rviz")
     launch_servo = LaunchConfiguration("launch_servo")
+    planning_pipeline = LaunchConfiguration("planning_pipeline")
+    launch_move_group = LaunchConfiguration("launch_move_group")
+    launch_cumotion_planner = LaunchConfiguration("launch_cumotion_planner")
+    cumotion_use_patched_node = LaunchConfiguration("cumotion_use_patched_node")
+    cumotion_robot_xrdf = LaunchConfiguration("cumotion_robot_xrdf")
+    collision_cache_cuboid = LaunchConfiguration("collision_cache_cuboid")
+    collision_cache_mesh = LaunchConfiguration("collision_cache_mesh")
+    cumotion_time_dilation_factor = LaunchConfiguration("cumotion_time_dilation_factor")
+    cumotion_override_moveit_scaling_factors = LaunchConfiguration(
+        "cumotion_override_moveit_scaling_factors"
+    )
+    cumotion_max_attempts = LaunchConfiguration("cumotion_max_attempts")
+    cumotion_num_graph_seeds = LaunchConfiguration("cumotion_num_graph_seeds")
+    cumotion_num_trajopt_seeds = LaunchConfiguration("cumotion_num_trajopt_seeds")
+    cumotion_num_trajopt_time_steps = LaunchConfiguration("cumotion_num_trajopt_time_steps")
+    cumotion_trajopt_finetune_iters = LaunchConfiguration("cumotion_trajopt_finetune_iters")
+    cumotion_interpolation_dt = LaunchConfiguration("cumotion_interpolation_dt")
+    cumotion_voxel_size = LaunchConfiguration("cumotion_voxel_size")
+    cumotion_publish_curobo_world_as_voxels = LaunchConfiguration(
+        "cumotion_publish_curobo_world_as_voxels"
+    )
+    cumotion_publish_voxel_size = LaunchConfiguration("cumotion_publish_voxel_size")
+    cumotion_pose_ik_retries = LaunchConfiguration("cumotion_pose_ik_retries")
+    cumotion_reject_goal_while_busy = LaunchConfiguration("cumotion_reject_goal_while_busy")
 
     joy_dev = LaunchConfiguration("joy_dev")
     joy_deadzone = LaunchConfiguration("joy_deadzone")
@@ -46,14 +118,19 @@ def launch_setup(context, *args, **kwargs):
     raw_joint_states_topic = LaunchConfiguration("raw_joint_states_topic")
     moveit_joint_states_topic = LaunchConfiguration("moveit_joint_states_topic")
     publish_environment_collisions = LaunchConfiguration("publish_environment_collisions")
+    enable_stacking_crates = LaunchConfiguration("enable_stacking_crates")
+    enable_flow_rack = LaunchConfiguration("enable_flow_rack")
+    enable_robot_arm_beam = LaunchConfiguration("enable_robot_arm_beam")
     environment_collision_world_frame = LaunchConfiguration("environment_collision_world_frame")
     environment_collision_publish_rate_hz = LaunchConfiguration(
         "environment_collision_publish_rate_hz"
     )
+    environment_collision_padding = LaunchConfiguration("environment_collision_padding")
     simlan_assets_root = LaunchConfiguration("simlan_assets_root")
     stacking_crate_frame_prefix = LaunchConfiguration("stacking_crate_frame_prefix")
     flow_rack_frame_hint = LaunchConfiguration("flow_rack_frame_hint")
     robot_arm_beam_frame_hint = LaunchConfiguration("robot_arm_beam_frame_hint")
+    exclude_collision_objects = LaunchConfiguration("exclude_collision_objects")
 
     # Packages / files
     ur_description_package = "ur_description"
@@ -62,43 +139,45 @@ def launch_setup(context, *args, **kwargs):
     moveit_config_package = "ur_robotiq_moveit_config"
     moveit_config_file = "ur_robotiq.srdf.xacro"
 
-    joint_limit_params = PathJoinSubstitution(
-        [FindPackageShare(ur_description_package), "config", ur_type, "joint_limits.yaml"]
+    ur_type_value = ur_type.perform(context)
+    safety_limits_value = safety_limits.perform(context)
+    safety_pos_margin_value = safety_pos_margin.perform(context)
+    safety_k_position_value = safety_k_position.perform(context)
+    prefix_value = prefix.perform(context)
+
+    ur_description_share = get_package_share_directory(ur_description_package)
+    joint_limit_params_path = os.path.join(
+        ur_description_share, "config", ur_type_value, "joint_limits.yaml"
     )
-    kinematics_params = PathJoinSubstitution(
-        [FindPackageShare(ur_description_package), "config", ur_type, "default_kinematics.yaml"]
+    kinematics_params_path = os.path.join(
+        ur_description_share, "config", ur_type_value, "default_kinematics.yaml"
     )
-    physical_params = PathJoinSubstitution(
-        [FindPackageShare(ur_description_package), "config", ur_type, "physical_parameters.yaml"]
+    physical_params_path = os.path.join(
+        ur_description_share, "config", ur_type_value, "physical_parameters.yaml"
     )
-    visual_params = PathJoinSubstitution(
-        [FindPackageShare(ur_description_package), "config", ur_type, "visual_parameters.yaml"]
+    visual_params_path = os.path.join(
+        ur_description_share, "config", ur_type_value, "visual_parameters.yaml"
+    )
+    ur_robotiq_description_file_path = os.path.join(
+        get_package_share_directory(ur_robotiq_description_package),
+        "urdf",
+        ur_robotiq_description_file,
     )
 
-    # Robot description (UR + Robotiq)
-    robot_description_content = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
-            " ",
-            PathJoinSubstitution([FindPackageShare(ur_robotiq_description_package), "urdf", ur_robotiq_description_file]),
-            " ",
-            "robot_ip:=xxx.yyy.zzz.www",
-            " ",
-            "joint_limit_params:=", joint_limit_params, " ",
-            "kinematics_params:=", kinematics_params, " ",
-            "physical_params:=", physical_params, " ",
-            "visual_params:=", visual_params, " ",
-            "safety_limits:=", safety_limits, " ",
-            "safety_pos_margin:=", safety_pos_margin, " ",
-            "safety_k_position:=", safety_k_position, " ",
-            "name:=ur", " ",
-            "ur_type:=", ur_type, " ",
-            "script_filename:=ros_control.urscript", " ",
-            "input_recipe_filename:=rtde_input_recipe.txt", " ",
-            "output_recipe_filename:=rtde_output_recipe.txt", " ",
-            "prefix:=", prefix, " ",
-        ]
+    # Generate one URDF from xacro and reuse it across nodes to avoid model drift.
+    robot_description_content, runtime_urdf_path = generate_runtime_urdf(
+        xacro_file=ur_robotiq_description_file_path,
+        ur_type=ur_type_value,
+        joint_limit_params=joint_limit_params_path,
+        kinematics_params=kinematics_params_path,
+        physical_params=physical_params_path,
+        visual_params=visual_params_path,
+        safety_limits=safety_limits_value,
+        safety_pos_margin=safety_pos_margin_value,
+        safety_k_position=safety_k_position_value,
+        prefix=prefix_value,
     )
+
     robot_description = {"robot_description": robot_description_content}
 
     # MoveIt semantic + kinematics
@@ -127,9 +206,59 @@ def launch_setup(context, *args, **kwargs):
     }
     ompl_planning_yaml = load_yaml(moveit_config_package, "config/ompl_planning.yaml")
     ompl_planning_pipeline_config["move_group"].update(ompl_planning_yaml)
+    cumotion_planning_config = load_yaml(
+        moveit_config_package, "config/isaac_ros_cumotion_planning.yaml"
+    )
+    if cumotion_planning_config is None:
+        cumotion_planning_config = {
+            "planning_plugin": "isaac_ros_cumotion_moveit/CumotionPlanner",
+            "request_adapters": """default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
+            "start_state_max_bounds_error": 0.1,
+        }
+    selected_planning_pipeline = planning_pipeline.perform(context)
+    if selected_planning_pipeline == "cumotion":
+        planning_pipelines = ["ompl", "isaac_ros_cumotion"]
+        default_planning_pipeline = "isaac_ros_cumotion"
+        planning_pipeline_plugins = {
+            "ompl": ompl_planning_pipeline_config["move_group"],
+            "isaac_ros_cumotion": cumotion_planning_config,
+        }
+    else:
+        planning_pipelines = ["ompl"]
+        default_planning_pipeline = "ompl"
+    planning_pipelines_config = {
+        "planning_pipelines": planning_pipelines,
+        "default_planning_pipeline": default_planning_pipeline,
+    }
+    if selected_planning_pipeline != "cumotion":
+        planning_pipeline_plugins = {
+            "ompl": ompl_planning_pipeline_config["move_group"],
+        }
 
     # Controllers config (for planning execution; not used by Isaac teleop)
     controllers_yaml = load_yaml(moveit_config_package, "config/moveit_controllers_isaac.yaml")
+    isaac_ros2_control_yaml = load_yaml(
+        ur_robotiq_description_package, "config/ur_robotiq_controllers_isaac.yaml"
+    )
+    available_ros2_controllers = set()
+    if isaac_ros2_control_yaml is not None:
+        cm_params = (
+            isaac_ros2_control_yaml.get("controller_manager", {}).get("ros__parameters", {})
+        )
+        for controller_name, controller_cfg in cm_params.items():
+            if isinstance(controller_cfg, dict) and "type" in controller_cfg:
+                available_ros2_controllers.add(controller_name)
+
+    # Keep MoveIt default controller selection aligned with available ros2_control controllers.
+    if (
+        "joint_trajectory_controller" in available_ros2_controllers
+        and "scaled_joint_trajectory_controller" not in available_ros2_controllers
+    ):
+        controllers_yaml["scaled_joint_trajectory_controller"]["default"] = False
+        controllers_yaml["joint_trajectory_controller"]["default"] = True
+    if "robotiq_gripper_joint_trajectory_controller" in available_ros2_controllers:
+        controllers_yaml["robotiq_gripper_joint_trajectory_controller"]["default"] = True
+
     if use_fake_hardware.perform(context) == "true":
         controllers_yaml["scaled_joint_trajectory_controller"]["default"] = False
         controllers_yaml["joint_trajectory_controller"]["default"] = True
@@ -164,9 +293,7 @@ def launch_setup(context, *args, **kwargs):
         name="moveit_joint_state_filter",
         condition=IfCondition(enable_joint_state_filter),
         arguments=[
-            PathJoinSubstitution(
-                [FindPackageShare(ur_robotiq_description_package), "urdf", "ur_robotiq.urdf"]
-            )
+            runtime_urdf_path
         ],
         output="screen",
         parameters=[
@@ -190,18 +317,84 @@ def launch_setup(context, *args, **kwargs):
     move_group_node = Node(
         package="moveit_ros_move_group",
         executable="move_group",
+        condition=IfCondition(launch_move_group),
         output="screen",
         remappings=[("/joint_states", moveit_joint_states_topic)],
         parameters=[
             robot_description,
             robot_description_semantic,
             robot_description_kinematics,
-            ompl_planning_pipeline_config,
+            planning_pipelines_config,
+            planning_pipeline_plugins,
             trajectory_execution,
             moveit_controllers,
             planning_scene_monitor_parameters,
             {"use_sim_time": use_sim_time},
             warehouse_ros_config,
+        ],
+    )
+
+    cumotion_common_parameters = [
+        robot_description,
+        robot_description_semantic,
+        robot_description_kinematics,
+        {
+            "robot": cumotion_robot_xrdf,
+            "urdf_path": runtime_urdf_path,
+            "collision_cache_cuboid": collision_cache_cuboid,
+            "collision_cache_mesh": collision_cache_mesh,
+            "joint_states_topic": moveit_joint_states_topic,
+            "time_dilation_factor": cumotion_time_dilation_factor,
+            "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
+            "max_attempts": cumotion_max_attempts,
+            "num_graph_seeds": cumotion_num_graph_seeds,
+            "num_trajopt_seeds": cumotion_num_trajopt_seeds,
+            "num_trajopt_time_steps": cumotion_num_trajopt_time_steps,
+            "trajopt_finetune_iters": cumotion_trajopt_finetune_iters,
+            "interpolation_dt": cumotion_interpolation_dt,
+            "voxel_size": cumotion_voxel_size,
+            "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
+            "publish_voxel_size": cumotion_publish_voxel_size,
+        },
+        {"use_sim_time": use_sim_time},
+    ]
+
+    cumotion_planner_node_upstream = Node(
+        package="isaac_ros_cumotion",
+        executable="cumotion_planner_node",
+        output="screen",
+        parameters=cumotion_common_parameters,
+    )
+
+    cumotion_planner_node_patched = Node(
+        package=moveit_config_package,
+        executable="cumotion_planner_upstream_framefix.py",
+        output="screen",
+        parameters=[
+            robot_description,
+            robot_description_semantic,
+            robot_description_kinematics,
+            {
+                "robot": cumotion_robot_xrdf,
+                "urdf_path": runtime_urdf_path,
+                "collision_cache_cuboid": collision_cache_cuboid,
+                "collision_cache_mesh": collision_cache_mesh,
+                "joint_states_topic": moveit_joint_states_topic,
+                "time_dilation_factor": cumotion_time_dilation_factor,
+                "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
+                "max_attempts": cumotion_max_attempts,
+                "num_graph_seeds": cumotion_num_graph_seeds,
+                "num_trajopt_seeds": cumotion_num_trajopt_seeds,
+                "num_trajopt_time_steps": cumotion_num_trajopt_time_steps,
+                "trajopt_finetune_iters": cumotion_trajopt_finetune_iters,
+                "interpolation_dt": cumotion_interpolation_dt,
+                "voxel_size": cumotion_voxel_size,
+                "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
+                "publish_voxel_size": cumotion_publish_voxel_size,
+                "pose_ik_retry_count": cumotion_pose_ik_retries,
+                "reject_goal_while_busy": cumotion_reject_goal_while_busy,
+            },
+            {"use_sim_time": use_sim_time},
         ],
     )
 
@@ -218,7 +411,8 @@ def launch_setup(context, *args, **kwargs):
         parameters=[
             robot_description,
             robot_description_semantic,
-            ompl_planning_pipeline_config,
+            planning_pipelines_config,
+            planning_pipeline_plugins,
             robot_description_kinematics,
             warehouse_ros_config,
             {"use_sim_time": use_sim_time},
@@ -239,15 +433,25 @@ def launch_setup(context, *args, **kwargs):
                 "stacking_crate_frame_prefix": stacking_crate_frame_prefix,
                 "flow_rack_frame_hint": flow_rack_frame_hint,
                 "robot_arm_beam_frame_hint": robot_arm_beam_frame_hint,
-                "enable_stacking_crates": True,
-                "enable_flow_rack": True,
-                "enable_robot_arm_beam": True,
+                "enable_stacking_crates": enable_stacking_crates,
+                "enable_flow_rack": enable_flow_rack,
+                "enable_robot_arm_beam": enable_robot_arm_beam,
+                "collision_padding": environment_collision_padding,
+                "exclude_collision_objects": exclude_collision_objects,
                 "use_sim_time": use_sim_time,
             }
         ],
     )
 
-    return [moveit_joint_state_filter_node, move_group_node, environment_collision_node, rviz_node]
+    nodes = [moveit_joint_state_filter_node, move_group_node, environment_collision_node, rviz_node]
+    launch_cumotion_enabled = launch_cumotion_planner.perform(context).lower() == "true"
+    use_patched_cumotion = cumotion_use_patched_node.perform(context).lower() == "true"
+    if selected_planning_pipeline == "cumotion" and launch_cumotion_enabled:
+        if use_patched_cumotion:
+            nodes.append(cumotion_planner_node_patched)
+        else:
+            nodes.append(cumotion_planner_node_upstream)
+    return nodes
 
 
 def generate_launch_description():
@@ -289,6 +493,109 @@ def generate_launch_description():
         DeclareLaunchArgument("launch_rviz", default_value="true"),
         DeclareLaunchArgument("launch_servo", default_value="true"),
         DeclareLaunchArgument(
+            "planning_pipeline",
+            default_value="ompl",
+            choices=["ompl", "cumotion"],
+            description="Select MoveIt planning pipeline. Use cumotion in the cumotion container.",
+        ),
+        DeclareLaunchArgument(
+            "launch_move_group",
+            default_value="true",
+            description="Launch the MoveIt move_group node.",
+        ),
+        DeclareLaunchArgument(
+            "launch_cumotion_planner",
+            default_value="true",
+            description="Launch cumotion_planner_node when planning_pipeline:=cumotion.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_use_patched_node",
+            default_value="true",
+            description="Use local patched cuMotion action server for better stability under repeated goals.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_robot_xrdf",
+            default_value=PathJoinSubstitution(
+                [FindPackageShare("ur_robotiq_moveit_config"), "config", "ur10e_robotiq_2f_140.xrdf"]
+            ),
+            description="Path to the XRDF file for cuMotion robot description.",
+        ),
+        DeclareLaunchArgument(
+            "collision_cache_cuboid",
+            default_value="200",
+            description="cuMotion cuboid obstacle cache size. Increase if OBB cache errors appear.",
+        ),
+        DeclareLaunchArgument(
+            "collision_cache_mesh",
+            default_value="100",
+            description="cuMotion mesh obstacle cache size.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_time_dilation_factor",
+            default_value="0.3",
+            description="Fallback time dilation for cuMotion when MoveIt scaling is overridden.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_override_moveit_scaling_factors",
+            default_value="true",
+            description="Use fixed cuMotion time_dilation_factor instead of MoveIt scaling sliders.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_max_attempts",
+            default_value="64",
+            description="Maximum cuMotion planning attempts per query.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_num_graph_seeds",
+            default_value="24",
+            description="Number of graph seeds for cuMotion planning.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_num_trajopt_seeds",
+            default_value="24",
+            description="Number of trajopt seeds for cuMotion planning.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_num_trajopt_time_steps",
+            default_value="64",
+            description="Number of trajectory optimization time steps for cuMotion.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_trajopt_finetune_iters",
+            default_value="1200",
+            description="Finetuning iterations for cuMotion trajectory optimization.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_interpolation_dt",
+            default_value="0.01",
+            description="Interpolation dt for generated trajectories.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_voxel_size",
+            default_value="0.05",
+            description="cuMotion voxel collision grid size in meters. Smaller is more accurate but slower.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_publish_curobo_world_as_voxels",
+            default_value="false",
+            description="Publish cuMotion's internal occupied voxels as Marker on /curobo/voxels.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_publish_voxel_size",
+            default_value="0.05",
+            description="Published debug voxel size for /curobo/voxels Marker topic.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_pose_ik_retries",
+            default_value="2",
+            description="Number of extra retries for pose-goal IK failures in patched cuMotion node.",
+        ),
+        DeclareLaunchArgument(
+            "cumotion_reject_goal_while_busy",
+            default_value="true",
+            description="Reject new goals while planner is executing an active goal.",
+        ),
+        DeclareLaunchArgument(
             "enable_joint_state_filter",
             default_value="true",
             description="Enable filtering/reconstruction of mimic joints for MoveIt/RViz.",
@@ -309,6 +616,21 @@ def generate_launch_description():
             description="Publish Isaac environment collisions to MoveIt planning scene.",
         ),
         DeclareLaunchArgument(
+            "enable_stacking_crates",
+            default_value="true",
+            description="Enable stacking crate collision objects in planning scene.",
+        ),
+        DeclareLaunchArgument(
+            "enable_flow_rack",
+            default_value="true",
+            description="Enable flow rack collision objects in planning scene.",
+        ),
+        DeclareLaunchArgument(
+            "enable_robot_arm_beam",
+            default_value="true",
+            description="Enable robot arm beam collision objects in planning scene.",
+        ),
+        DeclareLaunchArgument(
             "environment_collision_world_frame",
             default_value="world",
             description="World frame used for planning-scene collision objects.",
@@ -317,6 +639,19 @@ def generate_launch_description():
             "environment_collision_publish_rate_hz",
             default_value="30.0",
             description="Update rate for environment collision objects.",
+        ),
+        DeclareLaunchArgument(
+            "environment_collision_padding",
+            default_value="0.005",
+            description="Per-face padding (meters) added to published environment collision boxes.",
+        ),
+        DeclareLaunchArgument(
+            "exclude_collision_objects",
+            default_value="",
+            description=(
+                "Comma-separated exact object/frame names to suppress in environment collisions "
+                "(e.g. stacking_crate_upper_1 or simlan_stacking_crate_isaac_stacking_crate_upper_1)."
+            ),
         ),
         DeclareLaunchArgument(
             "simlan_assets_root",

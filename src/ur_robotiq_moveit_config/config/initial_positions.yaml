@@ -4,4 +4,4 @@ elbow_joint: 1.7                       # Forearm raised
 wrist_1_joint: -0.5                    # Wrist rotated to keep gripper vertical
 wrist_2_joint: -1.57                   # Gripper aligned vertically
 wrist_3_joint: 0.0                     # No twist
-finger_joint: 20.0                     # Preserved gripper value
+finger_joint: 0.0                      # Open gripper (URDF limit is [0.0, 0.7] rad)
