@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Create a scene composition USD that layers the existing UR10e scene
-with SIMLAN environment objects.
+with Gazebo environment objects.
 
 This avoids modifying the original ur10e_robotiq2f-140-topic_based.usd.
 The new scene sublayers the original and adds references to environment objects.
@@ -56,7 +56,7 @@ def enable_static_collisions(stage: Usd.Stage, root_path: Sdf.Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create a scene composition USD with SIMLAN environment objects."
+        description="Create a scene composition USD with Gazebo environment objects."
     )
     parser.add_argument(
         "--scene-dir",
@@ -89,7 +89,7 @@ def main():
     root_layer = stage.GetRootLayer()
     root_layer.subLayerPaths.append(f"./{args.base_scene}")
 
-    # Add robot_arm_beam from SIMLAN environment assets
+    # Add robot_arm_beam from Gazebo environment assets
     beam_path = Sdf.Path("/World/robot_arm_beam")
     beam_prim = stage.DefinePrim(beam_path, "Xform")
     beam_prim.GetReferences().AddReference(
@@ -103,7 +103,7 @@ def main():
     colliders = enable_static_collisions(stage, beam_path)
     print(f"  Added collision to {colliders} beam geometry prim(s)")
 
-    # Add flow_rack from SIMLAN environment assets
+    # Add flow_rack from Gazebo environment assets
     flow_rack_path = Sdf.Path("/World/flow_rack")
     flow_rack_prim = stage.DefinePrim(flow_rack_path, "Xform")
     flow_rack_prim.GetReferences().AddReference(

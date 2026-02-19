@@ -14,6 +14,18 @@ Make sure your machine has:
 - VS Code extension: **Dev Containers**.
 - NVIDIA driver + GPU support in Docker (required for Isaac Sim GUI).
 
+```
+# Check Docker installation
+docker --version
+docker-compose --version
+
+# Check NVIDIA drivers and Docker GPU access
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
+```
+
+
+
 For Linux GUI forwarding, run this after each reboot:
 
 ```bash
@@ -87,4 +99,19 @@ If ROS 2 commands cannot find packages:
 
 ```bash
 source install/setup.bash
+```
+
+
+# Credits
+The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted fore this project 
+
+
+
+```
+License
+This project is licensed under the BSD 3-Clause License 
+Portions of the code are adapted from:
+- Universal Robots ROS 2 repositories (BSD-3-Clause)
+- Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
+- ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
 ```

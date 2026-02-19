@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Convert a SIMLAN Gazebo model (SDF + mesh files) to USD for Isaac Sim.
+"""Convert a Gazebo model (SDF + mesh files) to USD for Isaac Sim.
 
 Usage (inside Isaac Sim Docker container):
-    /isaac-sim/python.sh /ros2_ws/scripts/convert_simlan_model.py \
+    /isaac-sim/python.sh /ros2_ws/scripts/convert_gazebo_model.py \
         --sdf-dir /ros2_ws/path/to/robot_arm_beam/ \
         --output-dir /ros2_ws/assets/simlan_environment/robot_arm_beam/
 
-The script expects the SIMLAN model directory layout:
+The script expects the Gazebo model directory layout:
     <model_dir>/
         model.sdf
         meshes/
@@ -72,7 +72,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 # ---------------------------------------------------------------------------
 
 def parse_sdf(sdf_path):
-    """Extract model properties from a SIMLAN model.sdf file.
+    """Extract model properties from a Gazebo model.sdf file.
 
     Returns a dict with:
         name        - model name string
@@ -579,12 +579,12 @@ def _sanitize_prim_name(name):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert a SIMLAN Gazebo model (SDF + DAE/STL) to USD for Isaac Sim."
+        description="Convert a Gazebo model (SDF + DAE/STL) to USD for Isaac Sim."
     )
     parser.add_argument(
         "--sdf-dir",
         required=True,
-        help="Path to the SIMLAN model directory containing model.sdf and meshes/",
+        help="Path to the Gazebo model directory containing model.sdf and meshes/",
     )
     parser.add_argument(
         "--output-dir",
