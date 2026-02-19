@@ -51,13 +51,13 @@ source install/setup.bash
 Launch terminal 1:
 
 ```bash
-ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py robot_ip:=aaa.bbb.ccc.ddd sim_isaac:=true
+ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 ```
 
 Launch terminal 2:
 
 ```bash
-ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py use_fake_hardware:=true enable_joint_state_filter:=true moveit_joint_states_topic:=/moveit_joint_states
+ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
 ```
 
 ## 5) Start the Isaac Side
@@ -67,16 +67,10 @@ Open in container: `IsaacSim DevContainer`.
 Inside the container terminal:
 
 ```bash
-./script/post_install_ros2_isaac_start.sh
+./startup_scripts/post_install_ros2_isaac_start.sh
 ```
 
-In Isaac Sim, open:
-
-```text
-assets/ur10e_robotiq2f-140/scene_with_flowrack_and_crates2.usd
-```
-
-Start the simulation.
+In Isaac Sim: `Start the simulation`.
 
 ## 6) Quick Checks
 
