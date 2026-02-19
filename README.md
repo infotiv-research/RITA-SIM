@@ -6,7 +6,7 @@ This repository provides a dual-container workflow:
 
 Both containers can run at the same time.
 
-## 1) Prerequisites
+## Prerequisites
 
 Make sure your machine has:
 - Docker installed and working for your user account.
@@ -20,7 +20,7 @@ For Linux GUI forwarding, run this after each reboot:
 xhost +
 ```
 
-## 2) Clone and Open
+## Clone and Open
 
 Clone and open the project in VS Code.
 
@@ -30,7 +30,7 @@ If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) 
 Dev Containers: Reopen in Container
 ```
 
-## 3) DevContainer Choices
+## DevContainer Choices
 
 You have two configurations:
 - `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
@@ -38,13 +38,14 @@ You have two configurations:
 
 Use two VS Code windows if you want both running together.
 
-## 4) Start the ROS 2 Side
+## Start the ROS 2 Side
 
 Open in container: `UR10 ROS2 DevContainer`.
 
 Inside the container terminal:
 
 ```bash
+./post_start.sh
 source install/setup.bash
 ```
 
@@ -54,13 +55,13 @@ Launch terminal 1:
 ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 ```
 
-Launch terminal 2:
+Launch another terminal:
 
 ```bash
 ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
 ```
 
-## 5) Start the Isaac Side
+## Start the Isaac Side
 
 Open in container: `IsaacSim DevContainer`.
 
@@ -72,7 +73,7 @@ Inside the container terminal:
 
 In Isaac Sim: `Start the simulation`.
 
-## 6) Quick Checks
+## Quick Checks
 
 If Isaac Sim does not start:
 - Verify NVIDIA drivers on host.

@@ -5,7 +5,6 @@
   "workspaceFolder": "/ros2_ws",
   "overrideCommand": false,
   "postCreateCommand": "./.devcontainer/ros2/setup_rosdep.sh",
-  "postStartCommand": "./.devcontainer/ros2/post_start.sh",
   "settings": {
     "terminal.integrated.defaultProfile.linux": "bash"
   },
