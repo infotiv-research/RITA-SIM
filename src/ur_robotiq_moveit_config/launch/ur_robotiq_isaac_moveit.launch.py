@@ -271,7 +271,7 @@ def generate_launch_description():
             description="Type/series of used UR robot."
         ),
         DeclareLaunchArgument(
-            "use_fake_hardware", default_value="false",
+            "use_fake_hardware", default_value="true",
             description="If true, mirror commands to states (fake hardware)."
         ),
         DeclareLaunchArgument("safety_limits", default_value="true"),
@@ -290,7 +290,7 @@ def generate_launch_description():
         DeclareLaunchArgument("launch_servo", default_value="true"),
         DeclareLaunchArgument(
             "enable_joint_state_filter",
-            default_value="false",
+            default_value="true",
             description="Enable filtering/reconstruction of mimic joints for MoveIt/RViz.",
         ),
         DeclareLaunchArgument(
@@ -300,7 +300,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "moveit_joint_states_topic",
-            default_value="/joint_states",
+            default_value="/moveit_joint_states",
             description="Filtered joint state stream consumed by move_group and RViz.",
         ),
         DeclareLaunchArgument(
