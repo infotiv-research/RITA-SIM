@@ -29,3 +29,40 @@ services:
       - /dev/input/js1:/dev/input/js1
     user: "${USER_UID:-1000}:${USER_GID:-1000}"
     shm_size: "2g"
+
+  cumotion:
+    build:
+      context: .
+      dockerfile: cumotion.Dockerfile
+      args:
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    runtime: nvidia
+    privileged: true
+    tty: true
+    stdin_open: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_GRAPHICSSYSTEM=native
+      - XAUTHORITY=/tmp/.docker.xauth
+      - USER_UID=${USER_UID:-1000}
+      - USER_GID=${USER_GID:-1000}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ..:/ros2_ws
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/tmp/.docker.xauth:rw
+      - ${HOME}/.gitconfig:/home/ros/.gitconfig:ro
+      - ${HOME}/.ssh:/home/ros/.ssh:ro
+    devices:
+      - /dev/dri:/dev/dri
+    user: "${USER_UID:-1000}:${USER_GID:-1000}"
+    shm_size: "2g"
+    entrypoint: ["/bin/bash","-lc"]
+    command: ["sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'source /opt/ros/humble/setup.bash && ros2 pkg list | grep -q \"^isaac_ros_cumotion$\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

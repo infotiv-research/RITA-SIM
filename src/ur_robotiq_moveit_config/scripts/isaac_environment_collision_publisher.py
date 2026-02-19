@@ -401,6 +401,8 @@ class IsaacEnvironmentCollisionPublisher(Node):
         self.declare_parameter("enable_stacking_crates", True)
         self.declare_parameter("enable_flow_rack", True)
         self.declare_parameter("enable_robot_arm_beam", True)
+        self.declare_parameter("collision_padding", 0.0)
+        self.declare_parameter("exclude_collision_objects", "")
 
         assets_root = self.get_parameter("assets_root").value
         if not assets_root:
@@ -418,6 +420,7 @@ class IsaacEnvironmentCollisionPublisher(Node):
         self.enable_robot_arm_beam = bool(
             self.get_parameter("enable_robot_arm_beam").value
         )
+        self.collision_padding = float(self.get_parameter("collision_padding").value)
 
         self.stacking_crate_prefix = str(
             self.get_parameter("stacking_crate_frame_prefix").value
@@ -425,6 +428,9 @@ class IsaacEnvironmentCollisionPublisher(Node):
         self.flow_rack_hint = str(self.get_parameter("flow_rack_frame_hint").value)
         self.robot_arm_beam_hint = str(
             self.get_parameter("robot_arm_beam_frame_hint").value
+        )
+        self.exclude_collision_objects = self._parse_csv_set(
+            str(self.get_parameter("exclude_collision_objects").value)
         )
 
         publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
@@ -460,8 +466,14 @@ class IsaacEnvironmentCollisionPublisher(Node):
             f"stacking_crate_isaac={len(self.model_boxes['stacking_crate_isaac'])} boxes, "
             f"flow_rack={len(self.model_boxes['flow_rack'])} boxes, "
             f"robot_arm_beam={len(self.model_boxes['robot_arm_beam'])} boxes. "
-            f"assets_root={self.assets_root}"
+            f"assets_root={self.assets_root}, world_frame={self.world_frame}, "
+            f"collision_padding={self.collision_padding:.6f} m"
         )
+        if self.exclude_collision_objects:
+            self.get_logger().info(
+                "Excluding collision objects (exact match): "
+                + ", ".join(sorted(self.exclude_collision_objects))
+            )
 
     def _tf_callback(self, msg: TFMessage) -> None:
         for t in msg.transforms:
@@ -614,6 +626,32 @@ class IsaacEnvironmentCollisionPublisher(Node):
         # Prefer link frames over model/root frames.
         return (0 if is_link else 1, len(frame), frame)
 
+    @staticmethod
+    def _parse_csv_set(text: str) -> set[str]:
+        items = set()
+        for raw in text.split(","):
+            token = raw.strip().lower()
+            if token:
+                items.add(token)
+                if token.endswith("_aabb"):
+                    items.add(token[: -len("_aabb")])
+        return items
+
+    def _is_excluded_collision_object(
+        self, frame: str, canonical_frame: str, object_id: str
+    ) -> bool:
+        if not self.exclude_collision_objects:
+            return False
+        candidates = {
+            frame.lower(),
+            canonical_frame.lower(),
+            _sanitize_id(frame).lower(),
+            _sanitize_id(canonical_frame).lower(),
+            object_id.lower(),
+            (object_id + "_aabb").lower(),
+        }
+        return not self.exclude_collision_objects.isdisjoint(candidates)
+
     def _frames_for_hint(self, hint: str) -> List[str]:
         if not hint:
             return []
@@ -673,16 +711,23 @@ class IsaacEnvironmentCollisionPublisher(Node):
 
         canonical_frame = self._canonical_frame(frame)
         object_id = f"simlan_{model_name}_{_sanitize_id(canonical_frame)}"
+        if self._is_excluded_collision_object(frame, canonical_frame, object_id):
+            return None
 
         msg = CollisionObject()
         msg.id = object_id
         msg.header.frame_id = self.world_frame
         msg.operation = CollisionObject.ADD
 
+        pad2 = 2.0 * self.collision_padding
         for box in boxes:
             primitive = SolidPrimitive()
             primitive.type = SolidPrimitive.BOX
-            primitive.dimensions = [box.size[0], box.size[1], box.size[2]]
+            primitive.dimensions = [
+                box.size[0] + pad2,
+                box.size[1] + pad2,
+                box.size[2] + pad2,
+            ]
 
             world_pose = _compose_pose(world_from_frame, box.pose)
             msg.primitives.append(primitive)
