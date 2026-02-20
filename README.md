@@ -4,7 +4,9 @@ This repository provides a dual-container workflow:
 - ROS 2 container for robot control, MoveIt, and controllers.
 - Isaac Sim container for simulation.
 
-Both containers can run at the same time.
+You can also run an optional third container for cuMotion planning.
+
+Both containers (or all three with cuMotion) can run at the same time.
 
 ## Prerequisites
 
@@ -42,13 +44,36 @@ If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) 
 Dev Containers: Reopen in Container
 ```
 
+## Quick Start
+
+The best place to learn the available workflows, start components, and understand the command entrypoints is:
+
+```bash
+./control.sh help
+```
+
+Run `./control.sh` commands in a terminal inside the relevant VS Code DevContainer.
+
+To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`):
+
+```bash
+./control.sh clean
+```
+
+To clean and rebuild the workspace:
+
+```bash
+./control.sh build
+```
+
 ## DevContainer Choices
 
-You have two configurations:
+You have three configurations:
 - `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
 - `IsaacSim DevContainer`: Isaac Sim runtime and ROS bridge side.
+- `UR10e cuMotion DevContainer`: cuMotion planner runtime.
 
-Use two VS Code windows if you want both running together.
+Use two VS Code windows for ROS 2 + Isaac Sim, or three if using cuMotion.
 
 ## Start the ROS 2 Side
 
@@ -58,19 +83,14 @@ Inside the container terminal:
 
 ```bash
 ./post_start.sh
-source install/setup.bash
 ```
 
-Launch terminal 1:
+Run `./post_start.sh` only the first time you open the container.
+
+Then start robot control:
 
 ```bash
-ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
-```
-
-Launch another terminal:
-
-```bash
-ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+./control.sh robot_control
 ```
 
 ## Start the Isaac Side
@@ -80,10 +100,24 @@ Open in container: `IsaacSim DevContainer`.
 Inside the container terminal:
 
 ```bash
-./startup_scripts/post_install_ros2_isaac_start.sh
+./control.sh sim
 ```
 
 In Isaac Sim: `Start the simulation`.
+
+## Start the cuMotion Side
+
+Open in container: `UR10e cuMotion DevContainer`.
+
+Inside the container terminal:
+
+```bash
+./control.sh cumotion
+```
+
+cuMotion can take a few minutes to start on first run.
+
+Start planning only after the `cuMotion is ready for planning queries` message appears.
 
 ## Quick Checks
 
@@ -94,13 +128,6 @@ If Isaac Sim does not start:
 ```bash
 docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 ```
-
-If ROS 2 commands cannot find packages:
-
-```bash
-source install/setup.bash
-```
-
 
 # Credits
 The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted fore this project 
