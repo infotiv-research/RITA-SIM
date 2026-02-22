@@ -52,8 +52,6 @@ The best place to learn the available workflows, start components, and understan
 ./control.sh help
 ```
 
-Run `./control.sh` commands in a terminal inside the relevant VS Code DevContainer.
-
 To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`):
 
 ```bash
