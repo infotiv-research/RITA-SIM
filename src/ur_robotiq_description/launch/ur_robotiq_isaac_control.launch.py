@@ -37,6 +37,7 @@ def launch_setup(context, *args, **kwargs):
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     activate_joint_controller = LaunchConfiguration("activate_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     joint_limit_params = PathJoinSubstitution(
         [FindPackageShare(ur_description_package), "config", ur_type, "joint_limits.yaml"]
@@ -75,6 +76,8 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "name:=", ur_type,
             " ",
+            "ur_type:=", ur_type,
+            " ",
             "tf_prefix:=", tf_prefix,
             " ",
             "use_fake_hardware:=false ",
@@ -109,7 +112,7 @@ def launch_setup(context, *args, **kwargs):
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
-        parameters=[robot_description],
+        parameters=[robot_description, {"use_sim_time": use_sim_time}],
         output="both",
     )
 
@@ -183,6 +186,7 @@ def generate_launch_description():
         DeclareLaunchArgument("initial_joint_controller", default_value="joint_trajectory_controller"),
         DeclareLaunchArgument("activate_joint_controller", default_value="true"),
         DeclareLaunchArgument("launch_rviz", default_value="false"),
+        DeclareLaunchArgument("use_sim_time", default_value="true"),
     ]
 
     return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])
