@@ -46,7 +46,7 @@ set_profile_params() {
   case "${profile}" in
     low)
       collision_cache_cuboid_value=100
-      collision_cache_mesh_value=40
+      collision_cache_mesh_value=100
       cumotion_max_attempts_value=28
       cumotion_num_graph_seeds_value=14
       cumotion_num_trajopt_seeds_value=10

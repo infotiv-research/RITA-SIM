@@ -44,6 +44,7 @@
   <exec_depend>moveit_msgs</exec_depend>
   <exec_depend>shape_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
 
   <exec_depend>ur_robotiq_description</exec_depend>
   <exec_depend>ur_description</exec_depend>
