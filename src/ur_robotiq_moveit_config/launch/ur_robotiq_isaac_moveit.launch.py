@@ -118,19 +118,11 @@ def launch_setup(context, *args, **kwargs):
     raw_joint_states_topic = LaunchConfiguration("raw_joint_states_topic")
     moveit_joint_states_topic = LaunchConfiguration("moveit_joint_states_topic")
     publish_environment_collisions = LaunchConfiguration("publish_environment_collisions")
-    enable_stacking_crates = LaunchConfiguration("enable_stacking_crates")
-    enable_flow_rack = LaunchConfiguration("enable_flow_rack")
-    enable_robot_arm_beam = LaunchConfiguration("enable_robot_arm_beam")
     environment_collision_world_frame = LaunchConfiguration("environment_collision_world_frame")
     environment_collision_publish_rate_hz = LaunchConfiguration(
         "environment_collision_publish_rate_hz"
     )
-    environment_collision_padding = LaunchConfiguration("environment_collision_padding")
     simlan_assets_root = LaunchConfiguration("simlan_assets_root")
-    stacking_crate_frame_prefix = LaunchConfiguration("stacking_crate_frame_prefix")
-    flow_rack_frame_hint = LaunchConfiguration("flow_rack_frame_hint")
-    robot_arm_beam_frame_hint = LaunchConfiguration("robot_arm_beam_frame_hint")
-    exclude_collision_objects = LaunchConfiguration("exclude_collision_objects")
 
     # Packages / files
     ur_description_package = "ur_description"
@@ -421,8 +413,8 @@ def launch_setup(context, *args, **kwargs):
 
     environment_collision_node = Node(
         package=moveit_config_package,
-        executable="isaac_environment_collision_publisher.py",
-        name="isaac_environment_collision_publisher",
+        executable="isaac_urdf_collision_publisher.py",
+        name="isaac_urdf_collision_publisher",
         condition=IfCondition(publish_environment_collisions),
         output="screen",
         parameters=[
@@ -430,14 +422,6 @@ def launch_setup(context, *args, **kwargs):
                 "assets_root": simlan_assets_root,
                 "world_frame": environment_collision_world_frame,
                 "publish_rate_hz": environment_collision_publish_rate_hz,
-                "stacking_crate_frame_prefix": stacking_crate_frame_prefix,
-                "flow_rack_frame_hint": flow_rack_frame_hint,
-                "robot_arm_beam_frame_hint": robot_arm_beam_frame_hint,
-                "enable_stacking_crates": enable_stacking_crates,
-                "enable_flow_rack": enable_flow_rack,
-                "enable_robot_arm_beam": enable_robot_arm_beam,
-                "collision_padding": environment_collision_padding,
-                "exclude_collision_objects": exclude_collision_objects,
                 "use_sim_time": use_sim_time,
             }
         ],
@@ -463,7 +447,7 @@ def generate_launch_description():
             "..",
             "..",
             "assets",
-            "simlan_environment",
+            "isaac_urdf_exports",
         )
     )
 
@@ -616,21 +600,6 @@ def generate_launch_description():
             description="Publish Isaac environment collisions to MoveIt planning scene.",
         ),
         DeclareLaunchArgument(
-            "enable_stacking_crates",
-            default_value="true",
-            description="Enable stacking crate collision objects in planning scene.",
-        ),
-        DeclareLaunchArgument(
-            "enable_flow_rack",
-            default_value="true",
-            description="Enable flow rack collision objects in planning scene.",
-        ),
-        DeclareLaunchArgument(
-            "enable_robot_arm_beam",
-            default_value="true",
-            description="Enable robot arm beam collision objects in planning scene.",
-        ),
-        DeclareLaunchArgument(
             "environment_collision_world_frame",
             default_value="world",
             description="World frame used for planning-scene collision objects.",
@@ -641,37 +610,9 @@ def generate_launch_description():
             description="Update rate for environment collision objects.",
         ),
         DeclareLaunchArgument(
-            "environment_collision_padding",
-            default_value="0.005",
-            description="Per-face padding (meters) added to published environment collision boxes.",
-        ),
-        DeclareLaunchArgument(
-            "exclude_collision_objects",
-            default_value="",
-            description=(
-                "Comma-separated exact object/frame names to suppress in environment collisions "
-                "(e.g. stacking_crate_upper_1 or simlan_stacking_crate_isaac_stacking_crate_upper_1)."
-            ),
-        ),
-        DeclareLaunchArgument(
             "simlan_assets_root",
             default_value=default_simlan_assets_root,
-            description="Path to assets/simlan_environment directory containing source SDFs.",
-        ),
-        DeclareLaunchArgument(
-            "stacking_crate_frame_prefix",
-            default_value="stacking_crate_isaac",
-            description="Substring used to discover stacking crate TF frames.",
-        ),
-        DeclareLaunchArgument(
-            "flow_rack_frame_hint",
-            default_value="flow_rack",
-            description="Substring used to discover flow rack TF frame.",
-        ),
-        DeclareLaunchArgument(
-            "robot_arm_beam_frame_hint",
-            default_value="robot_arm_beam",
-            description="Substring used to discover robot arm beam TF frame.",
+            description="Path to assets/isaac_urdf_exports directory containing exported URDF models.",
         ),
 
         # Xbox / joy
