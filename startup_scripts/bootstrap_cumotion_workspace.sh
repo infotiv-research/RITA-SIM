@@ -1,10 +1,10 @@
 #!/bin/bash
-"""
-The Dockerfile sets up fixed base dependencies (ROS, MoveIt, cuMotion, torch, etc.).
-cuRobo/torch can trigger GPU-specific CUDA JIT compilation on first run, those are
-generated and cached at runtime for the actual host GPU/driver environment.
-This script validates runtime prerequisites and builds missing local workspace packages.
-"""
+
+#The Dockerfile sets up fixed base dependencies (ROS, MoveIt, cuMotion, torch, etc.).
+#cuRobo/torch can trigger GPU-specific CUDA JIT compilation on first run, those are
+#generated and cached at runtime for the actual host GPU/driver environment.
+#This script validates runtime prerequisites and builds missing local workspace packages.
+
 set -euo pipefail
 
 ROS_DISTRO="${ROS_DISTRO:-humble}"
