@@ -77,15 +77,7 @@ Use two VS Code windows for ROS 2 + Isaac Sim, or three if using cuMotion.
 
 Open in container: `UR10 ROS2 DevContainer`.
 
-Inside the container terminal:
-
-```bash
-./post_start.sh
-```
-
-Run `./post_start.sh` only the first time you open the container.
-
-Then start robot control:
+Inside the container terminal start robot control:
 
 ```bash
 ./control.sh robot_control
