@@ -7,12 +7,15 @@ Responsibilities:
 - Apply orientation fallback attempts and home-joint motion.
 """
 
+import math
 import time
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose, PoseStamped
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints,
     JointConstraint,
+    MoveItErrorCodes,
     MotionPlanRequest,
     OrientationConstraint,
     PlanningOptions,
@@ -82,28 +85,401 @@ class MoveGroupOpsMixin:
             attempts = 1
         return attempts
 
-    def _send_move_group_goal(self, goal):
-        """Send a MoveGroup goal and wait for result. Returns (success, error_code)."""
-        self.get_logger().info("Sending MoveGroup goal...")
+    def _moveit_error_name(self, error_code):
+        """Return symbolic MoveIt error name for an integer error code."""
+        if not hasattr(self, "_moveit_error_name_map"):
+            mapping = {}
+            for name in dir(MoveItErrorCodes):
+                if not name.isupper():
+                    continue
+                value = getattr(MoveItErrorCodes, name)
+                if isinstance(value, int):
+                    mapping[int(value)] = name
+            self._moveit_error_name_map = mapping
+        return self._moveit_error_name_map.get(int(error_code), "UNKNOWN_ERROR_CODE")
+
+    @staticmethod
+    def _goal_status_name(status_code):
+        """Return symbolic action status name for a GoalStatus code."""
+        mapping = {
+            GoalStatus.STATUS_UNKNOWN: "STATUS_UNKNOWN",
+            GoalStatus.STATUS_ACCEPTED: "STATUS_ACCEPTED",
+            GoalStatus.STATUS_EXECUTING: "STATUS_EXECUTING",
+            GoalStatus.STATUS_CANCELING: "STATUS_CANCELING",
+            GoalStatus.STATUS_SUCCEEDED: "STATUS_SUCCEEDED",
+            GoalStatus.STATUS_CANCELED: "STATUS_CANCELED",
+            GoalStatus.STATUS_ABORTED: "STATUS_ABORTED",
+        }
+        return mapping.get(int(status_code), "STATUS_INVALID")
+
+    @staticmethod
+    def _duration_to_seconds(duration_msg):
+        """Convert builtin_interfaces/Duration to float seconds."""
+        if duration_msg is None:
+            return None
+        sec = getattr(duration_msg, "sec", None)
+        nanosec = getattr(duration_msg, "nanosec", None)
+        if sec is None or nanosec is None:
+            return None
+        return float(sec) + float(nanosec) * 1e-9
+
+    @staticmethod
+    def _trajectory_point_count(robot_trajectory):
+        """Best-effort joint-trajectory point count from RobotTrajectory."""
+        if robot_trajectory is None:
+            return 0
+        joint_traj = getattr(robot_trajectory, "joint_trajectory", None)
+        if joint_traj is None:
+            return 0
+        points = getattr(joint_traj, "points", None)
+        if points is None:
+            return 0
+        return len(points)
+
+    def _extract_pose_goal_debug_summary(self, goal):
+        """Extract target pose/tolerances from a pose goal for diagnostics."""
+        summary = {
+            "request_frame": None,
+            "target_pose_request": None,
+            "position_tolerance_m": None,
+            "orientation_tolerance_xyz": None,
+        }
+        if goal is None or getattr(goal, "request", None) is None:
+            return summary
+
+        request = goal.request
+        workspace_header = getattr(request, "workspace_parameters", None)
+        if workspace_header is not None:
+            header = getattr(workspace_header, "header", None)
+            if header is not None:
+                summary["request_frame"] = getattr(header, "frame_id", None)
+
+        goal_constraints = getattr(request, "goal_constraints", None) or []
+        if not goal_constraints:
+            return summary
+        constraints = goal_constraints[0]
+
+        pos_constraints = getattr(constraints, "position_constraints", None) or []
+        if pos_constraints:
+            pos_constraint = pos_constraints[0]
+            region = getattr(pos_constraint, "constraint_region", None)
+            if region is not None:
+                region_poses = getattr(region, "primitive_poses", None) or []
+                if region_poses:
+                    p = region_poses[0]
+                    summary["target_pose_request"] = (
+                        float(p.position.x),
+                        float(p.position.y),
+                        float(p.position.z),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                primitives = getattr(region, "primitives", None) or []
+                if primitives:
+                    dims = getattr(primitives[0], "dimensions", None) or []
+                    if dims:
+                        summary["position_tolerance_m"] = float(dims[0])
+            if not summary["request_frame"]:
+                header = getattr(pos_constraint, "header", None)
+                if header is not None:
+                    summary["request_frame"] = getattr(header, "frame_id", None)
+
+        orient_constraints = (
+            getattr(constraints, "orientation_constraints", None) or []
+        )
+        if orient_constraints:
+            oc = orient_constraints[0]
+            q = oc.orientation
+            pose = summary["target_pose_request"]
+            if pose is None:
+                summary["target_pose_request"] = (
+                    None,
+                    None,
+                    None,
+                    float(q.x),
+                    float(q.y),
+                    float(q.z),
+                    float(q.w),
+                )
+            else:
+                summary["target_pose_request"] = (
+                    pose[0],
+                    pose[1],
+                    pose[2],
+                    float(q.x),
+                    float(q.y),
+                    float(q.z),
+                    float(q.w),
+                )
+            summary["orientation_tolerance_xyz"] = (
+                float(oc.absolute_x_axis_tolerance),
+                float(oc.absolute_y_axis_tolerance),
+                float(oc.absolute_z_axis_tolerance),
+            )
+            if not summary["request_frame"]:
+                header = getattr(oc, "header", None)
+                if header is not None:
+                    summary["request_frame"] = getattr(header, "frame_id", None)
+        return summary
+
+    def _pose_only(self, pose_tuple):
+        if pose_tuple is None:
+            return None
+        if len(pose_tuple) < 3:
+            return None
+        if pose_tuple[0] is None or pose_tuple[1] is None or pose_tuple[2] is None:
+            return None
+        return (float(pose_tuple[0]), float(pose_tuple[1]), float(pose_tuple[2]))
+
+    def _quat_only(self, pose_tuple):
+        if pose_tuple is None or len(pose_tuple) < 7:
+            return None
+        if (
+            pose_tuple[3] is None
+            or pose_tuple[4] is None
+            or pose_tuple[5] is None
+            or pose_tuple[6] is None
+        ):
+            return None
+        return (
+            float(pose_tuple[3]),
+            float(pose_tuple[4]),
+            float(pose_tuple[5]),
+            float(pose_tuple[6]),
+        )
+
+    def _distance(self, p0, p1):
+        if p0 is None or p1 is None:
+            return None
+        dx = float(p0[0]) - float(p1[0])
+        dy = float(p0[1]) - float(p1[1])
+        dz = float(p0[2]) - float(p1[2])
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    def _quat_angular_distance_rad(self, q0, q1):
+        if q0 is None or q1 is None:
+            return None
+        q0x, q0y, q0z, q0w = self._normalize_quaternion(*q0)
+        q1x, q1y, q1z, q1w = self._normalize_quaternion(*q1)
+        dot = abs(q0x * q1x + q0y * q1y + q0z * q1z + q0w * q1w)
+        dot = max(0.0, min(1.0, dot))
+        return 2.0 * math.acos(dot)
+
+    def _sample_frame_jitter(self, source_frame, target_frame, samples=4):
+        """Sample transform repeatedly and report max translation/orientation spread."""
+        captured = []
+        for _ in range(max(1, int(samples))):
+            pose = self._transform_pose_between_frames(
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                source_frame,
+                target_frame,
+            )
+            if pose is not None:
+                captured.append(pose)
+            time.sleep(0.02)
+
+        if len(captured) < 2:
+            return None
+
+        base_pose = captured[0]
+        base_xyz = self._pose_only(base_pose)
+        base_q = self._quat_only(base_pose)
+        max_pos = 0.0
+        max_ang = 0.0
+        for pose in captured[1:]:
+            pos_delta = self._distance(base_xyz, self._pose_only(pose))
+            if pos_delta is not None:
+                max_pos = max(max_pos, pos_delta)
+            ang_delta = self._quat_angular_distance_rad(base_q, self._quat_only(pose))
+            if ang_delta is not None:
+                max_ang = max(max_ang, ang_delta)
+        return (max_pos, max_ang)
+
+    def _log_failure_hints(self, attempt_id, error_name, debug_meta):
+        """Emit likely-cause hints for failed pose plans."""
+        request_frame = str(
+            (debug_meta or {}).get("request_frame")
+            or getattr(self, "goal_request_frame", self.world_frame)
+        )
+        target_pose_request = (debug_meta or {}).get("target_pose_request")
+        target_pos = self._pose_only(target_pose_request)
+        target_q = self._quat_only(target_pose_request)
+        pos_tol = (debug_meta or {}).get("position_tolerance_m")
+        orient_tol_xyz = (debug_meta or {}).get("orientation_tolerance_xyz")
+
+        ee_pose_request = self._transform_pose_between_frames(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            END_EFFECTOR_LINK,
+            request_frame,
+        )
+        ee_pos = self._pose_only(ee_pose_request)
+        ee_q = self._quat_only(ee_pose_request)
+
+        pos_delta = self._distance(ee_pos, target_pos)
+        ang_delta = self._quat_angular_distance_rad(ee_q, target_q)
+        if pos_delta is not None:
+            self.get_logger().warn(
+                f"[{attempt_id}] EE->goal position delta in {request_frame}: {pos_delta:.4f} m "
+                f"(position tolerance={pos_tol if pos_tol is not None else 'n/a'})."
+            )
+        if ang_delta is not None:
+            self.get_logger().warn(
+                f"[{attempt_id}] EE->goal orientation delta in {request_frame}: {ang_delta:.4f} rad "
+                f"(orientation tolerance xyz={orient_tol_xyz if orient_tol_xyz is not None else 'n/a'})."
+            )
+
+        jitter = self._sample_frame_jitter(self.world_frame, request_frame, samples=4)
+        if jitter is not None:
+            jitter_pos, jitter_ang = jitter
+            self.get_logger().warn(
+                f"[{attempt_id}] Frame jitter sample world->{request_frame}: "
+                f"max_pos={jitter_pos:.6f} m, max_ang={jitter_ang:.6f} rad."
+            )
+
+        target_obj = (debug_meta or {}).get("target_object_id")
+        if target_obj:
+            world_obj_present = None
+            if hasattr(self, "_get_world_collision_object"):
+                world_obj_present = self._get_world_collision_object(target_obj) is not None
+            self.get_logger().warn(
+                f"[{attempt_id}] Collision state: "
+                f"target_object={target_obj}, "
+                f"attached_id={getattr(self, '_attached_object_id', None)}, "
+                f"target_suppressed={getattr(self, '_target_object_suppressed', None)}, "
+                f"cumotion_attached={getattr(self, '_cumotion_object_attached', None)}, "
+                f"world_object_present={world_obj_present}."
+            )
+
+        hints = []
+        if error_name in (
+            "NO_IK_SOLUTION",
+            "GOAL_CONSTRAINTS_VIOLATED",
+            "INVALID_GOAL_CONSTRAINTS",
+            "PLANNING_FAILED",
+        ):
+            hints.append(
+                "Goal may be near reach/orientation feasibility boundary for current start state."
+            )
+        if ang_delta is not None and orient_tol_xyz is not None:
+            max_tol = max(float(orient_tol_xyz[0]), float(orient_tol_xyz[1]), float(orient_tol_xyz[2]))
+            if ang_delta > max_tol:
+                hints.append(
+                    "Current end-effector orientation gap exceeds configured orientation tolerance."
+                )
+        if jitter is not None and (jitter[0] > 0.003 or jitter[1] > 0.03):
+            hints.append(
+                "Detected non-trivial frame jitter; check TF stability and frame/tool consistency."
+            )
+        if target_obj and getattr(self, "_attached_object_id", None) == str(target_obj):
+            if hasattr(self, "_get_world_collision_object"):
+                obj = self._get_world_collision_object(target_obj)
+                if obj is not None:
+                    hints.append(
+                        "Target object appears both attached and in world collisions; duplicate collision geometry can block IK."
+                    )
+        if (
+            target_obj
+            and getattr(self, "_target_object_suppressed", None) is False
+            and str((debug_meta or {}).get("stage", "")) == "dropoff"
+        ):
+            hints.append(
+                "Dropoff planned while target world object was not suppressed; environment collision may over-constrain IK."
+            )
+
+        if hints:
+            for hint in hints:
+                self.get_logger().warn(f"[{attempt_id}] Possible cause: {hint}")
+        else:
+            self.get_logger().warn(
+                f"[{attempt_id}] No single dominant cause detected from local diagnostics."
+            )
+
+    def _send_move_group_goal(
+        self,
+        goal,
+        context_label=None,
+        debug_meta=None,
+        run_failure_diagnostics=False,
+    ):
+        """Send a MoveGroup goal and wait for result."""
+        context = str(context_label) if context_label else "unlabeled_goal"
+        self.get_logger().info(f"Sending MoveGroup goal [{context}]...")
         future = self.move_group_client.send_goal_async(goal)
         goal_handle = self._wait_future_result(future, timeout_sec=30.0)
         if goal_handle is None or not goal_handle.accepted:
-            self.get_logger().error("MoveGroup goal was rejected!")
+            self.get_logger().error(f"MoveGroup goal [{context}] was rejected!")
             return False
 
-        self.get_logger().info("MoveGroup goal accepted, waiting for result...")
+        self.get_logger().info(
+            f"MoveGroup goal accepted [{context}], waiting for result..."
+        )
         result_future = goal_handle.get_result_async()
         result = self._wait_future_result(result_future, timeout_sec=120.0)
         if result is None:
-            self.get_logger().error("MoveGroup returned no result!")
+            self.get_logger().error(f"MoveGroup returned no result for [{context}]!")
             return False
 
-        error_code = result.result.error_code.val
+        error_code = int(result.result.error_code.val)
+        error_name = self._moveit_error_name(error_code)
+        status_code = int(getattr(result, "status", GoalStatus.STATUS_UNKNOWN))
+        status_name = self._goal_status_name(status_code)
+        planning_time = self._duration_to_seconds(
+            getattr(result.result, "planning_time", None)
+        )
+        planned_points = self._trajectory_point_count(
+            getattr(result.result, "planned_trajectory", None)
+        )
+        executed_points = self._trajectory_point_count(
+            getattr(result.result, "executed_trajectory", None)
+        )
+
         if error_code == 1:  # SUCCESS
-            self.get_logger().info("MoveGroup motion succeeded.")
+            if planning_time is not None:
+                self.get_logger().info(
+                    f"MoveGroup motion succeeded [{context}] "
+                    f"(status={status_name}, planning_time={planning_time:.3f}s, "
+                    f"planned_points={planned_points}, executed_points={executed_points})."
+                )
+            else:
+                self.get_logger().info(
+                    f"MoveGroup motion succeeded [{context}] "
+                    f"(status={status_name}, planned_points={planned_points}, "
+                    f"executed_points={executed_points})."
+                )
             return True
 
-        self.get_logger().error(f"MoveGroup failed with error code: {error_code}")
+        self.get_logger().error(
+            f"MoveGroup failed [{context}] with error_code={error_code} ({error_name}), "
+            f"status={status_name}, planned_points={planned_points}, "
+            f"executed_points={executed_points}."
+        )
+        if run_failure_diagnostics:
+            meta = dict(debug_meta or {})
+            meta.setdefault("stage", "unknown")
+            meta.setdefault("attempt_id", context)
+            pose_summary = self._extract_pose_goal_debug_summary(goal)
+            for key, value in pose_summary.items():
+                if key not in meta or meta[key] is None:
+                    meta[key] = value
+            self._log_failure_hints(
+                str(meta.get("attempt_id", context)),
+                error_name=error_name,
+                debug_meta=meta,
+            )
         return False
 
     def _build_pose_goal(

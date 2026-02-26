@@ -172,11 +172,11 @@ geometry:
         - center: [0.0, 0.0, 0.01]
           radius: 0.085
         - center: [0.003, -0.022, -0.009]
-          radius: 0.082
+          radius: 0.11
 
       upper_arm_link:
         - center: [0.008, -0.001, 0.184]
-          radius: 0.077
+          radius: 0.094
         - center: [-0.031, 0.0, 0.176]
           radius: 0.084
         - center: [-0.068, -0.005, 0.179]
