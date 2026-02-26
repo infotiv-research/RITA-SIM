@@ -1,6 +1,6 @@
 {
   "name": "UR10e cuMotion DevContainer",
-  "dockerComposeFile": ["../../setup/docker-compose.ros2.yaml"],
+  "dockerComposeFile": ["../../setup/docker-compose.cumotion.yaml"],
   "service": "cumotion",
   "workspaceFolder": "/ros2_ws",
   "overrideCommand": false,

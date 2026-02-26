@@ -74,6 +74,12 @@ Isaac container commands:
 
 UR10 cuMotion container commands:
   cumotion        Start cuMotion
+  pick_and_place  Start pick-and-place node.
+                  Usage:
+                    ./control.sh pick_and_place
+                    ./control.sh pick_and_place <object_id> [object_frame]
+                    ./control.sh pick_and_place _03_cracker_box _03_cracker_box
+                    ./control.sh pick_and_place _03_cracker_box _03_cracker_box planning_pipeline:=ompl
 
 Misc:
   cmd <...>       Run any command directly (passthrough)
@@ -88,10 +94,24 @@ source_ws() {
 
 kill_processes() {
     echo "---[ killing launch processes ]---"
-    pkill -f ur_robotiq_isaac_control.launch.py 2>/dev/null
-    pkill -f ur_robotiq_isaac_moveit.launch.py 2>/dev/null
-    pkill -f move_group 2>/dev/null
-    pkill -f rviz2 2>/dev/null
+    local patterns=(
+        "ur_robotiq_isaac_control.launch.py"
+        "ur_robotiq_isaac_moveit.launch.py"
+        "pick_and_place.launch.py"
+        "pick_and_place_main.py"
+        "start_cumotion_planner.sh"
+        "bootstrap_cumotion_workspace.sh"
+        "cumotion_planner_upstream_framefix.py"
+        "cumotion_planner_node"
+        "isaac_urdf_collision_publisher.py"
+        "moveit_joint_state_filter"
+        "move_group"
+        "rviz2"
+    )
+
+    for pattern in "${patterns[@]}"; do
+        pkill -f "$pattern" 2>/dev/null || true
+    done
 }
 
 build() {
@@ -156,6 +176,31 @@ cumotion() {
     echo "---[ starting cuMotion script ]---"
     ./startup_scripts/start_cumotion_planner.sh
 }
+
+pick_and_place() {
+    echo "---[ launching pick-and-place node ]---"
+    source_ws
+
+    # Allow shorthand:
+    #   ./control.sh pick_and_place <object_id> [object_frame]
+    # while still supporting full ros2 launch args with := passthrough.
+    if [[ $# -ge 1 && "$1" != *":="* ]]; then
+        local object_id="$1"
+        local object_frame="$1"
+        shift
+        if [[ $# -ge 1 && "$1" != *":="* ]]; then
+            object_frame="$1"
+            shift
+        fi
+        ros2 launch ur_robotiq_moveit_config pick_and_place.launch.py \
+            target_object_id:="$object_id" \
+            target_object_frame:="$object_frame" \
+            "$@"
+        return
+    fi
+
+    ros2 launch ur_robotiq_moveit_config pick_and_place.launch.py "$@"
+}
 #endregion
 
 #################################################################
@@ -182,6 +227,9 @@ elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "cumotion" ]]; then
     cumotion
+elif [[ "$1" == "pick_and_place" ]]; then
+    shift 1
+    pick_and_place "$@"
 elif [[ "$1" == "cmd" ]]; then
     shift 1
     echo "running ::: $*"

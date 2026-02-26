@@ -7,6 +7,7 @@ Upstream cuMotion action server with collision-object frame correction.
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import xml.etree.ElementTree as ET
 
@@ -18,12 +19,28 @@ from rclpy.executors import MultiThreadedExecutor
 import tf2_ros
 
 
+class _CuroboWarpCacheWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Object already in warp cache, using existing instance for:" not in (
+            record.getMessage()
+        )
+
+
 class UpstreamFrameFixCumotionActionServer(CumotionActionServer):
     """Upstream action server with only world-object frame transform override."""
 
     def __init__(self) -> None:
         super().__init__()
+        self.declare_parameter("suppress_curobo_warp_cache_warnings", True)
         self.declare_parameter("planning_scene_world_frame", "world")
+
+        suppress_warp_cache_warnings = (
+            self.get_parameter("suppress_curobo_warp_cache_warnings")
+            .get_parameter_value()
+            .bool_value
+        )
+        if suppress_warp_cache_warnings:
+            self._install_curobo_warp_cache_warning_filter()
 
         planning_scene_world_frame = (
             self.get_parameter("planning_scene_world_frame")
@@ -41,6 +58,15 @@ class UpstreamFrameFixCumotionActionServer(CumotionActionServer):
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
         self._warned_tf_lookup = False
         self._static_world_to_base_pose = self._parse_urdf_world_to_base()
+
+    @staticmethod
+    def _install_curobo_warp_cache_warning_filter() -> None:
+        curobo_logger = logging.getLogger("curobo")
+        if not any(
+            isinstance(existing_filter, _CuroboWarpCacheWarningFilter)
+            for existing_filter in curobo_logger.filters
+        ):
+            curobo_logger.addFilter(_CuroboWarpCacheWarningFilter())
 
     @staticmethod
     def _rpy_to_quaternion(roll: float, pitch: float, yaw: float):

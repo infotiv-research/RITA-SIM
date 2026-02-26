@@ -1,4 +1,5 @@
 /build/
+/assets/isaac_urdf_exports/
 /install/
 /log/
 /.cache/

@@ -146,6 +146,8 @@ ENV LD_LIBRARY_PATH=/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib
 FROM full AS full-with-deps
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG ISAAC_ROS_APT_CHANNEL=release-3
+ARG ISAAC_ROS_APT_COMPONENT=release-3.0
 
 # Paquets ROS supplémentaires (hardware interface, joy, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -156,6 +158,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-xacro \
     python3-colcon-common-extensions \
     python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update \
+    && keyring=/usr/share/keyrings/nvidia-isaac-ros.gpg \
+    && curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+       | gpg --dearmor -o ${keyring} \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=${keyring}] https://isaac.download.nvidia.com/isaac-ros/${ISAAC_ROS_APT_CHANNEL} $(. /etc/os-release && echo ${UBUNTU_CODENAME}) ${ISAAC_ROS_APT_COMPONENT}" \
+       > /etc/apt/sources.list.d/nvidia-isaac-ros.list \
+    && apt-get update \
+    && if apt-cache show ros-humble-isaac-ros-cumotion-interfaces >/dev/null 2>&1; then \
+         apt-get install -y --no-install-recommends ros-humble-isaac-ros-cumotion-interfaces; \
+       else \
+         echo "WARNING: ros-humble-isaac-ros-cumotion-interfaces not found in configured apt sources."; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Prépare l'espace de travail
