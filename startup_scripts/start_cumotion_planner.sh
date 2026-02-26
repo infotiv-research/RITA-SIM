@@ -60,14 +60,14 @@ set_profile_params() {
     high)
       collision_cache_cuboid_value=200
       collision_cache_mesh_value=100
-      cumotion_max_attempts_value=48
+      cumotion_max_attempts_value=60
       cumotion_num_graph_seeds_value=24
       cumotion_num_trajopt_seeds_value=24
       cumotion_num_trajopt_time_steps_value=64
       cumotion_trajopt_finetune_iters_value=600
       cumotion_interpolation_dt_value=0.02
       cumotion_time_dilation_factor_value=0.25
-      cumotion_pose_ik_retries_value=2
+      cumotion_pose_ik_retries_value=4
       ;;
     *)
       log "WARNING: Unknown profile '${profile}', using low."

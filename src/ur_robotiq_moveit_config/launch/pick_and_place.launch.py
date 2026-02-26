@@ -47,7 +47,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "release_pose_qx",
-            default_value="0.0",
+            default_value="1.0",
             description="Release pose quaternion x component.",
         ),
         DeclareLaunchArgument(
@@ -62,7 +62,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "release_pose_qw",
-            default_value="1.0",
+            default_value="0.0",
             description="Release pose quaternion w component.",
         ),
         DeclareLaunchArgument(
@@ -109,6 +109,13 @@ def generate_launch_description():
             "dropoff_max_pose_retries",
             default_value="3",
             description="Maximum number of explicit dropoff pose planning retries.",
+        ),
+        DeclareLaunchArgument(
+            "dropoff_debug_diagnostics",
+            default_value="true",
+            description=(
+                "Enable verbose per-attempt diagnostics for dropoff retry failures."
+            ),
         ),
         DeclareLaunchArgument(
             "cumotion_attachment_target_sphere_diameter_m",
@@ -172,6 +179,9 @@ def generate_launch_description():
                 ),
                 "dropoff_max_pose_retries": LaunchConfiguration(
                     "dropoff_max_pose_retries"
+                ),
+                "dropoff_debug_diagnostics": LaunchConfiguration(
+                    "dropoff_debug_diagnostics"
                 ),
                 "cumotion_attachment_target_sphere_diameter_m": LaunchConfiguration(
                     "cumotion_attachment_target_sphere_diameter_m"

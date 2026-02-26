@@ -88,6 +88,7 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("dropoff_relaxed_orientation_z_tolerance_rad", 3.14)
         self.declare_parameter("dropoff_use_current_orientation_fallback", True)
         self.declare_parameter("dropoff_max_pose_retries", 3)
+        self.declare_parameter("dropoff_debug_diagnostics", True)
         self.declare_parameter("verify_attached_in_scene", True)
         self.declare_parameter("enable_cumotion_object_attachment", True)
         self.declare_parameter("cumotion_attach_action_name", "planner_attach_object")
@@ -186,6 +187,9 @@ class PickAndPlaceTargetObject(
         self.dropoff_max_pose_retries = int(
             self.get_parameter("dropoff_max_pose_retries").value
         )
+        self.dropoff_debug_diagnostics = bool(
+            self.get_parameter("dropoff_debug_diagnostics").value
+        )
         self.verify_attached_in_scene = self.get_parameter(
             "verify_attached_in_scene"
         ).value
@@ -269,6 +273,7 @@ class PickAndPlaceTargetObject(
         )
 
         self._executed = False
+        self._shutdown_requested = False
 
         # Run execution in a background thread after a wall-clock delay
         self._thread = threading.Thread(target=self._delayed_execute, daemon=True)
@@ -295,6 +300,7 @@ class PickAndPlaceTargetObject(
             f"relaxed_orientation_tolerance_z={float(self.dropoff_relaxed_orientation_z_tolerance_rad):.3f}rad, "
             f"use_current_orientation_fallback={bool(self.dropoff_use_current_orientation_fallback)}, "
             f"max_pose_retries={int(self.dropoff_max_pose_retries)}, "
+            f"debug_diagnostics={bool(self.dropoff_debug_diagnostics)}, "
             f"move_group_replan_attempts={int(self.move_group_replan_attempts)}"
         )
 
@@ -643,6 +649,7 @@ class PickAndPlaceTargetObject(
         self.get_logger().info(
             "Pick-and-place sequence complete. Object released, environment collision restored, and robot returned home."
         )
+        self._request_shutdown("Sequence complete")
 
     def _move_to_release_pose_with_retries(self):
         """Move to release pose using a deterministic dropoff retry ladder."""
@@ -720,6 +727,7 @@ class PickAndPlaceTargetObject(
         ):
             oqx, oqy, oqz, oqw = orientation
             tol_x, tol_y, tol_z = orient_tol_xyz
+            attempt_id = f"dropoff_attempt_{idx}_{source}_{mode}"
             self.get_logger().info(
                 f"Dropoff planning attempt {idx}/{total_attempts}: "
                 f"source={source}, mode={mode}, "
@@ -745,10 +753,92 @@ class PickAndPlaceTargetObject(
                 orientation_tolerance_xyz=orient_tol_xyz,
                 position_tolerance_m=position_tolerance,
             )
-            if self._send_move_group_goal(goal):
+            debug_meta = {
+                "stage": "dropoff",
+                "attempt_id": attempt_id,
+                "attempt_index": int(idx),
+                "total_attempts": int(total_attempts),
+                "attempt_source": source,
+                "attempt_mode": mode,
+                "target_object_id": str(self.target_object_id),
+                "target_pose_world": (
+                    float(target_x),
+                    float(target_y),
+                    float(target_z),
+                    float(oqx),
+                    float(oqy),
+                    float(oqz),
+                    float(oqw),
+                ),
+                "orientation_tolerance_xyz": (
+                    float(tol_x),
+                    float(tol_y),
+                    float(tol_z),
+                ),
+                "position_tolerance_m": float(position_tolerance),
+            }
+            if self._send_move_group_goal(
+                goal,
+                context_label=attempt_id,
+                debug_meta=debug_meta,
+                run_failure_diagnostics=bool(self.dropoff_debug_diagnostics),
+            ):
+                if source == "current_ee" and mode == "relaxed":
+                    achieved_orientation = self._lookup_end_effector_orientation()
+                    cfg_qx, cfg_qy, cfg_qz, cfg_qw = release_orientation
+                    used_qx, used_qy, used_qz, used_qw = orientation
+                    self.get_logger().info(
+                        "Dropoff accepted with current_ee+relaxed orientation. "
+                        f"configured_q=({cfg_qx:.4f}, {cfg_qy:.4f}, {cfg_qz:.4f}, {cfg_qw:.4f}), "
+                        f"used_target_q=({used_qx:.4f}, {used_qy:.4f}, {used_qz:.4f}, {used_qw:.4f}), "
+                        f"orientation_tol_xyz=({tol_x:.3f}, {tol_y:.3f}, {tol_z:.3f})rad."
+                    )
+                    config_vs_used = self._quat_angular_distance_rad(
+                        release_orientation, orientation
+                    )
+                    if config_vs_used is not None:
+                        self.get_logger().info(
+                            "Dropoff orientation compare: configured->used_target "
+                            f"delta={config_vs_used:.4f} rad "
+                            f"({math.degrees(config_vs_used):.2f} deg)."
+                        )
+                    if achieved_orientation is not None:
+                        ach_qx, ach_qy, ach_qz, ach_qw = achieved_orientation
+                        self.get_logger().info(
+                            "Dropoff achieved EE orientation (world frame): "
+                            f"achieved_q=({ach_qx:.4f}, {ach_qy:.4f}, {ach_qz:.4f}, {ach_qw:.4f})."
+                        )
+                        config_vs_achieved = self._quat_angular_distance_rad(
+                            release_orientation, achieved_orientation
+                        )
+                        used_vs_achieved = self._quat_angular_distance_rad(
+                            orientation, achieved_orientation
+                        )
+                        if config_vs_achieved is not None:
+                            self.get_logger().info(
+                                "Dropoff orientation compare: configured->achieved "
+                                f"delta={config_vs_achieved:.4f} rad "
+                                f"({math.degrees(config_vs_achieved):.2f} deg)."
+                            )
+                        if used_vs_achieved is not None:
+                            self.get_logger().info(
+                                "Dropoff orientation compare: used_target->achieved "
+                                f"delta={used_vs_achieved:.4f} rad "
+                                f"({math.degrees(used_vs_achieved):.2f} deg)."
+                            )
+                    else:
+                        self.get_logger().warn(
+                            "Dropoff accepted with current_ee+relaxed but could not "
+                            "read achieved EE orientation for comparison."
+                        )
+                self.get_logger().info(
+                    f"Dropoff planning succeeded on attempt {idx}/{total_attempts}: "
+                    f"source={source}, mode={mode}, attempt_id={attempt_id}."
+                )
                 return True
             self.get_logger().warn(
-                f"Dropoff planning attempt {idx}/{total_attempts} failed."
+                f"Dropoff planning attempt {idx}/{total_attempts} failed "
+                f"(attempt_id={attempt_id})."
             )
         return False
 
@@ -788,3 +878,15 @@ class PickAndPlaceTargetObject(
         if seconds <= 0.0:
             return
         time.sleep(float(seconds))
+
+    def _request_shutdown(self, reason):
+        """Request process shutdown once so launch exits without manual Ctrl+C."""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self.get_logger().info(
+            f"Shutting down pick-and-place node: {reason}. "
+            "No manual Ctrl+C required."
+        )
+        if rclpy.ok():
+            rclpy.shutdown()

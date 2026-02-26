@@ -103,8 +103,6 @@ def launch_setup(context, *args, **kwargs):
         "cumotion_publish_curobo_world_as_voxels"
     )
     cumotion_publish_voxel_size = LaunchConfiguration("cumotion_publish_voxel_size")
-    cumotion_pose_ik_retries = LaunchConfiguration("cumotion_pose_ik_retries")
-    cumotion_reject_goal_while_busy = LaunchConfiguration("cumotion_reject_goal_while_busy")
 
     joy_dev = LaunchConfiguration("joy_dev")
     joy_deadzone = LaunchConfiguration("joy_deadzone")
@@ -397,8 +395,6 @@ def launch_setup(context, *args, **kwargs):
                 "voxel_size": cumotion_voxel_size,
                 "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
                 "publish_voxel_size": cumotion_publish_voxel_size,
-                "pose_ik_retry_count": cumotion_pose_ik_retries,
-                "reject_goal_while_busy": cumotion_reject_goal_while_busy,
             },
             {"use_sim_time": use_sim_time},
         ],
@@ -584,16 +580,6 @@ def generate_launch_description():
             "cumotion_publish_voxel_size",
             default_value="0.05",
             description="Published debug voxel size for /curobo/voxels Marker topic.",
-        ),
-        DeclareLaunchArgument(
-            "cumotion_pose_ik_retries",
-            default_value="2",
-            description="Number of extra retries for pose-goal IK failures in patched cuMotion node.",
-        ),
-        DeclareLaunchArgument(
-            "cumotion_reject_goal_while_busy",
-            default_value="true",
-            description="Reject new goals while planner is executing an active goal.",
         ),
         DeclareLaunchArgument(
             "enable_joint_state_filter",
