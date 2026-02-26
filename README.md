@@ -44,7 +44,19 @@ If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) 
 Dev Containers: Reopen in Container
 ```
 
-## Quick Start
+## DevContainer Choices
+
+You have three configurations:
+- `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
+- `IsaacSim DevContainer`: Isaac Sim runtime and ROS bridge side.
+- `UR10e cuMotion DevContainer`: cuMotion planner runtime.
+
+Use two VS Code windows for ROS 2 + Isaac Sim, or three if using cuMotion.
+
+
+## Start the ROS 2 Side
+
+> Open in container: `UR10 ROS2 DevContainer`.
 
 The best place to learn the available workflows, start components, and understand the command entrypoints is:
 
@@ -64,28 +76,9 @@ To clean and rebuild the workspace:
 ./control.sh build
 ```
 
-## DevContainer Choices
 
-You have three configurations:
-- `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
-- `IsaacSim DevContainer`: Isaac Sim runtime and ROS bridge side.
-- `UR10e cuMotion DevContainer`: cuMotion planner runtime.
 
-Use two VS Code windows for ROS 2 + Isaac Sim, or three if using cuMotion.
-
-## Start the ROS 2 Side
-
-Open in container: `UR10 ROS2 DevContainer`.
-
-Inside the container terminal:
-
-```bash
-./post_start.sh
-```
-
-Run `./post_start.sh` only the first time you open the container.
-
-Then start robot control:
+Inside the container terminal start robot control:
 
 ```bash
 ./control.sh robot_control
@@ -93,7 +86,7 @@ Then start robot control:
 
 ## Start the Isaac Side
 
-Open in container: `IsaacSim DevContainer`.
+> Open in container: `IsaacSim DevContainer`.
 
 Inside the container terminal:
 

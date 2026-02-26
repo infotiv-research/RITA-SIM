@@ -4,7 +4,6 @@
   "service": "cumotion",
   "workspaceFolder": "/ros2_ws",
   "overrideCommand": false,
-  "postCreateCommand": "./startup_scripts/bootstrap_cumotion_workspace.sh",
   "postStartCommand": "./startup_scripts/bootstrap_cumotion_workspace.sh",
   "settings": {
     "terminal.integrated.defaultProfile.linux": "bash"
