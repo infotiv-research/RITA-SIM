@@ -1,0 +1,790 @@
+"""
+Main node workflow and orchestration for target-object pick-and-place.
+
+Responsibilities:
+- Declare/read runtime parameters and initialize ROS interfaces.
+- Execute the full pick->grasp->attach->release->home sequence.
+- Coordinate TF/math, planning, scene, and gripper helpers.
+"""
+
+from collections import deque
+import math
+import threading
+import time
+
+import rclpy
+from control_msgs.action import FollowJointTrajectory
+from moveit_msgs.action import MoveGroup
+from moveit_msgs.msg import PlanningScene
+from moveit_msgs.srv import GetPlanningScene
+from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Bool, String
+from tf2_ros import Buffer, TransformListener
+
+from .constants import (
+    END_EFFECTOR_LINK,
+    GRIPPER_TRAJECTORY_ACTION,
+)
+from .cumotion_attachment_ops import CumotionAttachmentOpsMixin
+from .gripper_control import GripperControlMixin
+from .math_tf_utils import MathTfMixin
+from .move_group_ops import MoveGroupOpsMixin
+from .planning_scene_ops import PlanningSceneOpsMixin
+
+
+class PickAndPlaceTargetObject(
+    Node,
+    GripperControlMixin,
+    MathTfMixin,
+    PlanningSceneOpsMixin,
+    MoveGroupOpsMixin,
+    CumotionAttachmentOpsMixin,
+):
+    def __init__(self):
+        super().__init__("pick_and_place")
+
+        # Parameters
+        self.declare_parameter("target_object_id", "rubiks_cube")
+        self.declare_parameter("target_object_frame", "rubiks_cube")
+        self.declare_parameter("world_frame", "world")
+        self.declare_parameter("pre_grasp_offset_z", 0.15)
+        self.declare_parameter("planning_time", 10.0)
+        self.declare_parameter("max_velocity_scaling", 0.3)
+        self.declare_parameter("max_acceleration_scaling", 0.3)
+        self.declare_parameter("num_planning_attempts", 10)
+        self.declare_parameter("planning_pipeline", "cumotion")
+        self.declare_parameter("grasp_offset_z", 0.00)
+        self.declare_parameter("post_grasp_lift_z", 0.08)
+        self.declare_parameter("grasp_retry_count", 4)
+        self.declare_parameter("grasp_retry_step_z", 0.005)
+        self.declare_parameter("position_tolerance_m", 0.01)
+        self.declare_parameter("orientation_tolerance_rad", 0.1)
+        self.declare_parameter("move_group_replan_attempts", 1)
+        self.declare_parameter("enable_position_only_fallback", False)
+        self.declare_parameter("goal_request_frame", "base_link")
+        self.declare_parameter("gripper_close_position", 0.6)
+        self.declare_parameter("post_grasp_settle_s", 0.5)
+        self.declare_parameter("home_joint_tolerance_rad", 0.01)
+        self.declare_parameter("gripper_result_timeout_s", 30.0)
+        self.declare_parameter("close_early_success_wait_s", 2.0)
+        self.declare_parameter("close_success_min_position", 0.2)
+        self.declare_parameter("close_success_min_delta", 0.05)
+        self.declare_parameter("release_pose_x", -1.691)
+        self.declare_parameter("release_pose_y", 0.96)
+        self.declare_parameter("release_pose_z", 0.7)
+        self.declare_parameter("release_pose_qx", 0.0)
+        self.declare_parameter("release_pose_qy", 0.0)
+        self.declare_parameter("release_pose_qz", 0.0)
+        self.declare_parameter("release_pose_qw", 1.0)
+        self.declare_parameter("dropoff_planning_time_s", 8.0)
+        self.declare_parameter("dropoff_num_planning_attempts", 8)
+        self.declare_parameter("dropoff_position_tolerance_m", 0.015)
+        self.declare_parameter("dropoff_orientation_tolerance_rad", 0.35)
+        self.declare_parameter("dropoff_orientation_z_tolerance_rad", 2.5)
+        self.declare_parameter("dropoff_relaxed_orientation_tolerance_rad", 0.8)
+        self.declare_parameter("dropoff_relaxed_orientation_z_tolerance_rad", 3.14)
+        self.declare_parameter("dropoff_use_current_orientation_fallback", True)
+        self.declare_parameter("dropoff_max_pose_retries", 3)
+        self.declare_parameter("verify_attached_in_scene", True)
+        self.declare_parameter("enable_cumotion_object_attachment", True)
+        self.declare_parameter("cumotion_attach_action_name", "planner_attach_object")
+        self.declare_parameter("cumotion_attach_object_link_name", "attached_object")
+        self.declare_parameter("cumotion_object_collision_inflation_m", 0.008)
+        self.declare_parameter("cumotion_attachment_target_sphere_diameter_m", 0.03)
+        self.declare_parameter("cumotion_attachment_min_spheres", 8)
+        self.declare_parameter("cumotion_attachment_max_spheres", 32)
+        self.declare_parameter("cumotion_attach_timeout_s", 2.0)
+        self.declare_parameter("cumotion_detach_timeout_s", 2.0)
+        self.declare_parameter(
+            "gripper_touch_links",
+            [
+                END_EFFECTOR_LINK,
+                "tool0",
+                "robotiq_140_base_link",
+                "left_inner_finger",
+                "right_inner_finger",
+                "left_inner_finger_pad",
+                "right_inner_finger_pad",
+                "left_outer_finger",
+                "right_outer_finger",
+                "left_inner_knuckle",
+                "right_inner_knuckle",
+                "left_outer_knuckle",
+                "right_outer_knuckle",
+            ],
+        )
+
+        self.target_object_id = str(self.get_parameter("target_object_id").value)
+        self.target_object_frame = str(self.get_parameter("target_object_frame").value)
+        self.world_frame = self.get_parameter("world_frame").value
+        self.pre_grasp_offset_z = self.get_parameter("pre_grasp_offset_z").value
+        self.planning_time = self.get_parameter("planning_time").value
+        self.max_velocity_scaling = self.get_parameter("max_velocity_scaling").value
+        self.max_acceleration_scaling = self.get_parameter("max_acceleration_scaling").value
+        self.num_planning_attempts = self.get_parameter("num_planning_attempts").value
+        self.planning_pipeline = self.get_parameter("planning_pipeline").value
+        self.grasp_offset_z = self.get_parameter("grasp_offset_z").value
+        self.post_grasp_lift_z = self.get_parameter("post_grasp_lift_z").value
+        self.grasp_retry_count = self.get_parameter("grasp_retry_count").value
+        self.grasp_retry_step_z = self.get_parameter("grasp_retry_step_z").value
+        self.position_tolerance_m = self.get_parameter("position_tolerance_m").value
+        self.orientation_tolerance_rad = self.get_parameter("orientation_tolerance_rad").value
+        self.move_group_replan_attempts = int(
+            self.get_parameter("move_group_replan_attempts").value
+        )
+        self.enable_position_only_fallback = self.get_parameter(
+            "enable_position_only_fallback"
+        ).value
+        self.goal_request_frame = self.get_parameter("goal_request_frame").value
+        self.gripper_close_position = self.get_parameter("gripper_close_position").value
+        self.post_grasp_settle_s = self.get_parameter("post_grasp_settle_s").value
+        self.home_joint_tolerance_rad = self.get_parameter(
+            "home_joint_tolerance_rad"
+        ).value
+        self.gripper_result_timeout_s = self.get_parameter("gripper_result_timeout_s").value
+        self.close_early_success_wait_s = self.get_parameter(
+            "close_early_success_wait_s"
+        ).value
+        self.close_success_min_position = self.get_parameter(
+            "close_success_min_position"
+        ).value
+        self.close_success_min_delta = self.get_parameter("close_success_min_delta").value
+        self.release_pose_x = self.get_parameter("release_pose_x").value
+        self.release_pose_y = self.get_parameter("release_pose_y").value
+        self.release_pose_z = self.get_parameter("release_pose_z").value
+        self.release_pose_qx = self.get_parameter("release_pose_qx").value
+        self.release_pose_qy = self.get_parameter("release_pose_qy").value
+        self.release_pose_qz = self.get_parameter("release_pose_qz").value
+        self.release_pose_qw = self.get_parameter("release_pose_qw").value
+        self.dropoff_planning_time_s = float(
+            self.get_parameter("dropoff_planning_time_s").value
+        )
+        self.dropoff_num_planning_attempts = int(
+            self.get_parameter("dropoff_num_planning_attempts").value
+        )
+        self.dropoff_position_tolerance_m = float(
+            self.get_parameter("dropoff_position_tolerance_m").value
+        )
+        self.dropoff_orientation_tolerance_rad = float(
+            self.get_parameter("dropoff_orientation_tolerance_rad").value
+        )
+        self.dropoff_orientation_z_tolerance_rad = float(
+            self.get_parameter("dropoff_orientation_z_tolerance_rad").value
+        )
+        self.dropoff_relaxed_orientation_tolerance_rad = float(
+            self.get_parameter("dropoff_relaxed_orientation_tolerance_rad").value
+        )
+        self.dropoff_relaxed_orientation_z_tolerance_rad = float(
+            self.get_parameter("dropoff_relaxed_orientation_z_tolerance_rad").value
+        )
+        self.dropoff_use_current_orientation_fallback = bool(
+            self.get_parameter("dropoff_use_current_orientation_fallback").value
+        )
+        self.dropoff_max_pose_retries = int(
+            self.get_parameter("dropoff_max_pose_retries").value
+        )
+        self.verify_attached_in_scene = self.get_parameter(
+            "verify_attached_in_scene"
+        ).value
+        self.enable_cumotion_object_attachment = bool(
+            self.get_parameter("enable_cumotion_object_attachment").value
+        )
+        self.cumotion_attach_action_name = str(
+            self.get_parameter("cumotion_attach_action_name").value
+        )
+        self.cumotion_attach_object_link_name = str(
+            self.get_parameter("cumotion_attach_object_link_name").value
+        )
+        self.cumotion_object_collision_inflation_m = float(
+            self.get_parameter("cumotion_object_collision_inflation_m").value
+        )
+        self.cumotion_attachment_target_sphere_diameter_m = float(
+            self.get_parameter("cumotion_attachment_target_sphere_diameter_m").value
+        )
+        self.cumotion_attachment_min_spheres = int(
+            self.get_parameter("cumotion_attachment_min_spheres").value
+        )
+        self.cumotion_attachment_max_spheres = int(
+            self.get_parameter("cumotion_attachment_max_spheres").value
+        )
+        self.cumotion_attach_timeout_s = float(
+            self.get_parameter("cumotion_attach_timeout_s").value
+        )
+        self.cumotion_detach_timeout_s = float(
+            self.get_parameter("cumotion_detach_timeout_s").value
+        )
+        self._use_cumotion_object_attachment = (
+            self.enable_cumotion_object_attachment
+            and str(self.planning_pipeline).lower() == "cumotion"
+        )
+        self.cumotion_attachment_min_spheres = max(
+            1, int(self.cumotion_attachment_min_spheres)
+        )
+        self.cumotion_attachment_max_spheres = max(
+            self.cumotion_attachment_min_spheres,
+            int(self.cumotion_attachment_max_spheres),
+        )
+        self.gripper_touch_links = list(self.get_parameter("gripper_touch_links").value)
+
+        # TF
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # MoveGroup action client (MoveIt 2 serves at /move_action)
+        self.cb_group = ReentrantCallbackGroup()
+        self.move_group_client = ActionClient(
+            self, MoveGroup, "/move_action", callback_group=self.cb_group
+        )
+        self.gripper_traj_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            GRIPPER_TRAJECTORY_ACTION,
+            callback_group=self.cb_group,
+        )
+        self._init_cumotion_attachment_client()
+
+        # Planning scene + environment-collision interfaces.
+        self.planning_scene_pub = self.create_publisher(
+            PlanningScene, "/planning_scene", 10
+        )
+        self.get_planning_scene_client = self.create_client(
+            GetPlanningScene, "/get_planning_scene"
+        )
+        self.gripper_command_pub = self.create_publisher(Bool, "/gripper_command", 10)
+        self.environment_collision_control_pub = self.create_publisher(
+            String, "/environment_collision/control", 10
+        )
+        self._attached_object_id = None
+        self._target_object_suppressed = False
+        self._home_joint_values = None
+        self._last_finger_joint_position = None
+        self._last_finger_joint_msg_time = 0.0
+        self._finger_joint_history = deque(maxlen=400)
+
+        self.joint_state_sub = self.create_subscription(
+            JointState, "/joint_states", self._on_joint_states, 20
+        )
+
+        self._executed = False
+
+        # Run execution in a background thread after a wall-clock delay
+        self._thread = threading.Thread(target=self._delayed_execute, daemon=True)
+        self._thread.start()
+
+        self.get_logger().info(
+            "Pick-and-place node initialized. Waiting 3s for TF... "
+            "Surface gripper commands will be published to /gripper_command. "
+            f"Requested planning pipeline: {self.planning_pipeline}. "
+            f"Target object id/frame: {self.target_object_id}/{self.target_object_frame}. "
+            f"cuMotion object attachment={'enabled' if self._use_cumotion_object_attachment else 'disabled'}. "
+            f"attachment sphere target_d={float(self.cumotion_attachment_target_sphere_diameter_m):.3f} m "
+            f"(min={self.cumotion_attachment_min_spheres}, max={self.cumotion_attachment_max_spheres}). "
+            f"post_grasp_lift_z={float(self.post_grasp_lift_z):.3f} m"
+        )
+        self.get_logger().info(
+            "Dropoff tuning: "
+            f"planning_time={float(self.dropoff_planning_time_s):.2f}s, "
+            f"num_planning_attempts={int(self.dropoff_num_planning_attempts)}, "
+            f"position_tolerance={float(self.dropoff_position_tolerance_m):.3f}m, "
+            f"orientation_tolerance_xy={float(self.dropoff_orientation_tolerance_rad):.3f}rad, "
+            f"orientation_tolerance_z={float(self.dropoff_orientation_z_tolerance_rad):.3f}rad, "
+            f"relaxed_orientation_tolerance_xy={float(self.dropoff_relaxed_orientation_tolerance_rad):.3f}rad, "
+            f"relaxed_orientation_tolerance_z={float(self.dropoff_relaxed_orientation_z_tolerance_rad):.3f}rad, "
+            f"use_current_orientation_fallback={bool(self.dropoff_use_current_orientation_fallback)}, "
+            f"max_pose_retries={int(self.dropoff_max_pose_retries)}, "
+            f"move_group_replan_attempts={int(self.move_group_replan_attempts)}"
+        )
+
+    def _delayed_execute(self):
+        """Wait for wall-clock delay, then run the execution sequence."""
+        time.sleep(3.0)
+        self._execute()
+
+    def _execute(self):
+        """Main execution sequence."""
+        if self._executed:
+            return
+        self._executed = True
+
+        self.get_logger().info("Waiting for MoveGroup action server (/move_action)...")
+        if not self.move_group_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error(
+                "MoveGroup action server not available after 30s! "
+                "Is ur_robotiq_isaac_moveit.launch.py running?"
+            )
+            return
+        if not self.gripper_traj_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error(
+                f"Gripper trajectory action server not available after 30s: "
+                f"{GRIPPER_TRAJECTORY_ACTION}"
+            )
+            return
+        if self._use_cumotion_object_attachment:
+            self.get_logger().info(
+                f"Waiting for cuMotion object-attachment action server "
+                f"'{self.cumotion_attach_action_name}'..."
+            )
+            if not self._wait_for_cumotion_attachment_server(
+                timeout_sec=float(self.cumotion_attach_timeout_s)
+            ):
+                self.get_logger().error(
+                    f"cuMotion attachment action server '{self.cumotion_attach_action_name}' "
+                    "is required but not available. Aborting."
+                )
+                return
+
+        self.get_logger().info("MoveGroup action server connected. Starting sequence...")
+
+        # 1. Look up target object pose
+        object_pose = self._lookup_target_object_pose()
+        if object_pose is None:
+            self.get_logger().error(
+                f"Failed to look up target object frame '{self.target_object_frame}'. Aborting."
+            )
+            return
+
+        ox, oy, oz, oqx, oqy, oqz, oqw = object_pose
+        self.get_logger().info(
+            f"Target object '{self.target_object_id}' pose in world: "
+            f"x={ox:.3f}, y={oy:.3f}, z={oz:.3f}, "
+            f"q=({oqx:.3f}, {oqy:.3f}, {oqz:.3f}, {oqw:.3f})"
+        )
+
+        # 2. Open gripper via ros2_control trajectory action
+        self.get_logger().info("Opening gripper...")
+        success = self._move_gripper(0.0)
+        if not success:
+            self.get_logger().error("Failed to open gripper. Aborting.")
+            return
+        self.get_logger().info("Gripper opened.")
+
+        # 3. Move to pre-grasp pose (above target object)
+        pre_grasp_z = oz + self.pre_grasp_offset_z
+        self.get_logger().info(
+            f"Moving to pre-grasp pose: x={ox:.3f}, y={oy:.3f}, z={pre_grasp_z:.3f}"
+        )
+        success = self._move_to_pose(ox, oy, pre_grasp_z, oqx, oqy, oqz, oqw)
+        if not success:
+            self.get_logger().warn(
+                "Pre-grasp plan failed. Retrying once with extended planning budget."
+            )
+            success = self._move_to_pose(
+                ox,
+                oy,
+                pre_grasp_z,
+                oqx,
+                oqy,
+                oqz,
+                oqw,
+                planning_time=20.0,
+                num_attempts=20,
+            )
+            if not success:
+                self.get_logger().error("Failed to move to pre-grasp pose. Aborting.")
+                return
+        self.get_logger().info("Reached pre-grasp pose.")
+
+        # 4. Move to grasp pose (gripper around object) while object remains in scene
+        # Try grasp poses with increasing z offset. This helps recover from
+        # cuMotion IK failures when the nominal low grasp target is too constrained.
+        success = False
+        grasp_retry_count = max(1, int(self.grasp_retry_count))
+        grasp_retry_step = float(self.grasp_retry_step_z)
+        used_grasp_offset_z = float(self.grasp_offset_z)
+        for grasp_try in range(grasp_retry_count):
+            offset_z = float(self.grasp_offset_z) + grasp_try * grasp_retry_step
+            used_grasp_offset_z = offset_z
+            grasp_z = oz + offset_z
+            self.get_logger().info(
+                f"Moving to grasp pose attempt {grasp_try + 1}/{grasp_retry_count}: "
+                f"x={ox:.3f}, y={oy:.3f}, z={grasp_z:.3f}, offset_z={offset_z:.3f} "
+                f"(TCP at z={grasp_z:.3f}, object center at z={oz:.3f})"
+            )
+            success = self._move_to_pose(
+                ox,
+                oy,
+                grasp_z,
+                oqx,
+                oqy,
+                oqz,
+                oqw,
+                planning_time=20.0,
+                num_attempts=20,
+            )
+            if success:
+                break
+
+        if not success:
+            self.get_logger().error("Failed to move to grasp pose. Aborting.")
+            return
+        self.get_logger().info("Reached grasp pose. Gripper is around the object.")
+
+        # 5. Snapshot current world geometry for exact attach representation.
+        self.get_logger().info(
+            f"Snapshotting world collision geometry for '{self.target_object_id}'..."
+        )
+        object_snapshot = self._snapshot_world_object_geometry(
+            self.target_object_id, timeout_sec=1.0
+        )
+        if object_snapshot is None:
+            self.get_logger().warn(
+                f"Could not snapshot world geometry for '{self.target_object_id}'. "
+                "Attempting one recovery pass (unsuppress + resnapshot)..."
+            )
+            recovered = self._set_environment_object_suppressed(
+                self.target_object_id, suppress=False, wait_timeout_sec=2.0
+            )
+            if not recovered:
+                self.get_logger().warn(
+                    f"Recovery unsuppress could not confirm '{self.target_object_id}' "
+                    "in world collision objects."
+                )
+            self._target_object_suppressed = False
+            object_snapshot = self._snapshot_world_object_geometry(
+                self.target_object_id, timeout_sec=2.0
+            )
+            if object_snapshot is None:
+                self.get_logger().error(
+                    f"Could not snapshot world geometry for '{self.target_object_id}' "
+                    "after recovery. Aborting because cuMotion attachment requires "
+                    "runtime object collision geometry."
+                )
+                return
+
+        # 6. Suppress world collision right before the close command.
+        self.get_logger().info(
+            f"Suppressing world collision object '{self.target_object_id}' before closing..."
+        )
+        success = self._set_environment_object_suppressed(
+            self.target_object_id, suppress=True, wait_timeout_sec=2.0
+        )
+        if not success:
+            self.get_logger().error(
+                f"Failed to suppress '{self.target_object_id}' in environment collisions. Aborting."
+            )
+            return
+        self._target_object_suppressed = True
+
+        # 7. Close gripper and attach object collision geometry to the gripper
+        self.get_logger().info(
+            f"Closing gripper to {float(self.gripper_close_position):.3f} rad..."
+        )
+        success = self._move_gripper(
+            float(self.gripper_close_position), allow_stall_success=True
+        )
+        if not success:
+            self.get_logger().error("Failed to close gripper. Aborting.")
+            self._restore_suppressed_object_collision()
+            return
+        self.get_logger().info("Gripper closed.")
+
+        self._sleep(float(self.post_grasp_settle_s))
+        # Isaac attachment must happen before lift so the simulated object follows
+        # the gripper during the lift motion.
+        self.get_logger().info(
+            "Attaching in Isaac (surface gripper command) before post-grasp lift..."
+        )
+        self._publish_surface_gripper_command(True)
+
+        # Lift slightly after close.
+        lift_z = oz + used_grasp_offset_z + float(self.post_grasp_lift_z)
+        self.get_logger().info(
+            "Performing post-grasp lift: "
+            f"x={ox:.3f}, y={oy:.3f}, z={lift_z:.3f}"
+        )
+        success = self._move_to_pose(
+            ox,
+            oy,
+            lift_z,
+            oqx,
+            oqy,
+            oqz,
+            oqw,
+            planning_time=10.0,
+            num_attempts=10,
+        )
+        if not success:
+            self.get_logger().error("Failed post-grasp lift. Aborting.")
+            self._restore_suppressed_object_collision()
+            return
+        self.get_logger().info("Post-grasp lift completed.")
+
+        object_pose_after_lift = self._lookup_target_object_pose()
+        if object_pose_after_lift is None:
+            object_pose_after_lift = (ox, oy, lift_z, oqx, oqy, oqz, oqw)
+            self.get_logger().warn(
+                "Could not refresh object world pose after post-grasp lift. "
+                "Using commanded lifted pose for attachment projection fallback."
+            )
+        if object_snapshot is not None:
+            ax, ay, az, aqx, aqy, aqz, aqw = object_pose_after_lift
+            object_snapshot.pose.position.x = float(ax)
+            object_snapshot.pose.position.y = float(ay)
+            object_snapshot.pose.position.z = float(az)
+            object_snapshot.pose.orientation.x = float(aqx)
+            object_snapshot.pose.orientation.y = float(aqy)
+            object_snapshot.pose.orientation.z = float(aqz)
+            object_snapshot.pose.orientation.w = float(aqw)
+            object_snapshot.header.frame_id = self.world_frame
+
+        if self._use_cumotion_object_attachment:
+            success = self._attach_object_to_cumotion(
+                target_object_world_pose=object_pose_after_lift,
+                grasp_offset_z=used_grasp_offset_z,
+                world_object_snapshot=object_snapshot,
+            )
+            if not success:
+                self.get_logger().error(
+                    "Failed to attach target object to cuMotion robot collision spheres. Aborting."
+                )
+                self._restore_suppressed_object_collision()
+                return
+
+        self.get_logger().info(
+            f"Attaching '{self.target_object_id}' collision object to gripper in MoveIt after lift..."
+        )
+        success = self._attach_object_collision(
+            self.target_object_id,
+            object_pose_after_lift,
+            world_object_snapshot=object_snapshot,
+            grasp_offset_z=used_grasp_offset_z,
+            publish_surface_gripper_command=False,
+        )
+        if not success:
+            self.get_logger().error(
+                f"Failed to attach '{self.target_object_id}' collision object. Aborting."
+            )
+            self._detach_object_from_cumotion(best_effort=True)
+            self._restore_suppressed_object_collision()
+            return
+        self.get_logger().info(
+            f"Collision object '{self.target_object_id}' attached to gripper."
+        )
+        if self.verify_attached_in_scene:
+            attached_seen = self._wait_for_attached_object_in_planning_scene(
+                self.target_object_id, timeout_sec=2.0
+            )
+            if attached_seen:
+                self.get_logger().info(
+                    f"Verified '{self.target_object_id}' is attached in MoveIt's planning scene."
+                )
+            else:
+                self.get_logger().warn(
+                    f"Could not verify '{self.target_object_id}' in MoveIt's attached objects "
+                    "before release planning."
+                )
+
+        # 8. Move directly to release pose while carrying attached collision geometry.
+        success = self._move_to_release_pose_with_retries()
+        if not success:
+            self.get_logger().error("Failed to move to release pose. Aborting.")
+            self._detach_object_from_cumotion(best_effort=True)
+            return
+        self.get_logger().info("Reached release pose.")
+
+        # 9. Open gripper to release object
+        self.get_logger().info(f"Opening gripper to release '{self.target_object_id}'...")
+        success = self._move_gripper(0.0)
+        if not success:
+            self.get_logger().error(
+                f"Failed to open gripper at release pose for '{self.target_object_id}'. Aborting."
+            )
+            self._detach_object_from_cumotion(best_effort=True)
+            return
+        self.get_logger().info("Gripper opened at release pose.")
+
+        # 10. Detach object in MoveIt planning scene
+        self.get_logger().info(
+            f"Releasing '{self.target_object_id}' attachment in MoveIt planning scene..."
+        )
+        success = self._detach_object_collision(self.target_object_id)
+        if not success:
+            self.get_logger().error(
+                f"Failed to release '{self.target_object_id}' attachment. Aborting."
+            )
+            self._detach_object_from_cumotion(best_effort=True)
+            self._restore_suppressed_object_collision()
+            return
+
+        success = self._detach_object_from_cumotion(retry_once=True)
+        if not success:
+            self.get_logger().error(
+                "Failed to detach target object from cuMotion collision spheres. Aborting."
+            )
+            self._restore_suppressed_object_collision()
+            return
+
+        # 11. Unsuppress object so environment publisher resumes world ownership
+        self.get_logger().info(
+            f"Unsuppressing world collision object '{self.target_object_id}' after release..."
+        )
+        success = self._set_environment_object_suppressed(
+            self.target_object_id, suppress=False, wait_timeout_sec=2.0
+        )
+        if not success:
+            self.get_logger().error(
+                f"Failed to unsuppress world collision object '{self.target_object_id}'. Aborting."
+            )
+            self._detach_object_from_cumotion(best_effort=True)
+            return
+        self._target_object_suppressed = False
+
+        # 12. Return to home
+        self.get_logger().info("Returning to home joint state...")
+        success = self._move_to_home()
+        if not success:
+            self.get_logger().error("Failed to return to home joint state. Aborting.")
+            self._detach_object_from_cumotion(best_effort=True)
+            return
+
+        self.get_logger().info(
+            "Pick-and-place sequence complete. Object released, environment collision restored, and robot returned home."
+        )
+
+    def _move_to_release_pose_with_retries(self):
+        """Move to release pose using a deterministic dropoff retry ladder."""
+        release_orientation = self._resolve_release_orientation()
+        if release_orientation is None:
+            self.get_logger().error("Configured release orientation is invalid.")
+            return False
+
+        planning_time = max(0.1, float(self.dropoff_planning_time_s))
+        num_attempts = max(1, int(self.dropoff_num_planning_attempts))
+        position_tolerance = max(1e-4, float(self.dropoff_position_tolerance_m))
+        strict_orientation_tol_xy = max(
+            1e-4, float(self.dropoff_orientation_tolerance_rad)
+        )
+        strict_orientation_tol_z = max(
+            1e-4, float(self.dropoff_orientation_z_tolerance_rad)
+        )
+        relaxed_orientation_tol_xy = max(
+            strict_orientation_tol_xy,
+            float(self.dropoff_relaxed_orientation_tolerance_rad),
+        )
+        relaxed_orientation_tol_z = max(
+            strict_orientation_tol_z,
+            float(self.dropoff_relaxed_orientation_z_tolerance_rad),
+        )
+        strict_orientation_tol_xyz = (
+            strict_orientation_tol_xy,
+            strict_orientation_tol_xy,
+            strict_orientation_tol_z,
+        )
+        relaxed_orientation_tol_xyz = (
+            relaxed_orientation_tol_xy,
+            relaxed_orientation_tol_xy,
+            relaxed_orientation_tol_z,
+        )
+        max_pose_retries = max(1, int(self.dropoff_max_pose_retries))
+
+        attempt_specs = [
+            ("configured", "strict", release_orientation, strict_orientation_tol_xyz),
+            ("configured", "relaxed", release_orientation, relaxed_orientation_tol_xyz),
+        ]
+
+        if self.dropoff_use_current_orientation_fallback:
+            current_orientation = self._lookup_end_effector_orientation()
+            if current_orientation is None:
+                self.get_logger().warn(
+                    "Could not get current EE orientation for dropoff fallback attempt."
+                )
+            elif self._quaternions_equivalent(current_orientation, release_orientation):
+                self.get_logger().warn(
+                    "Current EE orientation matches configured release orientation; "
+                    "skipping duplicate dropoff fallback attempt."
+                )
+            else:
+                attempt_specs.append(
+                    (
+                        "current_ee",
+                        "relaxed",
+                        current_orientation,
+                        relaxed_orientation_tol_xyz,
+                    )
+                )
+
+        if max_pose_retries > len(attempt_specs):
+            attempt_specs.extend([attempt_specs[-1]] * (max_pose_retries - len(attempt_specs)))
+        else:
+            attempt_specs = attempt_specs[:max_pose_retries]
+
+        target_x = float(self.release_pose_x)
+        target_y = float(self.release_pose_y)
+        target_z = float(self.release_pose_z)
+        total_attempts = len(attempt_specs)
+        for idx, (source, mode, orientation, orient_tol_xyz) in enumerate(
+            attempt_specs, start=1
+        ):
+            oqx, oqy, oqz, oqw = orientation
+            tol_x, tol_y, tol_z = orient_tol_xyz
+            self.get_logger().info(
+                f"Dropoff planning attempt {idx}/{total_attempts}: "
+                f"source={source}, mode={mode}, "
+                f"pose=({target_x:.3f}, {target_y:.3f}, {target_z:.3f}), "
+                f"q=({oqx:.3f}, {oqy:.3f}, {oqz:.3f}, {oqw:.3f}), "
+                f"position_tol={position_tolerance:.3f}m, "
+                f"orientation_tol_xyz=({tol_x:.3f}, {tol_y:.3f}, {tol_z:.3f})rad, "
+                f"planning_time={planning_time:.2f}s, "
+                f"num_planning_attempts={num_attempts}"
+            )
+            goal = self._build_pose_goal(
+                target_x,
+                target_y,
+                target_z,
+                oqx,
+                oqy,
+                oqz,
+                oqw,
+                planning_time=planning_time,
+                num_attempts=num_attempts,
+                constrain_orientation=True,
+                orientation_tolerance=None,
+                orientation_tolerance_xyz=orient_tol_xyz,
+                position_tolerance_m=position_tolerance,
+            )
+            if self._send_move_group_goal(goal):
+                return True
+            self.get_logger().warn(
+                f"Dropoff planning attempt {idx}/{total_attempts} failed."
+            )
+        return False
+
+    def _resolve_release_orientation(self):
+        """Return a normalized release orientation quaternion from node parameters."""
+        release_q = (
+            float(self.release_pose_qx),
+            float(self.release_pose_qy),
+            float(self.release_pose_qz),
+            float(self.release_pose_qw),
+        )
+        norm = math.sqrt(sum(component * component for component in release_q))
+        if norm <= 1e-9:
+            self.get_logger().error(
+                "Configured release orientation quaternion has near-zero norm."
+            )
+            return None
+        if abs(norm - 1.0) > 1e-3:
+            self.get_logger().warn(
+                f"Normalizing non-unit release quaternion (norm={norm:.6f})."
+            )
+        return tuple(component / norm for component in release_q)
+
+    def _restore_suppressed_object_collision(self):
+        """Best-effort cleanup to re-enable world collisions after an abort path."""
+        if not self._target_object_suppressed:
+            return True
+        restored = self._set_environment_object_suppressed(
+            self.target_object_id, suppress=False, wait_timeout_sec=2.0
+        )
+        if restored:
+            self._target_object_suppressed = False
+        return restored
+
+    def _sleep(self, seconds):
+        """Block for a wall-clock duration; main thread spin handles callbacks."""
+        if seconds <= 0.0:
+            return
+        time.sleep(float(seconds))

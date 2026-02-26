@@ -122,6 +122,8 @@ def launch_setup(context, *args, **kwargs):
     environment_collision_publish_rate_hz = LaunchConfiguration(
         "environment_collision_publish_rate_hz"
     )
+    environment_collision_padding = LaunchConfiguration("environment_collision_padding")
+    exclude_collision_objects = LaunchConfiguration("exclude_collision_objects")
     simlan_assets_root = LaunchConfiguration("simlan_assets_root")
 
     # Packages / files
@@ -336,6 +338,7 @@ def launch_setup(context, *args, **kwargs):
             "collision_cache_cuboid": collision_cache_cuboid,
             "collision_cache_mesh": collision_cache_mesh,
             "joint_states_topic": moveit_joint_states_topic,
+            "tool_frame": "TCP_point",
             "time_dilation_factor": cumotion_time_dilation_factor,
             "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
             "max_attempts": cumotion_max_attempts,
@@ -355,6 +358,11 @@ def launch_setup(context, *args, **kwargs):
         package="isaac_ros_cumotion",
         executable="cumotion_planner_node",
         output="screen",
+        arguments=[
+            "--ros-args",
+            "--log-level",
+            "curobo:=error",
+        ],
         parameters=cumotion_common_parameters,
     )
 
@@ -362,6 +370,11 @@ def launch_setup(context, *args, **kwargs):
         package=moveit_config_package,
         executable="cumotion_planner_upstream_framefix.py",
         output="screen",
+        arguments=[
+            "--ros-args",
+            "--log-level",
+            "curobo:=error",
+        ],
         parameters=[
             robot_description,
             robot_description_semantic,
@@ -372,6 +385,7 @@ def launch_setup(context, *args, **kwargs):
                 "collision_cache_cuboid": collision_cache_cuboid,
                 "collision_cache_mesh": collision_cache_mesh,
                 "joint_states_topic": moveit_joint_states_topic,
+                "tool_frame": "TCP_point",
                 "time_dilation_factor": cumotion_time_dilation_factor,
                 "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
                 "max_attempts": cumotion_max_attempts,
@@ -422,6 +436,8 @@ def launch_setup(context, *args, **kwargs):
                 "assets_root": simlan_assets_root,
                 "world_frame": environment_collision_world_frame,
                 "publish_rate_hz": environment_collision_publish_rate_hz,
+                "environment_collision_padding": environment_collision_padding,
+                "exclude_collision_objects": exclude_collision_objects,
                 "use_sim_time": use_sim_time,
             }
         ],
@@ -478,7 +494,7 @@ def generate_launch_description():
         DeclareLaunchArgument("launch_servo", default_value="true"),
         DeclareLaunchArgument(
             "planning_pipeline",
-            default_value="ompl",
+            default_value="cumotion",
             choices=["ompl", "cumotion"],
             description="Select MoveIt planning pipeline. Use cumotion in the cumotion container.",
         ),
@@ -521,7 +537,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "cumotion_override_moveit_scaling_factors",
-            default_value="true",
+            default_value="false",
             description="Use fixed cuMotion time_dilation_factor instead of MoveIt scaling sliders.",
         ),
         DeclareLaunchArgument(
@@ -541,7 +557,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "cumotion_num_trajopt_time_steps",
-            default_value="64",
+            default_value="128",
             description="Number of trajectory optimization time steps for cuMotion.",
         ),
         DeclareLaunchArgument(
@@ -608,6 +624,19 @@ def generate_launch_description():
             "environment_collision_publish_rate_hz",
             default_value="30.0",
             description="Update rate for environment collision objects.",
+        ),
+        DeclareLaunchArgument(
+            "environment_collision_padding",
+            default_value="0.000",
+            description="Per-face padding (meters) added to published environment collision boxes.",
+        ),
+        DeclareLaunchArgument(
+            "exclude_collision_objects",
+            default_value="",
+            description=(
+                "Comma-separated exact object/frame names to suppress in environment collisions "
+                "(e.g. stacking_crate_upper_1 or simlan_stacking_crate_isaac_stacking_crate_upper_1)."
+            ),
         ),
         DeclareLaunchArgument(
             "simlan_assets_root",

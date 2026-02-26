@@ -108,7 +108,28 @@ Inside the container terminal:
 
 cuMotion can take a few minutes to start on first run.
 
-Start planning only after the `cuMotion is ready for planning queries` message appears.
+Start planning only after the `cuMotion is ready for planning queries` message appears. 
+The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
+
+## Run Pick and Place
+
+Run this only after `ur_robotiq_isaac_moveit.launch.py` is up (for example via `./control.sh cumotion`).
+
+In the same container but new terminal:
+
+```bash
+# Default: requests cuMotion pipeline
+./control.sh pick_and_place
+
+# Optional: request OMPL pipeline for pick-and-place
+./control.sh pick_and_place planning_pipeline:=ompl
+```
+
+Briefly how it works:
+- The launch command starts `pick_and_place_main.py`.
+- The node connects to MoveIt at `/move_action`, plans approach/grasp/home/release motions, and executes them.
+- It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
+- The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl`.
 
 ## Quick Checks
 

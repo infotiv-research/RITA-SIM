@@ -120,7 +120,7 @@
    <joint name="$(arg tf_prefix)tool0_tcp_point_joint" type="fixed">
      <parent link="$(arg tf_prefix)tool0"/>
      <child link="$(arg tf_prefix)TCP_point"/>
-     <origin xyz="0 0 0.2" rpy="0 0 0"/>
+     <origin xyz="0 0 0.21" rpy="0 0 0"/>
    </joint>
 
 </robot>

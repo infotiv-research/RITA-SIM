@@ -1,13 +1,13 @@
 name: ros_stack
 services:
-  ros2:
+  cumotion:
     build:
       context: .
-      dockerfile: ros2.Dockerfile
-      target: full-with-deps
+      dockerfile: cumotion.Dockerfile
       args:
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
+    runtime: nvidia
     privileged: true
     tty: true
     stdin_open: true
@@ -17,6 +17,8 @@ services:
       - XAUTHORITY=/tmp/.docker.xauth
       - USER_UID=${USER_UID:-1000}
       - USER_GID=${USER_GID:-1000}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
       - ..:/ros2_ws
       - /tmp/.X11-unix:/tmp/.X11-unix
@@ -25,7 +27,12 @@ services:
       - ${HOME}/.ssh:/home/ros/.ssh:ro
     devices:
       - /dev/dri:/dev/dri
-      - /dev/input/js0:/dev/input/js0
-      - /dev/input/js1:/dev/input/js1
     user: "${USER_UID:-1000}:${USER_GID:-1000}"
     shm_size: "2g"
+    entrypoint: ["/bin/bash","-lc"]
+    command: ["sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'source /opt/ros/humble/setup.bash && ros2 pkg list | grep -q \"^isaac_ros_cumotion$\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
