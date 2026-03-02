@@ -1,4 +1,6 @@
-# Isaac Sim + ROS 2 (RITA)
+# RITA simulation
+
+RITA (Robot In The Air) is a collaborative robot project developed as a use case for human-robot collaboration (HRC) within the manufacturing industry, specifically for Volvo Group Trucks Operations (GTO).
 
 This repository provides a dual-container workflow:
 - ROS 2 container for robot control, MoveIt, and controllers.
@@ -165,3 +167,8 @@ Portions of the code are adapted from:
 - Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
 - ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
 ```
+
+RITA designs are Inspired by:
+- [Towards an infrastructure for preparation and control of intelligent automation systems](https://research.chalmers.se/publication/528129/file/528129_Fulltext.pdf)
+- [To Collaborate and Coexist with Robots in an Industrial Setting: UX-based design guidelines for cobots in Industry 4.0 and 5.0](https://www.diva-portal.org/smash/get/diva2:1882744/FULLTEXT01.pdf)
+- [Perceived Safety Aspects when Collaborating with Robots in the Manufacturing Industry: Applying an HTO Methodology](https://uu.diva-portal.org/smash/get/diva2:1863125/FULLTEXT01.pdf)
