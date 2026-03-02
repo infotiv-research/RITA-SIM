@@ -8,6 +8,13 @@ You can also run an optional third container for cuMotion planning.
 
 Both containers (or all three with cuMotion) can run at the same time.
 
+
+
+[![SIMLAN demo](https://img.youtube.com/vi/LNKdTfKMO6s/0.jpg)](https://www.youtube.com/watch?v=LNKdTfKMO6s)
+
+
+
+
 ## Prerequisites
 
 Make sure your machine has:
@@ -142,9 +149,13 @@ docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 ```
 
 # Credits
-The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted fore this project 
 
+Team/Tech Lead: Hamid Ebadi
 
+- Elias Wilsborn
+- Marcus Olsson
+
+The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted for this project 
 
 ```
 License
