@@ -32,6 +32,13 @@ class GripperControlMixin:
 
     def _on_joint_states(self, msg):
         """Track latest finger joint state for grasp-close fallback logic."""
+        if len(msg.name) == len(msg.position):
+            self._last_joint_positions = {
+                joint_name: float(joint_position)
+                for joint_name, joint_position in zip(msg.name, msg.position)
+            }
+            self._last_joint_positions_msg_time = time.monotonic()
+
         try:
             idx = msg.name.index(GRIPPER_JOINT)
         except ValueError:

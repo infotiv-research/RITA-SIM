@@ -68,6 +68,7 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("gripper_close_position", 0.6)
         self.declare_parameter("post_grasp_settle_s", 0.5)
         self.declare_parameter("home_joint_tolerance_rad", 0.01)
+        self.declare_parameter("home_verify_joint_tolerance_rad_m", 0.03)
         self.declare_parameter("gripper_result_timeout_s", 30.0)
         self.declare_parameter("close_early_success_wait_s", 2.0)
         self.declare_parameter("close_success_min_position", 0.2)
@@ -145,6 +146,9 @@ class PickAndPlaceTargetObject(
         self.home_joint_tolerance_rad = self.get_parameter(
             "home_joint_tolerance_rad"
         ).value
+        self.home_verify_joint_tolerance_rad_m = float(
+            self.get_parameter("home_verify_joint_tolerance_rad_m").value
+        )
         self.gripper_result_timeout_s = self.get_parameter("gripper_result_timeout_s").value
         self.close_early_success_wait_s = self.get_parameter(
             "close_early_success_wait_s"
@@ -267,6 +271,8 @@ class PickAndPlaceTargetObject(
         self._last_finger_joint_position = None
         self._last_finger_joint_msg_time = 0.0
         self._finger_joint_history = deque(maxlen=400)
+        self._last_joint_positions = {}
+        self._last_joint_positions_msg_time = 0.0
 
         self.joint_state_sub = self.create_subscription(
             JointState, "/joint_states", self._on_joint_states, 20

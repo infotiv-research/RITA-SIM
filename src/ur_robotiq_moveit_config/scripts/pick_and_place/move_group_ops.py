@@ -45,9 +45,13 @@ class MoveGroupOpsMixin:
             time.sleep(float(poll_period_sec))
         return None
 
-    def _configure_request_pipeline(self, request):
+    def _configure_request_pipeline(self, request, pipeline_override=None):
         """Set a planner pipeline hint in MotionPlanRequest when supported."""
-        requested_pipeline = getattr(self, "planning_pipeline", "cumotion")
+        requested_pipeline = (
+            pipeline_override
+            if pipeline_override is not None
+            else getattr(self, "planning_pipeline", "cumotion")
+        )
         requested_pipeline = str(requested_pipeline).strip().lower()
         pipeline_map = {
             "cumotion": "isaac_ros_cumotion",
@@ -616,11 +620,17 @@ class MoveGroupOpsMixin:
 
         return goal
 
-    def _build_joint_goal(self, joint_targets, planning_time=None, num_attempts=None):
+    def _build_joint_goal(
+        self,
+        joint_targets,
+        planning_time=None,
+        num_attempts=None,
+        pipeline_override=None,
+    ):
         """Build a MoveGroup.Goal for a joint-space target."""
         request = MotionPlanRequest()
         request.group_name = PLANNING_GROUP
-        self._configure_request_pipeline(request)
+        self._configure_request_pipeline(request, pipeline_override=pipeline_override)
         request.num_planning_attempts = num_attempts or self.num_planning_attempts
         request.allowed_planning_time = planning_time or self.planning_time
         request.max_velocity_scaling_factor = self.max_velocity_scaling
@@ -657,6 +667,104 @@ class MoveGroupOpsMixin:
         goal.planning_options.replan_attempts = replan_attempts
         return goal
 
+    @staticmethod
+    def _wrapped_angle_error_rad(target_rad, measured_rad):
+        """Return shortest angular distance in radians."""
+        delta = float(measured_rad) - float(target_rad)
+        wrapped = (delta + math.pi) % (2.0 * math.pi) - math.pi
+        return abs(wrapped)
+
+    def _wait_for_recent_joint_positions(self, timeout_sec=1.0, max_age_sec=0.5):
+        """Wait briefly for a fresh joint-state snapshot and return name->position."""
+        deadline = time.monotonic() + float(timeout_sec)
+        while time.monotonic() < deadline:
+            latest = getattr(self, "_last_joint_positions", None)
+            latest_time = float(getattr(self, "_last_joint_positions_msg_time", 0.0))
+            age = time.monotonic() - latest_time
+            if latest and age <= float(max_age_sec):
+                return dict(latest)
+            time.sleep(0.05)
+        latest = getattr(self, "_last_joint_positions", None)
+        if latest:
+            return dict(latest)
+        return None
+
+    def _verify_home_joint_result_warn_only(self):
+        """Compare achieved joints to HOME target and only warn on mismatch."""
+        measured = self._wait_for_recent_joint_positions(timeout_sec=1.0, max_age_sec=0.5)
+        if measured is None:
+            self.get_logger().warn(
+                "HOME verification skipped: no recent /joint_states sample available."
+            )
+            return
+
+        target = self._home_joint_values or {
+            joint_name: float(HOME_JOINT_VALUES[joint_name]) for joint_name in JOINT_NAMES
+        }
+        tolerance = float(
+            getattr(
+                self,
+                "home_verify_joint_tolerance_rad_m",
+                self.home_joint_tolerance_rad,
+            )
+        )
+        missing_joints = []
+        per_joint_errors = []
+        max_error = -1.0
+        max_error_joint = None
+
+        for joint_name in JOINT_NAMES:
+            if joint_name not in measured:
+                missing_joints.append(joint_name)
+                continue
+            target_value = float(target[joint_name])
+            measured_value = float(measured[joint_name])
+            if joint_name == "gantry_joint":
+                error = abs(measured_value - target_value)
+            else:
+                error = self._wrapped_angle_error_rad(target_value, measured_value)
+            per_joint_errors.append((joint_name, target_value, measured_value, error))
+            if error > max_error:
+                max_error = error
+                max_error_joint = joint_name
+
+        if missing_joints:
+            self.get_logger().warn(
+                "HOME verification: missing joints in latest /joint_states: "
+                f"{', '.join(missing_joints)}"
+            )
+
+        if not per_joint_errors:
+            self.get_logger().warn(
+                "HOME verification skipped: no manipulator joints were present in /joint_states."
+            )
+            return
+
+        failed = [item for item in per_joint_errors if item[3] > tolerance]
+        details = ", ".join(
+            f"{joint}=|err|{error:.4f}"
+            for joint, _, _, error in per_joint_errors
+        )
+
+        if failed:
+            failed_joints = ", ".join(
+                f"{joint}({error:.4f})" for joint, _, _, error in failed
+            )
+            self.get_logger().warn(
+                "HOME verification mismatch (warn-only): "
+                f"tolerance={tolerance:.4f} rad/m, "
+                f"max_error={max_error:.4f} on {max_error_joint}. "
+                f"Outside tolerance: {failed_joints}. "
+                f"Per-joint errors: {details}"
+            )
+        else:
+            self.get_logger().info(
+                "HOME verification passed: "
+                f"all joints within tolerance={tolerance:.4f} rad/m. "
+                f"max_error={max_error:.4f} on {max_error_joint}. "
+                f"Per-joint errors: {details}"
+            )
+
     def _move_to_home(self):
         """Move robot to hardcoded home joint target."""
         if self._home_joint_values is None:
@@ -676,8 +784,17 @@ class MoveGroupOpsMixin:
                 for joint_name in JOINT_NAMES
             }
 
-        goal = self._build_joint_goal(self._home_joint_values)
-        return self._send_move_group_goal(goal)
+        self.get_logger().info(
+            "Planning HOME with OMPL pipeline for exact joint-target behavior."
+        )
+        goal = self._build_joint_goal(
+            self._home_joint_values,
+            pipeline_override="ompl",
+        )
+        success = self._send_move_group_goal(goal, context_label="home_joint_goal_ompl")
+        if success:
+            self._verify_home_joint_result_warn_only()
+        return success
 
     def _move_to_pose(
         self, x, y, z, qx, qy, qz, qw, planning_time=None, num_attempts=None
