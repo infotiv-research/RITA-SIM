@@ -24,6 +24,14 @@ def generate_launch_description():
             description="Pipeline hint for MoveGroup requests: cumotion or ompl.",
         ),
         DeclareLaunchArgument(
+            "robot_variant",
+            default_value="ur10e_6dof",
+            description=(
+                "Robot model variant used by planning stack: "
+                "ur10e_6dof or ur10e_gantry_7dof."
+            ),
+        ),
+        DeclareLaunchArgument(
             "move_group_replan_attempts",
             default_value="1",
             description="MoveGroup-level replan attempts per request.",
@@ -139,6 +147,7 @@ def generate_launch_description():
         executable="pick_and_place_main.py",
         name="pick_and_place",
         output="screen",
+        additional_env={"UR_ROBOT_VARIANT": LaunchConfiguration("robot_variant")},
         parameters=[
             {
                 "use_sim_time": LaunchConfiguration("use_sim_time"),

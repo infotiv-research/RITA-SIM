@@ -24,6 +24,50 @@ def load_yaml(package_name, file_path):
         return None
 
 
+def normalize_numeric_param_types(value):
+    if isinstance(value, dict):
+        return {k: normalize_numeric_param_types(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_numeric_param_types(v) for v in value]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return float(value)
+    return value
+
+
+ROBOT_VARIANT_CONFIG = {
+    "ur10e_6dof": {
+        "description_file": "ur_robotiq.urdf.xacro",
+        "srdf_file": "ur_robotiq.srdf.xacro",
+        "moveit_controllers_file": "config/moveit_controllers_isaac.yaml",
+        "ros2_controllers_file": "config/ur_robotiq_controllers_isaac.yaml",
+        "joint_limits_file": "config/joint_limits.yaml",
+        "cumotion_xrdf_file": "config/ur10e_robotiq_2f_140.xrdf",
+    },
+    "ur10e_gantry_7dof": {
+        "description_file": "ur_robotiq_gantry.urdf.xacro",
+        "srdf_file": "ur_robotiq_gantry.srdf.xacro",
+        "moveit_controllers_file": "config/moveit_controllers_isaac_gantry.yaml",
+        "ros2_controllers_file": "config/ur_robotiq_controllers_isaac_gantry.yaml",
+        "joint_limits_file": "config/joint_limits_gantry.yaml",
+        "cumotion_xrdf_file": "config/ur10e_robotiq_2f_140_gantry.xrdf",
+    },
+}
+
+
+def parse_csv_list(raw_value):
+    return [token.strip() for token in str(raw_value).split(",") if token.strip()]
+
+
+def merge_csv_values(raw_value, required_values):
+    merged_values = parse_csv_list(raw_value)
+    for value in required_values:
+        if value not in merged_values:
+            merged_values.append(value)
+    return ",".join(merged_values)
+
+
 def generate_runtime_urdf(
     xacro_file,
     ur_type,
@@ -35,6 +79,9 @@ def generate_runtime_urdf(
     safety_pos_margin,
     safety_k_position,
     prefix,
+    isaac_arm_topic,
+    isaac_gripper_topic,
+    isaac_joint_states_topic,
 ):
     xacro_executable = shutil.which("xacro")
     if xacro_executable is None:
@@ -53,6 +100,10 @@ def generate_runtime_urdf(
         f"safety_k_position:={safety_k_position}",
         "name:=ur",
         f"ur_type:={ur_type}",
+        "sim_isaac:=true",
+        f"isaac_joint_commands:={isaac_arm_topic}",
+        f"isaac_gripper_joint_commands:={isaac_gripper_topic}",
+        f"isaac_joint_states:={isaac_joint_states_topic}",
         "script_filename:=ros_control.urscript",
         "input_recipe_filename:=rtde_input_recipe.txt",
         "output_recipe_filename:=rtde_output_recipe.txt",
@@ -75,6 +126,7 @@ def launch_setup(context, *args, **kwargs):
     safety_limits = LaunchConfiguration("safety_limits")
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
     safety_k_position = LaunchConfiguration("safety_k_position")
+    robot_variant = LaunchConfiguration("robot_variant")
 
     warehouse_sqlite_path = LaunchConfiguration("warehouse_sqlite_path")
     prefix = LaunchConfiguration("prefix")
@@ -127,15 +179,38 @@ def launch_setup(context, *args, **kwargs):
     # Packages / files
     ur_description_package = "ur_description"
     ur_robotiq_description_package = "ur_robotiq_description"
-    ur_robotiq_description_file = "ur_robotiq.urdf.xacro"
     moveit_config_package = "ur_robotiq_moveit_config"
-    moveit_config_file = "ur_robotiq.srdf.xacro"
 
     ur_type_value = ur_type.perform(context)
     safety_limits_value = safety_limits.perform(context)
     safety_pos_margin_value = safety_pos_margin.perform(context)
     safety_k_position_value = safety_k_position.perform(context)
     prefix_value = prefix.perform(context)
+    robot_variant_value = robot_variant.perform(context)
+
+    variant_config = ROBOT_VARIANT_CONFIG.get(robot_variant_value)
+    if variant_config is None:
+        raise RuntimeError(
+            f"Unsupported robot_variant '{robot_variant_value}'. "
+            f"Expected one of: {', '.join(sorted(ROBOT_VARIANT_CONFIG.keys()))}"
+        )
+
+    ur_robotiq_description_file = variant_config["description_file"]
+    moveit_config_file = variant_config["srdf_file"]
+    moveit_controllers_file = variant_config["moveit_controllers_file"]
+    ros2_controllers_file = variant_config["ros2_controllers_file"]
+    moveit_joint_limits_file = variant_config["joint_limits_file"]
+    default_cumotion_robot_xrdf = os.path.join(
+        get_package_share_directory(moveit_config_package),
+        variant_config["cumotion_xrdf_file"],
+    )
+
+    cumotion_robot_xrdf_value = cumotion_robot_xrdf.perform(context).strip()
+    selected_cumotion_robot_xrdf = (
+        cumotion_robot_xrdf_value
+        if cumotion_robot_xrdf_value
+        else default_cumotion_robot_xrdf
+    )
 
     ur_description_share = get_package_share_directory(ur_description_package)
     joint_limit_params_path = os.path.join(
@@ -168,6 +243,9 @@ def launch_setup(context, *args, **kwargs):
         safety_pos_margin=safety_pos_margin_value,
         safety_k_position=safety_k_position_value,
         prefix=prefix_value,
+        isaac_arm_topic=isaac_arm_topic.perform(context),
+        isaac_gripper_topic=isaac_gripper_topic.perform(context),
+        isaac_joint_states_topic=raw_joint_states_topic.perform(context),
     )
 
     robot_description = {"robot_description": robot_description_content}
@@ -186,6 +264,12 @@ def launch_setup(context, *args, **kwargs):
     robot_description_semantic = {"robot_description_semantic": robot_description_semantic_content}
     robot_description_kinematics = {
         "robot_description_kinematics": load_yaml(moveit_config_package, "config/kinematics.yaml")
+    }
+    joint_limits_config = load_yaml(moveit_config_package, moveit_joint_limits_file)
+    if joint_limits_config is None:
+        joint_limits_config = {}
+    robot_description_planning = {
+        "robot_description_planning": normalize_numeric_param_types(joint_limits_config)
     }
 
     # Planning pipeline
@@ -228,9 +312,9 @@ def launch_setup(context, *args, **kwargs):
         }
 
     # Controllers config (for planning execution; not used by Isaac teleop)
-    controllers_yaml = load_yaml(moveit_config_package, "config/moveit_controllers_isaac.yaml")
+    controllers_yaml = load_yaml(moveit_config_package, moveit_controllers_file)
     isaac_ros2_control_yaml = load_yaml(
-        ur_robotiq_description_package, "config/ur_robotiq_controllers_isaac.yaml"
+        ur_robotiq_description_package, ros2_controllers_file
     )
     available_ros2_controllers = set()
     if isaac_ros2_control_yaml is not None:
@@ -316,6 +400,7 @@ def launch_setup(context, *args, **kwargs):
             robot_description,
             robot_description_semantic,
             robot_description_kinematics,
+            robot_description_planning,
             planning_pipelines_config,
             planning_pipeline_plugins,
             trajectory_execution,
@@ -331,7 +416,7 @@ def launch_setup(context, *args, **kwargs):
         robot_description_semantic,
         robot_description_kinematics,
         {
-            "robot": cumotion_robot_xrdf,
+            "robot": selected_cumotion_robot_xrdf,
             "urdf_path": runtime_urdf_path,
             "collision_cache_cuboid": collision_cache_cuboid,
             "collision_cache_mesh": collision_cache_mesh,
@@ -378,7 +463,7 @@ def launch_setup(context, *args, **kwargs):
             robot_description_semantic,
             robot_description_kinematics,
             {
-                "robot": cumotion_robot_xrdf,
+                "robot": selected_cumotion_robot_xrdf,
                 "urdf_path": runtime_urdf_path,
                 "collision_cache_cuboid": collision_cache_cuboid,
                 "collision_cache_mesh": collision_cache_mesh,
@@ -416,10 +501,19 @@ def launch_setup(context, *args, **kwargs):
             planning_pipelines_config,
             planning_pipeline_plugins,
             robot_description_kinematics,
+            robot_description_planning,
             warehouse_ros_config,
             {"use_sim_time": use_sim_time},
         ],
     )
+
+    exclude_collision_objects_value = exclude_collision_objects.perform(context)
+    if robot_variant_value == "ur10e_gantry_7dof":
+        effective_exclude_collision_objects = merge_csv_values(
+            exclude_collision_objects_value, ["robot_arm_beam"]
+        )
+    else:
+        effective_exclude_collision_objects = exclude_collision_objects_value
 
     environment_collision_node = Node(
         package=moveit_config_package,
@@ -433,7 +527,7 @@ def launch_setup(context, *args, **kwargs):
                 "world_frame": environment_collision_world_frame,
                 "publish_rate_hz": environment_collision_publish_rate_hz,
                 "environment_collision_padding": environment_collision_padding,
-                "exclude_collision_objects": exclude_collision_objects,
+                "exclude_collision_objects": effective_exclude_collision_objects,
                 "use_sim_time": use_sim_time,
             }
         ],
@@ -477,6 +571,15 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_limits", default_value="true"),
         DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
+        DeclareLaunchArgument(
+            "robot_variant",
+            default_value="ur10e_6dof",
+            choices=["ur10e_6dof", "ur10e_gantry_7dof"],
+            description=(
+                "Robot model variant. ur10e_gantry_7dof enables an integrated gantry "
+                "prismatic joint in URDF/SRDF/controllers/XRDF."
+            ),
+        ),
 
         # General
         DeclareLaunchArgument(
@@ -511,10 +614,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "cumotion_robot_xrdf",
-            default_value=PathJoinSubstitution(
-                [FindPackageShare("ur_robotiq_moveit_config"), "config", "ur10e_robotiq_2f_140.xrdf"]
+            default_value="",
+            description=(
+                "Optional override path to XRDF for cuMotion. "
+                "If empty, launch selects XRDF from robot_variant."
             ),
-            description="Path to the XRDF file for cuMotion robot description.",
         ),
         DeclareLaunchArgument(
             "collision_cache_cuboid",
@@ -642,7 +746,7 @@ def generate_launch_description():
 
         # Topics (match your Isaac Action Graph)
         DeclareLaunchArgument("isaac_arm_topic", default_value="/isaac_joint_commands"),
-        DeclareLaunchArgument("isaac_gripper_topic", default_value="/isaac_joint_commands_robotiq"),
+        DeclareLaunchArgument("isaac_gripper_topic", default_value="/isaac_joint_gripper"),
         DeclareLaunchArgument("servo_out_topic", default_value="/servo_node/joint_position_cmds"),
         DeclareLaunchArgument(
             "servo_params_file",

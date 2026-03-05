@@ -64,7 +64,7 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("orientation_tolerance_rad", 0.1)
         self.declare_parameter("move_group_replan_attempts", 1)
         self.declare_parameter("enable_position_only_fallback", False)
-        self.declare_parameter("goal_request_frame", "base_link")
+        self.declare_parameter("goal_request_frame", "world")
         self.declare_parameter("gripper_close_position", 0.6)
         self.declare_parameter("post_grasp_settle_s", 0.5)
         self.declare_parameter("home_joint_tolerance_rad", 0.01)

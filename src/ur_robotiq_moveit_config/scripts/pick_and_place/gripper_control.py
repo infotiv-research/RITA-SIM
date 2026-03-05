@@ -73,7 +73,7 @@ class GripperControlMixin:
             return False
 
         min_pos = float(self.close_success_min_position)
-        # `close_success_min_delta` now represents maximum motion (rad) in the
+        # `close_success_min_delta` represents maximum motion (rad) in the
         # last 0.5s to consider the finger "stalled" against the object.
         max_recent_motion = float(self.close_success_min_delta)
         recent_motion = self._finger_motion_last_window(window_sec=0.5)

@@ -30,7 +30,20 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 ROS_LAUNCH_DELAY="${ROS_LAUNCH_DELAY:-3}"
+UR_ROBOT_VARIANT="${UR_ROBOT_VARIANT:-ur10e_gantry_7dof}"
+
+# If robot_variant:=... is passed on CLI, let it override the default/env early
+# so startup banners and downstream commands stay consistent.
+for cli_arg in "$@"; do
+    if [[ "$cli_arg" == robot_variant:=* ]]; then
+        UR_ROBOT_VARIANT="${cli_arg#robot_variant:=}"
+        export UR_ROBOT_VARIANT
+        break
+    fi
+done
+
 echo "---[ ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0} ]---"
+echo "---[ UR_ROBOT_VARIANT: ${UR_ROBOT_VARIANT} ]---"
 #endregion
 
 #################################################################
@@ -69,11 +82,16 @@ UR10 ROS2 container commands:
   planning        Start MoveIt/planning launch
   ur10            Start both launches
 
+Environment overrides:
+  UR_ROBOT_VARIANT
+      ur10e_gantry_7dof (default) or ur10e_6dof
+
 Isaac container commands:
   sim             Start Isaac Sim loaded with scene_with_flowrack_and_crates2.usd
 
 UR10 cuMotion container commands:
-  cumotion        Start cuMotion
+  cumotion        Start cuMotion with 7dof UR10e gantry config by default. Pass additional ros2 launch args through, e.g.:
+                    ./control.sh cumotion robot_variant:=ur10e_6dof
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -114,6 +132,20 @@ kill_processes() {
     done
 }
 
+cleanup_stale_robot_control_stack() {
+    # Multiple concurrent control stacks create multiple /controller_manager nodes.
+    # Spawners can then talk to different managers and fail nondeterministically.
+    local cm_count
+    cm_count="$(ros2 node list 2>/dev/null | grep -c '^/controller_manager$' || true)"
+    if [[ "${cm_count:-0}" -gt 0 ]]; then
+        echo "---[ detected existing /controller_manager nodes (${cm_count}); cleaning stale control stack ]---"
+        pkill -f "ur_robotiq_isaac_control.launch.py" 2>/dev/null || true
+        pkill -f "/controller_manager/ros2_control_node" 2>/dev/null || true
+        pkill -f "/controller_manager/spawner" 2>/dev/null || true
+        sleep 1
+    fi
+}
+
 build() {
     clean
     echo "---[ building workspace ]---"
@@ -142,20 +174,25 @@ clean() {
 robot_control() {
     echo "---[ launching ur_robotiq_isaac_control ]---"
     source_ws
-    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
+    cleanup_stale_robot_control_stack
+    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py \
+        robot_variant:="${UR_ROBOT_VARIANT}"
 }
 
 moveit_planning() {
     echo "---[ launching ur_robotiq_isaac_moveit ]---"
     source_ws
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
+        robot_variant:="${UR_ROBOT_VARIANT}"
 }
 
 plan_and_control() {
     echo "---[ launching both ROS 2 launch files ]---"
     source_ws
+    cleanup_stale_robot_control_stack
 
-    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py &
+    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py \
+        robot_variant:="${UR_ROBOT_VARIANT}" &
     control_pid=$!
 
     cleanup() {
@@ -164,7 +201,8 @@ plan_and_control() {
     trap cleanup EXIT INT TERM
 
     sleep "$ROS_LAUNCH_DELAY"
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
+        robot_variant:="${UR_ROBOT_VARIANT}"
 }
 
 isaac_sim() {
@@ -174,12 +212,43 @@ isaac_sim() {
 
 cumotion() {
     echo "---[ starting cuMotion script ]---"
-    ./startup_scripts/start_cumotion_planner.sh
+    local has_robot_variant_arg=0
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == robot_variant:=* ]]; then
+            has_robot_variant_arg=1
+            UR_ROBOT_VARIANT="${arg#robot_variant:=}"
+            export UR_ROBOT_VARIANT
+            break
+        fi
+    done
+
+    if [[ "$has_robot_variant_arg" -eq 0 ]]; then
+        set -- "$@" "robot_variant:=${UR_ROBOT_VARIANT}"
+    fi
+
+    echo "---[ cumotion robot_variant: ${UR_ROBOT_VARIANT} ]---"
+    ./startup_scripts/start_cumotion_planner.sh "$@"
 }
 
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
+
+    local has_robot_variant_arg=0
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == robot_variant:=* ]]; then
+            has_robot_variant_arg=1
+            UR_ROBOT_VARIANT="${arg#robot_variant:=}"
+            export UR_ROBOT_VARIANT
+            break
+        fi
+    done
+    if [[ "$has_robot_variant_arg" -eq 0 ]]; then
+        set -- "$@" "robot_variant:=${UR_ROBOT_VARIANT}"
+    fi
+    echo "---[ pick_and_place robot_variant: ${UR_ROBOT_VARIANT} ]---"
 
     # Allow shorthand:
     #   ./control.sh pick_and_place <object_id> [object_frame]
@@ -226,7 +295,8 @@ elif [[ "$1" == "ur10" ]]; then
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "cumotion" ]]; then
-    cumotion
+    shift 1
+    cumotion "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

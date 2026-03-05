@@ -6,6 +6,18 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterFile
 from launch_ros.substitutions import FindPackageShare
 
+ROBOT_VARIANT_CONFIG = {
+    "ur10e_6dof": {
+        "description_file": "ur_robotiq.urdf.xacro",
+        "controllers_file": "ur_robotiq_controllers_isaac.yaml",
+    },
+    "ur10e_gantry_7dof": {
+        "description_file": "ur_robotiq_gantry.urdf.xacro",
+        "controllers_file": "ur_robotiq_controllers_isaac_gantry.yaml",
+    },
+}
+
+
 def controller_spawner(name, active=True):
     args = [
         name,
@@ -32,12 +44,32 @@ def launch_setup(context, *args, **kwargs):
     description_package = LaunchConfiguration("description_package")
     ur_description_package = LaunchConfiguration("ur_description_package")
     description_file = LaunchConfiguration("description_file")
+    robot_variant = LaunchConfiguration("robot_variant")
     tf_prefix = LaunchConfiguration("tf_prefix")
     controller_spawner_timeout = LaunchConfiguration("controller_spawner_timeout")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     activate_joint_controller = LaunchConfiguration("activate_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    isaac_arm_topic = LaunchConfiguration("isaac_arm_topic")
+    isaac_gripper_topic = LaunchConfiguration("isaac_gripper_topic")
+    isaac_joint_states_topic = LaunchConfiguration("isaac_joint_states_topic")
+
+    robot_variant_value = robot_variant.perform(context)
+    variant_config = ROBOT_VARIANT_CONFIG.get(robot_variant_value)
+    if variant_config is None:
+        raise RuntimeError(
+            f"Unsupported robot_variant '{robot_variant_value}'. "
+            f"Expected one of: {', '.join(sorted(ROBOT_VARIANT_CONFIG.keys()))}"
+        )
+
+    description_file_value = description_file.perform(context).strip()
+    if not description_file_value:
+        description_file_value = variant_config["description_file"]
+
+    controllers_file_value = controllers_file.perform(context).strip()
+    if not controllers_file_value:
+        controllers_file_value = variant_config["controllers_file"]
 
     joint_limit_params = PathJoinSubstitution(
         [FindPackageShare(ur_description_package), "config", ur_type, "joint_limits.yaml"]
@@ -56,7 +88,9 @@ def launch_setup(context, *args, **kwargs):
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
-            PathJoinSubstitution([FindPackageShare(description_package), "urdf", description_file]),
+            PathJoinSubstitution(
+                [FindPackageShare(description_package), "urdf", description_file_value]
+            ),
             " ",
             "robot_ip:=", robot_ip,
             " ",
@@ -80,6 +114,12 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "tf_prefix:=", tf_prefix,
             " ",
+            "isaac_joint_commands:=", isaac_arm_topic,
+            " ",
+            "isaac_gripper_joint_commands:=", isaac_gripper_topic,
+            " ",
+            "isaac_joint_states:=", isaac_joint_states_topic,
+            " ",
             "use_fake_hardware:=false ",
             "sim_isaac:=true ",
         ]
@@ -87,7 +127,7 @@ def launch_setup(context, *args, **kwargs):
     robot_description = {"robot_description": robot_description_content}
 
     initial_controllers = PathJoinSubstitution(
-        [FindPackageShare(description_package), "config", controllers_file]
+        [FindPackageShare(description_package), "config", controllers_file_value]
     )
 
     update_rate_config_file = PathJoinSubstitution(
@@ -177,16 +217,28 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
         DeclareLaunchArgument("runtime_config_package", default_value="ur_robot_driver"),
-        DeclareLaunchArgument("controllers_file", default_value="ur_robotiq_controllers_isaac.yaml"),
+        DeclareLaunchArgument("controllers_file", default_value=""),
         DeclareLaunchArgument("description_package", default_value="ur_robotiq_description"),
         DeclareLaunchArgument("ur_description_package", default_value="ur_description"),
-        DeclareLaunchArgument("description_file", default_value="ur_robotiq.urdf.xacro"),
+        DeclareLaunchArgument("description_file", default_value=""),
+        DeclareLaunchArgument(
+            "robot_variant",
+            default_value="ur10e_6dof",
+            choices=["ur10e_6dof", "ur10e_gantry_7dof"],
+            description=(
+                "Robot model variant. Set to ur10e_gantry_7dof to use integrated "
+                "gantry description and controller files."
+            ),
+        ),
         DeclareLaunchArgument("tf_prefix", default_value=""),
         DeclareLaunchArgument("controller_spawner_timeout", default_value="10"),
         DeclareLaunchArgument("initial_joint_controller", default_value="joint_trajectory_controller"),
         DeclareLaunchArgument("activate_joint_controller", default_value="true"),
         DeclareLaunchArgument("launch_rviz", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("isaac_arm_topic", default_value="/isaac_joint_commands"),
+        DeclareLaunchArgument("isaac_gripper_topic", default_value="/isaac_joint_gripper"),
+        DeclareLaunchArgument("isaac_joint_states_topic", default_value="/joint_states"),
     ]
 
     return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])

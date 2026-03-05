@@ -7,10 +7,11 @@
     sim_gazebo:=false
     sim_ignition:=false
     sim_isaac:=false
+    enable_gantry:=false
     isaac_joint_commands:=/isaac_joint_commands
     isaac_joint_states:=/joint_states
     headless_mode:=false
-    initial_positions:=${dict(shoulder_pan_joint=0.0,shoulder_lift_joint=-1.57,elbow_joint=0.0,wrist_1_joint=-1.57,wrist_2_joint=0.0,wrist_3_joint=0.0)}
+    initial_positions:=${dict(gantry_joint=0.0,shoulder_pan_joint=0.0,shoulder_lift_joint=-1.57,elbow_joint=0.0,wrist_1_joint=-1.57,wrist_2_joint=0.0,wrist_3_joint=0.0)}
     use_tool_communication:=false
     script_filename output_recipe_filename
     input_recipe_filename tf_prefix
@@ -29,12 +30,19 @@
   <ros2_control name="${name}" type="system">
     <hardware>
       <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>
-      <param name="joint_commands_topic">/isaac_joint_commands</param>
-      <param name="joint_states_topic">/joint_states</param>
+      <param name="joint_commands_topic">${isaac_joint_commands}</param>
+      <param name="joint_states_topic">${isaac_joint_states}</param>
       <param name="trigger_joint_command_threshold">-1</param>
     </hardware>
 
-    <!-- Ajouter ici uniquement les joints actifs -->
+    <!-- Active joints for topic-based ros2_control -->
+    <xacro:if value="${enable_gantry}">
+      <joint name="gantry_joint">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+    </xacro:if>
     <joint name="shoulder_pan_joint">
       <command_interface name="position"/>
       <state_interface name="position"/>

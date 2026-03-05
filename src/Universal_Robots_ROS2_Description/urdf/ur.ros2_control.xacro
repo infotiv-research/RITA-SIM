@@ -7,10 +7,11 @@
     sim_gazebo:=false
     sim_ignition:=false
     sim_isaac:=false
+    enable_gantry:=false
     isaac_joint_commands:=/isaac_joint_commands_ur
     isaac_joint_states:=/joint_states
     headless_mode:=false
-    initial_positions:=${dict(shoulder_pan_joint=0.0,shoulder_lift_joint=-1.57,elbow_joint=0.0,wrist_1_joint=-1.57,wrist_2_joint=0.0,wrist_3_joint=0.0)}
+    initial_positions:=${dict(gantry_joint=0.0,shoulder_pan_joint=0.0,shoulder_lift_joint=-1.57,elbow_joint=0.0,wrist_1_joint=-1.57,wrist_2_joint=0.0,wrist_3_joint=0.0)}
     use_tool_communication:=false
     script_filename output_recipe_filename
     input_recipe_filename tf_prefix
@@ -76,6 +77,18 @@
           <param name="keep_alive_count">${keep_alive_count}</param>
         </xacro:unless>
       </hardware>
+      <xacro:if value="${enable_gantry}">
+        <joint name="${tf_prefix}gantry_joint">
+          <command_interface name="position"/>
+          <command_interface name="velocity"/>
+          <state_interface name="position">
+            <!-- initial position for the FakeSystem and simulation -->
+            <param name="initial_value">${initial_positions['gantry_joint']}</param>
+          </state_interface>
+          <state_interface name="velocity"/>
+          <state_interface name="effort"/>
+        </joint>
+      </xacro:if>
       <joint name="${tf_prefix}shoulder_pan_joint">
         <command_interface name="position"/>
         <command_interface name="velocity"/>

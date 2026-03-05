@@ -51,6 +51,7 @@
 	<xacro:arg name="simulation_controllers" default="" />
 	<xacro:arg name="sim_isaac" default="false" />
 	<xacro:arg name="isaac_joint_commands" default="/isaac_joint_commands" />
+	<xacro:arg name="isaac_gripper_joint_commands" default="/isaac_joint_gripper" />
 	<xacro:arg name="isaac_joint_states" default="/joint_states" />
 
 
@@ -111,6 +112,8 @@
     parent="$(arg tf_prefix)tool0"
     use_fake_hardware="$(arg use_fake_hardware)"
     sim_isaac="$(arg sim_isaac)"
+    isaac_joint_commands="$(arg isaac_gripper_joint_commands)"
+    isaac_joint_states="$(arg isaac_joint_states)"
     >
     <origin xyz="0 0 0" rpy="0 0 0" />
     </xacro:robotiq_gripper>

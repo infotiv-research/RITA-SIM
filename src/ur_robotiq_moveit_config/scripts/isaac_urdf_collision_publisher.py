@@ -123,6 +123,9 @@ class IsaacMoveItPublisher(Node):
         self.objects = {}
         self.published = set()
         self.suppressed_ids = set()
+        # Re-ADD interval to handle late subscribers (e.g. move_group starting after us)
+        self._readd_interval_sec = 2.0
+        self._last_add_time = {}  # frame_name -> time of last ADD
 
         self.load_collision_geometry()
         clamped_rate = max(0.1, self.publish_rate_hz)
@@ -264,6 +267,7 @@ class IsaacMoveItPublisher(Node):
                 self.suppressed_ids.clear()
                 for object_id in previously_suppressed:
                     self.published.discard(object_id)
+                    self._last_add_time.pop(object_id, None)
                 self.get_logger().info(
                     "Cleared suppressed environment collision IDs."
                 )
@@ -286,6 +290,7 @@ class IsaacMoveItPublisher(Node):
             if object_id not in self.suppressed_ids:
                 self.suppressed_ids.add(object_id)
                 self.published.discard(object_id)
+                self._last_add_time.pop(object_id, None)
                 self._publish_remove(object_id)
                 self.get_logger().info(f"Suppressed environment collision object '{object_id}'.")
             return
@@ -294,6 +299,7 @@ class IsaacMoveItPublisher(Node):
             if object_id in self.suppressed_ids:
                 self.suppressed_ids.remove(object_id)
                 self.published.discard(object_id)
+                self._last_add_time.pop(object_id, None)
                 self.get_logger().info(
                     f"Unsuppressed environment collision object '{object_id}'."
                 )
@@ -306,6 +312,7 @@ class IsaacMoveItPublisher(Node):
     def publish_poses(self):
         """Publish current object poses as world collision objects."""
         scene = PlanningScene(is_diff=True)
+        now = self.get_clock().now().nanoseconds / 1e9
 
         for frame_name, collision_data in self.objects.items():
             if frame_name in self.suppressed_ids:
@@ -316,11 +323,18 @@ class IsaacMoveItPublisher(Node):
             except Exception:
                 continue
 
-            is_new = frame_name not in self.published
+            # Re-ADD periodically so late subscribers (e.g. move_group) pick up geometry.
+            last_add = self._last_add_time.get(frame_name)
+            needs_add = (
+                frame_name not in self.published
+                or last_add is None
+                or (now - last_add) >= self._readd_interval_sec
+            )
+
             obj = CollisionObject()
             obj.id = frame_name
             obj.header.frame_id = self.world_frame
-            obj.operation = CollisionObject.ADD if is_new else CollisionObject.MOVE
+            obj.operation = CollisionObject.ADD if needs_add else CollisionObject.MOVE
             obj.pose = Pose(
                 position=Point(
                     x=tf.transform.translation.x,
@@ -330,7 +344,7 @@ class IsaacMoveItPublisher(Node):
                 orientation=tf.transform.rotation,
             )
 
-            if is_new:
+            if needs_add:
                 for geom_type, geom_value, geom_pose in collision_data:
                     if geom_type == "mesh":
                         obj.meshes.append(geom_value)
@@ -339,8 +353,11 @@ class IsaacMoveItPublisher(Node):
                         obj.primitives.append(geom_value)
                         obj.primitive_poses.append(geom_pose)
 
+                is_first = frame_name not in self.published
                 self.published.add(frame_name)
-                self.get_logger().info(f"Adding [{frame_name}] to planning scene.")
+                self._last_add_time[frame_name] = now
+                if is_first:
+                    self.get_logger().info(f"Adding [{frame_name}] to planning scene.")
 
                 obj_color = ObjectColor()
                 obj_color.id = frame_name

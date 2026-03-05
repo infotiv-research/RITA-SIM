@@ -7,29 +7,58 @@ Responsibilities:
 - Define MoveIt planning group/end-effector identifiers.
 """
 
+import os
+
 GRIPPER_JOINT = "finger_joint"
 GRIPPER_TRAJECTORY_ACTION = (
     "/robotiq_gripper_joint_trajectory_controller/follow_joint_trajectory"
 )
 
-JOINT_NAMES = [
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint",
-]
+ROBOT_VARIANT = os.environ.get("UR_ROBOT_VARIANT", "ur10e_6dof")
+USE_GANTRY = ROBOT_VARIANT == "ur10e_gantry_7dof"
+
+JOINT_NAMES = (
+    [
+        "gantry_joint",
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "elbow_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    ]
+    if USE_GANTRY
+    else [
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "elbow_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    ]
+)
 
 # Home target hardcoded from ur_robotiq_macro.srdf.xacro group_state "home".
-HOME_JOINT_VALUES = {
-    "shoulder_pan_joint": 0.0,
-    "shoulder_lift_joint": -1.22173,
-    "elbow_joint": -0.837758,
-    "wrist_1_joint": -1.06465,
-    "wrist_2_joint": 1.5708,
-    "wrist_3_joint": 0.0,
-}
+HOME_JOINT_VALUES = (
+    {
+        "gantry_joint": 0.0,
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.872665, # -50 degrees
+        "elbow_joint": -1.308997, # -75 degrees
+        "wrist_1_joint": 2.199115, # 126 degrees
+        "wrist_2_joint": -1.5708, 
+        "wrist_3_joint": -3.14159,
+    }
+    if USE_GANTRY
+    else {
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.872665, # -50 degrees
+        "elbow_joint": -1.308997, # -75 degrees
+        "wrist_1_joint": 2.199115, # 126 degrees
+        "wrist_2_joint": -1.5708, 
+        "wrist_3_joint": -3.14159,
+    }
+)
 
 PLANNING_GROUP = "ur_manipulator"
 END_EFFECTOR_LINK = "TCP_point"
