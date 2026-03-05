@@ -30,6 +30,7 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 ROS_LAUNCH_DELAY="${ROS_LAUNCH_DELAY:-3}"
+
 echo "---[ ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0} ]---"
 #endregion
 
@@ -70,10 +71,10 @@ UR10 ROS2 container commands:
   ur10            Start both launches
 
 Isaac container commands:
-  sim             Start Isaac Sim loaded with scene_with_flowrack_and_crates2.usd
+  sim             Start Isaac Sim loaded with main_scene.usd
 
 UR10 cuMotion container commands:
-  cumotion        Start cuMotion
+  cumotion        Start cuMotion with 7dof UR10e gantry config by default.
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -114,6 +115,20 @@ kill_processes() {
     done
 }
 
+cleanup_stale_robot_control_stack() {
+    # Multiple concurrent control stacks create multiple /controller_manager nodes.
+    # Spawners can then talk to different managers and fail nondeterministically.
+    local cm_count
+    cm_count="$(ros2 node list 2>/dev/null | grep -c '^/controller_manager$' || true)"
+    if [[ "${cm_count:-0}" -gt 0 ]]; then
+        echo "---[ detected existing /controller_manager nodes (${cm_count}); cleaning stale control stack ]---"
+        pkill -f "ur_robotiq_isaac_control.launch.py" 2>/dev/null || true
+        pkill -f "/controller_manager/ros2_control_node" 2>/dev/null || true
+        pkill -f "/controller_manager/spawner" 2>/dev/null || true
+        sleep 1
+    fi
+}
+
 build() {
     clean
     echo "---[ building workspace ]---"
@@ -142,6 +157,7 @@ clean() {
 robot_control() {
     echo "---[ launching ur_robotiq_isaac_control ]---"
     source_ws
+    cleanup_stale_robot_control_stack
     ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 }
 
@@ -154,6 +170,7 @@ moveit_planning() {
 plan_and_control() {
     echo "---[ launching both ROS 2 launch files ]---"
     source_ws
+    cleanup_stale_robot_control_stack
 
     ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py &
     control_pid=$!
@@ -174,7 +191,7 @@ isaac_sim() {
 
 cumotion() {
     echo "---[ starting cuMotion script ]---"
-    ./startup_scripts/start_cumotion_planner.sh
+    ./startup_scripts/start_cumotion_planner.sh "$@"
 }
 
 pick_and_place() {
@@ -226,7 +243,8 @@ elif [[ "$1" == "ur10" ]]; then
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "cumotion" ]]; then
-    cumotion
+    shift 1
+    cumotion "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

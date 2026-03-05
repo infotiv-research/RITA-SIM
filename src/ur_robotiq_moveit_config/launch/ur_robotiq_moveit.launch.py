@@ -42,9 +42,9 @@ def launch_setup(context, *args, **kwargs):
     # File and package names
     ur_description_package = "ur_description"
     ur_robotiq_description_package = "ur_robotiq_description"
-    ur_robotiq_description_file = "ur_robotiq.urdf.xacro"
+    ur_robotiq_description_file = "ur_robotiq_gantry.urdf.xacro"
     moveit_config_package = "ur_robotiq_moveit_config"
-    moveit_config_file = "ur_robotiq.srdf.xacro"
+    moveit_config_file = "ur_robotiq_gantry.srdf.xacro"
 
     joint_limit_params = PathJoinSubstitution(
         [FindPackageShare(ur_description_package), "config", ur_type, "joint_limits.yaml"]
@@ -129,7 +129,7 @@ def launch_setup(context, *args, **kwargs):
     robot_description_kinematics_params = load_yaml(moveit_config_package, "config/kinematics.yaml")
     robot_description_kinematics = {"robot_description_kinematics": robot_description_kinematics_params}
     # robot_description_planning = {
-    #     "robot_description_planning": load_yaml(ur_moveit_config_package, "config/joint_limits.yaml")
+    #     "robot_description_planning": load_yaml(ur_moveit_config_package, "config/joint_limits_gantry.yaml")
     # }
 
     # Planning Configuration

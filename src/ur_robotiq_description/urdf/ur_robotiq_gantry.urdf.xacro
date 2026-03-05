@@ -1,0 +1,214 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="$(arg name)">
+
+  <!-- parameters -->
+  <xacro:arg name="name" default="ur_manipulator"/>
+  <!-- import main macro -->
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/urdf/robotiq_2f_140_macro.urdf.xacro" />
+
+  <!-- possible 'ur_type' values: ur3, ur3e, ur5, ur5e, ur10, ur10e, ur16e, ur20 -->
+  <xacro:arg name="ur_type" default="ur10e"/>
+
+  <!-- parameters -->
+  <xacro:arg name="tf_prefix" default="" />
+  <xacro:arg name="joint_limit_params" default="$(find ur_description)/config/$(arg ur_type)/joint_limits.yaml"/>
+  <xacro:arg name="kinematics_params" default="$(find ur_description)/config/$(arg ur_type)/default_kinematics.yaml"/>
+  <xacro:arg name="physical_params" default="$(find ur_description)/config/$(arg ur_type)/physical_parameters.yaml"/>
+  <xacro:arg name="visual_params" default="$(find ur_description)/config/$(arg ur_type)/visual_parameters.yaml"/>
+  <xacro:arg name="transmission_hw_interface" default=""/>
+  <xacro:arg name="safety_limits" default="false"/>
+  <xacro:arg name="safety_pos_margin" default="0.15"/>
+  <xacro:arg name="safety_k_position" default="20"/>
+
+  <!-- ros2_control related parameters -->
+  <xacro:arg name="headless_mode" default="false" />
+  <xacro:arg name="robot_ip" default="0.0.0.0" />
+  <xacro:arg name="script_filename" default=""/>
+  <xacro:arg name="output_recipe_filename" default=""/>
+  <xacro:arg name="input_recipe_filename" default=""/>
+  <xacro:arg name="reverse_ip" default="0.0.0.0"/>
+  <xacro:arg name="script_command_port" default="50004"/>
+  <xacro:arg name="reverse_port" default="50001"/>
+  <xacro:arg name="script_sender_port" default="50002"/>
+  <xacro:arg name="trajectory_port" default="50003"/>
+
+  <!-- tool communication related parameters -->
+  <xacro:arg name="use_tool_communication" default="false" />
+  <xacro:arg name="tool_voltage" default="0" />
+  <xacro:arg name="tool_parity" default="0" />
+  <xacro:arg name="tool_baud_rate" default="115200" />
+  <xacro:arg name="tool_stop_bits" default="1" />
+  <xacro:arg name="tool_rx_idle_chars" default="1.5" />
+  <xacro:arg name="tool_tx_idle_chars" default="3.5" />
+  <xacro:arg name="tool_device_name" default="/tmp/ttyUR" />
+  <xacro:arg name="tool_tcp_port" default="54321" />
+
+  <!-- simulation parameters -->
+  <xacro:arg name="use_fake_hardware" default="false" />
+  <xacro:arg name="fake_sensor_commands" default="false" />
+  <xacro:arg name="sim_gazebo" default="false" />
+  <xacro:arg name="sim_ignition" default="false" />
+  <xacro:arg name="sim_isaac" default="false" />
+  <xacro:arg name="include_gripper" default="true" />
+  <xacro:arg name="isaac_joint_commands" default="/isaac_joint_commands" />
+  <xacro:arg name="isaac_gripper_joint_commands" default="/isaac_joint_gripper" />
+  <xacro:arg name="isaac_joint_states" default="/joint_states" />
+
+  <!-- initial position for simulations -->
+  <xacro:arg name="initial_positions_file" default="$(find ur_robotiq_moveit_config)/config/initial_positions.yaml"/>
+  <xacro:property name="initial_positions_file" default="$(arg initial_positions_file)"/>
+
+  <!-- gantry parameters -->
+  <xacro:arg name="gantry_lower_limit" default="-0.75"/>
+  <xacro:arg name="gantry_upper_limit" default="0.75"/>
+  <xacro:arg name="gantry_velocity_limit" default="0.8"/>
+  <xacro:arg name="gantry_effort_limit" default="2000.0"/>
+  <xacro:arg name="gantry_beam_length" default="3.0"/>
+  <xacro:arg name="gantry_beam_width" default="0.16"/>
+  <xacro:arg name="gantry_beam_height" default="0.18"/>
+  <xacro:arg name="gantry_carriage_size_x" default="0.34"/>
+  <xacro:arg name="gantry_carriage_size_y" default="0.26"/>
+  <xacro:arg name="gantry_carriage_size_z" default="0.16"/>
+  <xacro:arg name="gantry_base_mass" default="1.0"/>
+  <xacro:arg name="gantry_base_inertia" default="0.001"/>
+  <xacro:arg name="gantry_carriage_mass" default="25.0"/>
+  <xacro:arg name="gantry_carriage_ixx" default="0.1942"/>
+  <xacro:arg name="gantry_carriage_iyy" default="0.2942"/>
+  <xacro:arg name="gantry_carriage_izz" default="0.3817"/>
+  <xacro:arg name="gantry_world_xyz" default="0 0 0"/>
+  <xacro:arg name="gantry_world_rpy" default="0 0 0"/>
+  <xacro:arg name="gantry_beam_xyz" default="-1.3 0.12 1.5"/>
+  <xacro:arg name="gantry_beam_rpy" default="0 0 0"/>
+  <xacro:arg name="gantry_track_xyz" default="-1.3 0.2 1.5"/>
+  <xacro:arg name="gantry_track_rpy" default="0 0 0"/>
+  <xacro:arg name="ur_mount_xyz" default="0 0 0"/>
+  <xacro:arg name="ur_mount_rpy" default="0 -1.57079632679 -1.57079632679"/>
+
+  <link name="world"/>
+  <link name="gantry_base_link">
+    <inertial>
+      <mass value="$(arg gantry_base_mass)"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia
+        ixx="$(arg gantry_base_inertia)"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="$(arg gantry_base_inertia)"
+        iyz="0.0"
+        izz="$(arg gantry_base_inertia)"/>
+    </inertial>
+  </link>
+
+  <link name="gantry_beam_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="$(arg gantry_beam_length) $(arg gantry_beam_width) $(arg gantry_beam_height)"/>
+      </geometry>
+      <material name="beam_gray">
+        <color rgba="0.3 0.3 0.3 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="world_to_gantry_base" type="fixed">
+    <parent link="world"/>
+    <child link="gantry_base_link"/>
+    <origin xyz="$(arg gantry_world_xyz)" rpy="$(arg gantry_world_rpy)"/>
+  </joint>
+
+  <joint name="gantry_beam_joint" type="fixed">
+    <parent link="gantry_base_link"/>
+    <child link="gantry_beam_link"/>
+    <origin xyz="$(arg gantry_beam_xyz)" rpy="$(arg gantry_beam_rpy)"/>
+  </joint>
+
+  <!-- Physical carriage body for 7th-axis motion (required by Isaac URDF import). -->
+  <link name="gantry_carriage_link">
+    <!-- Keep inertial only; collision is disabled to avoid gantry self-collision in Isaac. -->
+    <inertial>
+      <mass value="$(arg gantry_carriage_mass)"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia
+        ixx="$(arg gantry_carriage_ixx)"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="$(arg gantry_carriage_iyy)"
+        iyz="0.0"
+        izz="$(arg gantry_carriage_izz)"/>
+    </inertial>
+  </link>
+
+  <joint name="gantry_joint" type="prismatic">
+    <parent link="gantry_base_link"/>
+    <child link="gantry_carriage_link"/>
+    <origin xyz="$(arg gantry_track_xyz)" rpy="$(arg gantry_track_rpy)"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="$(arg gantry_lower_limit)" upper="$(arg gantry_upper_limit)" effort="$(arg gantry_effort_limit)" velocity="$(arg gantry_velocity_limit)"/>
+    <dynamics damping="8.0" friction="1.0"/>
+  </joint>
+
+  <xacro:ur_robot
+    name="$(arg name)"
+    tf_prefix="$(arg tf_prefix)"
+    parent="gantry_carriage_link"
+    joint_limits_parameters_file="$(arg joint_limit_params)"
+    kinematics_parameters_file="$(arg kinematics_params)"
+    physical_parameters_file="$(arg physical_params)"
+    visual_parameters_file="$(arg visual_params)"
+    transmission_hw_interface="$(arg transmission_hw_interface)"
+    safety_limits="$(arg safety_limits)"
+    safety_pos_margin="$(arg safety_pos_margin)"
+    safety_k_position="$(arg safety_k_position)"
+    use_fake_hardware="$(arg use_fake_hardware)"
+    fake_sensor_commands="$(arg fake_sensor_commands)"
+    sim_gazebo="$(arg sim_gazebo)"
+    sim_ignition="$(arg sim_ignition)"
+    sim_isaac="$(arg sim_isaac)"
+    enable_gantry="true"
+    isaac_joint_commands="$(arg isaac_joint_commands)"
+    isaac_joint_states="$(arg isaac_joint_states)"
+    headless_mode="$(arg headless_mode)"
+    initial_positions="${xacro.load_yaml(initial_positions_file)}"
+    use_tool_communication="$(arg use_tool_communication)"
+    tool_voltage="$(arg tool_voltage)"
+    tool_parity="$(arg tool_parity)"
+    tool_baud_rate="$(arg tool_baud_rate)"
+    tool_stop_bits="$(arg tool_stop_bits)"
+    tool_rx_idle_chars="$(arg tool_rx_idle_chars)"
+    tool_tx_idle_chars="$(arg tool_tx_idle_chars)"
+    tool_device_name="$(arg tool_device_name)"
+    tool_tcp_port="$(arg tool_tcp_port)"
+    robot_ip="$(arg robot_ip)"
+    script_filename="$(arg script_filename)"
+    output_recipe_filename="$(arg output_recipe_filename)"
+    input_recipe_filename="$(arg input_recipe_filename)"
+    reverse_ip="$(arg reverse_ip)"
+    script_command_port="$(arg script_command_port)"
+    reverse_port="$(arg reverse_port)"
+    script_sender_port="$(arg script_sender_port)"
+    trajectory_port="$(arg trajectory_port)">
+    <origin xyz="$(arg ur_mount_xyz)" rpy="$(arg ur_mount_rpy)" />
+  </xacro:ur_robot>
+
+  <xacro:if value="$(arg include_gripper)">
+    <xacro:robotiq_gripper name="$(arg tf_prefix)gripper"
+      prefix="$(arg tf_prefix)"
+      parent="$(arg tf_prefix)tool0"
+      use_fake_hardware="$(arg use_fake_hardware)"
+      sim_isaac="$(arg sim_isaac)"
+      isaac_joint_commands="$(arg isaac_gripper_joint_commands)"
+      isaac_joint_states="$(arg isaac_joint_states)">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+    </xacro:robotiq_gripper>
+  </xacro:if>
+
+  <link name="$(arg tf_prefix)TCP_point"/>
+  <joint name="$(arg tf_prefix)tool0_tcp_point_joint" type="fixed">
+    <parent link="$(arg tf_prefix)tool0"/>
+    <child link="$(arg tf_prefix)TCP_point"/>
+    <origin xyz="0 0 0.21" rpy="0 0 0"/>
+  </joint>
+
+</robot>

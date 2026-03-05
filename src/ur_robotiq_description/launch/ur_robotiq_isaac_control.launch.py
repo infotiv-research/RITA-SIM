@@ -1,16 +1,22 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch.conditions import IfCondition
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterFile
 from launch_ros.substitutions import FindPackageShare
 
+GANTRY_DESCRIPTION_FILE = "ur_robotiq_gantry.urdf.xacro"
+GANTRY_CONTROLLERS_FILE = "ur_robotiq_controllers_isaac_gantry.yaml"
+
+
 def controller_spawner(name, active=True):
     args = [
         name,
-        "--controller-manager", "/controller_manager",
-        "--controller-manager-timeout", LaunchConfiguration("controller_spawner_timeout"),
+        "--controller-manager",
+        "/controller_manager",
+        "--controller-manager-timeout",
+        LaunchConfiguration("controller_spawner_timeout"),
     ]
     if not active:
         args.append("--inactive")
@@ -18,8 +24,9 @@ def controller_spawner(name, active=True):
         package="controller_manager",
         executable="spawner",
         arguments=args,
-        output="screen"
+        output="screen",
     )
+
 
 def launch_setup(context, *args, **kwargs):
     ur_type = LaunchConfiguration("ur_type")
@@ -28,16 +35,17 @@ def launch_setup(context, *args, **kwargs):
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
     safety_k_position = LaunchConfiguration("safety_k_position")
     runtime_config_package = LaunchConfiguration("runtime_config_package")
-    controllers_file = LaunchConfiguration("controllers_file")
     description_package = LaunchConfiguration("description_package")
     ur_description_package = LaunchConfiguration("ur_description_package")
-    description_file = LaunchConfiguration("description_file")
     tf_prefix = LaunchConfiguration("tf_prefix")
     controller_spawner_timeout = LaunchConfiguration("controller_spawner_timeout")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     activate_joint_controller = LaunchConfiguration("activate_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    isaac_arm_topic = LaunchConfiguration("isaac_arm_topic")
+    isaac_gripper_topic = LaunchConfiguration("isaac_gripper_topic")
+    isaac_joint_states_topic = LaunchConfiguration("isaac_joint_states_topic")
 
     joint_limit_params = PathJoinSubstitution(
         [FindPackageShare(ur_description_package), "config", ur_type, "joint_limits.yaml"]
@@ -56,29 +64,51 @@ def launch_setup(context, *args, **kwargs):
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
-            PathJoinSubstitution([FindPackageShare(description_package), "urdf", description_file]),
+            PathJoinSubstitution(
+                [FindPackageShare(description_package), "urdf", GANTRY_DESCRIPTION_FILE]
+            ),
             " ",
-            "robot_ip:=", robot_ip,
+            "robot_ip:=",
+            robot_ip,
             " ",
-            "joint_limit_params:=", joint_limit_params,
+            "joint_limit_params:=",
+            joint_limit_params,
             " ",
-            "kinematics_params:=", kinematics_params,
+            "kinematics_params:=",
+            kinematics_params,
             " ",
-            "physical_params:=", physical_params,
+            "physical_params:=",
+            physical_params,
             " ",
-            "visual_params:=", visual_params,
+            "visual_params:=",
+            visual_params,
             " ",
-            "safety_limits:=", safety_limits,
+            "safety_limits:=",
+            safety_limits,
             " ",
-            "safety_pos_margin:=", safety_pos_margin,
+            "safety_pos_margin:=",
+            safety_pos_margin,
             " ",
-            "safety_k_position:=", safety_k_position,
+            "safety_k_position:=",
+            safety_k_position,
             " ",
-            "name:=", ur_type,
+            "name:=",
+            ur_type,
             " ",
-            "ur_type:=", ur_type,
+            "ur_type:=",
+            ur_type,
             " ",
-            "tf_prefix:=", tf_prefix,
+            "tf_prefix:=",
+            tf_prefix,
+            " ",
+            "isaac_joint_commands:=",
+            isaac_arm_topic,
+            " ",
+            "isaac_gripper_joint_commands:=",
+            isaac_gripper_topic,
+            " ",
+            "isaac_joint_states:=",
+            isaac_joint_states_topic,
             " ",
             "use_fake_hardware:=false ",
             "sim_isaac:=true ",
@@ -87,7 +117,7 @@ def launch_setup(context, *args, **kwargs):
     robot_description = {"robot_description": robot_description_content}
 
     initial_controllers = PathJoinSubstitution(
-        [FindPackageShare(description_package), "config", controllers_file]
+        [FindPackageShare(description_package), "config", GANTRY_CONTROLLERS_FILE]
     )
 
     update_rate_config_file = PathJoinSubstitution(
@@ -116,16 +146,12 @@ def launch_setup(context, *args, **kwargs):
         output="both",
     )
 
-
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         output="log",
-        arguments=[
-            "-d", rviz_config_file,
-            "--ros-args", "--log-level", "error"
-        ],
+        arguments=["-d", rviz_config_file, "--ros-args", "--log-level", "error"],
         condition=IfCondition(launch_rviz),
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
     )
@@ -136,8 +162,10 @@ def launch_setup(context, *args, **kwargs):
             executable="spawner",
             arguments=[
                 initial_joint_controller,
-                "-c", "/controller_manager",
-                "--controller-manager-timeout", controller_spawner_timeout,
+                "-c",
+                "/controller_manager",
+                "--controller-manager-timeout",
+                controller_spawner_timeout,
             ],
         )
     else:
@@ -146,13 +174,14 @@ def launch_setup(context, *args, **kwargs):
             executable="spawner",
             arguments=[
                 initial_joint_controller,
-                "-c", "/controller_manager",
-                "--controller-manager-timeout", controller_spawner_timeout,
+                "-c",
+                "/controller_manager",
+                "--controller-manager-timeout",
+                controller_spawner_timeout,
                 "--inactive",
             ],
         )
 
-    # Liste des autres contrôleurs à charger automatiquement
     controller_spawner_nodes = [
         controller_spawner("robotiq_gripper_joint_trajectory_controller", active=True),
         controller_spawner("joint_state_broadcaster", active=False),
@@ -169,6 +198,8 @@ def launch_setup(context, *args, **kwargs):
         *controller_spawner_nodes,
     ]
 
+
+
 def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument("ur_type", default_value="ur10e", description="Type of UR robot"),
@@ -177,16 +208,17 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
         DeclareLaunchArgument("runtime_config_package", default_value="ur_robot_driver"),
-        DeclareLaunchArgument("controllers_file", default_value="ur_robotiq_controllers_isaac.yaml"),
         DeclareLaunchArgument("description_package", default_value="ur_robotiq_description"),
         DeclareLaunchArgument("ur_description_package", default_value="ur_description"),
-        DeclareLaunchArgument("description_file", default_value="ur_robotiq.urdf.xacro"),
         DeclareLaunchArgument("tf_prefix", default_value=""),
         DeclareLaunchArgument("controller_spawner_timeout", default_value="10"),
         DeclareLaunchArgument("initial_joint_controller", default_value="joint_trajectory_controller"),
         DeclareLaunchArgument("activate_joint_controller", default_value="true"),
         DeclareLaunchArgument("launch_rviz", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("isaac_arm_topic", default_value="/isaac_joint_commands"),
+        DeclareLaunchArgument("isaac_gripper_topic", default_value="/isaac_joint_gripper"),
+        DeclareLaunchArgument("isaac_joint_states_topic", default_value="/joint_states"),
     ]
 
     return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])

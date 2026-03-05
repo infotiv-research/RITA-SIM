@@ -64,6 +64,7 @@
     visual_parameters_file
     generate_ros2_control_tag:=true
     sim_isaac:=false
+    enable_gantry:=false
     isaac_joint_commands:=/isaac_joint_commands
     isaac_joint_states:=/joint_states
     transmission_hw_interface:=hardware_interface/PositionJointInterface
@@ -125,6 +126,7 @@
         sim_gazebo="${sim_gazebo}"
         sim_ignition="${sim_ignition}"
         sim_isaac="${sim_isaac}"
+        enable_gantry="${enable_gantry}"
         isaac_joint_commands="${isaac_joint_commands}"
         isaac_joint_states="${isaac_joint_states}"
         script_filename="${script_filename}"

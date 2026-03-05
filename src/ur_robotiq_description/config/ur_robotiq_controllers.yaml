@@ -62,6 +62,7 @@ force_torque_sensor_broadcaster:
 joint_trajectory_controller:
   ros__parameters:
     joints:
+      - $(var tf_prefix)gantry_joint
       - $(var tf_prefix)shoulder_pan_joint
       - $(var tf_prefix)shoulder_lift_joint
       - $(var tf_prefix)elbow_joint
@@ -79,6 +80,7 @@ joint_trajectory_controller:
     constraints:
       stopped_velocity_tolerance: 0.2
       goal_time: 0.0
+      $(var tf_prefix)gantry_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)shoulder_pan_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)shoulder_lift_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)elbow_joint: { trajectory: 0.2, goal: 0.1 }
@@ -90,6 +92,7 @@ joint_trajectory_controller:
 scaled_joint_trajectory_controller:
   ros__parameters:
     joints:
+      - $(var tf_prefix)gantry_joint
       - $(var tf_prefix)shoulder_pan_joint
       - $(var tf_prefix)shoulder_lift_joint
       - $(var tf_prefix)elbow_joint
@@ -107,6 +110,7 @@ scaled_joint_trajectory_controller:
     constraints:
       stopped_velocity_tolerance: 0.2
       goal_time: 0.0
+      $(var tf_prefix)gantry_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)shoulder_pan_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)shoulder_lift_joint: { trajectory: 0.2, goal: 0.1 }
       $(var tf_prefix)elbow_joint: { trajectory: 0.2, goal: 0.1 }
@@ -118,6 +122,7 @@ scaled_joint_trajectory_controller:
 forward_velocity_controller:
   ros__parameters:
     joints:
+      - $(var tf_prefix)gantry_joint
       - $(var tf_prefix)shoulder_pan_joint
       - $(var tf_prefix)shoulder_lift_joint
       - $(var tf_prefix)elbow_joint
@@ -129,6 +134,7 @@ forward_velocity_controller:
 forward_position_controller:
   ros__parameters:
     joints:
+      - $(var tf_prefix)gantry_joint
       - $(var tf_prefix)shoulder_pan_joint
       - $(var tf_prefix)shoulder_lift_joint
       - $(var tf_prefix)elbow_joint
