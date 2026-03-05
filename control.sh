@@ -30,20 +30,8 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 ROS_LAUNCH_DELAY="${ROS_LAUNCH_DELAY:-3}"
-UR_ROBOT_VARIANT="${UR_ROBOT_VARIANT:-ur10e_gantry_7dof}"
-
-# If robot_variant:=... is passed on CLI, let it override the default/env early
-# so startup banners and downstream commands stay consistent.
-for cli_arg in "$@"; do
-    if [[ "$cli_arg" == robot_variant:=* ]]; then
-        UR_ROBOT_VARIANT="${cli_arg#robot_variant:=}"
-        export UR_ROBOT_VARIANT
-        break
-    fi
-done
 
 echo "---[ ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0} ]---"
-echo "---[ UR_ROBOT_VARIANT: ${UR_ROBOT_VARIANT} ]---"
 #endregion
 
 #################################################################
@@ -82,16 +70,11 @@ UR10 ROS2 container commands:
   planning        Start MoveIt/planning launch
   ur10            Start both launches
 
-Environment overrides:
-  UR_ROBOT_VARIANT
-      ur10e_gantry_7dof (default) or ur10e_6dof
-
 Isaac container commands:
-  sim             Start Isaac Sim loaded with scene_with_flowrack_and_crates2.usd
+  sim             Start Isaac Sim loaded with main_scene.usd
 
 UR10 cuMotion container commands:
-  cumotion        Start cuMotion with 7dof UR10e gantry config by default. Pass additional ros2 launch args through, e.g.:
-                    ./control.sh cumotion robot_variant:=ur10e_6dof
+  cumotion        Start cuMotion with 7dof UR10e gantry config by default.
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -175,15 +158,13 @@ robot_control() {
     echo "---[ launching ur_robotiq_isaac_control ]---"
     source_ws
     cleanup_stale_robot_control_stack
-    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py \
-        robot_variant:="${UR_ROBOT_VARIANT}"
+    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 }
 
 moveit_planning() {
     echo "---[ launching ur_robotiq_isaac_moveit ]---"
     source_ws
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
-        robot_variant:="${UR_ROBOT_VARIANT}"
+    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
 }
 
 plan_and_control() {
@@ -191,8 +172,7 @@ plan_and_control() {
     source_ws
     cleanup_stale_robot_control_stack
 
-    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py \
-        robot_variant:="${UR_ROBOT_VARIANT}" &
+    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py &
     control_pid=$!
 
     cleanup() {
@@ -201,8 +181,7 @@ plan_and_control() {
     trap cleanup EXIT INT TERM
 
     sleep "$ROS_LAUNCH_DELAY"
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
-        robot_variant:="${UR_ROBOT_VARIANT}"
+    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
 }
 
 isaac_sim() {
@@ -212,43 +191,12 @@ isaac_sim() {
 
 cumotion() {
     echo "---[ starting cuMotion script ]---"
-    local has_robot_variant_arg=0
-    local arg
-    for arg in "$@"; do
-        if [[ "$arg" == robot_variant:=* ]]; then
-            has_robot_variant_arg=1
-            UR_ROBOT_VARIANT="${arg#robot_variant:=}"
-            export UR_ROBOT_VARIANT
-            break
-        fi
-    done
-
-    if [[ "$has_robot_variant_arg" -eq 0 ]]; then
-        set -- "$@" "robot_variant:=${UR_ROBOT_VARIANT}"
-    fi
-
-    echo "---[ cumotion robot_variant: ${UR_ROBOT_VARIANT} ]---"
     ./startup_scripts/start_cumotion_planner.sh "$@"
 }
 
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
-
-    local has_robot_variant_arg=0
-    local arg
-    for arg in "$@"; do
-        if [[ "$arg" == robot_variant:=* ]]; then
-            has_robot_variant_arg=1
-            UR_ROBOT_VARIANT="${arg#robot_variant:=}"
-            export UR_ROBOT_VARIANT
-            break
-        fi
-    done
-    if [[ "$has_robot_variant_arg" -eq 0 ]]; then
-        set -- "$@" "robot_variant:=${UR_ROBOT_VARIANT}"
-    fi
-    echo "---[ pick_and_place robot_variant: ${UR_ROBOT_VARIANT} ]---"
 
     # Allow shorthand:
     #   ./control.sh pick_and_place <object_id> [object_frame]

@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ISAAC_SIM_PATH="${ISAAC_SIM_PATH:-/isaac-sim}"
 ROS_DISTRO="${ROS_DISTRO:-humble}"
 USER_WS="${USER_WS:-/ros2_ws}"
-DEFAULT_USD_SCENE="${DEFAULT_USD_SCENE:-assets/ur10e_robotiq2f-140/scene_with_flowrack_and_crates2.usd}"
+DEFAULT_USD_SCENE="${DEFAULT_USD_SCENE:-assets/ur10e_robotiq2f-140/main_scene.usd}"
 ISAAC_STARTUP_OPEN_SCRIPT="${ISAAC_STARTUP_OPEN_SCRIPT:-${SCRIPT_DIR}/isaac_open_stage_startup.py}"
  
 # --- Sanity checks ---

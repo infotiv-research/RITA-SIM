@@ -12,6 +12,7 @@ scaled_joint_trajectory_controller:
   type: FollowJointTrajectory
   default: true
   joints:
+    - gantry_joint
     - shoulder_pan_joint
     - shoulder_lift_joint
     - elbow_joint
@@ -25,6 +26,7 @@ joint_trajectory_controller:
   type: FollowJointTrajectory
   default: false
   joints:
+    - gantry_joint
     - shoulder_pan_joint
     - shoulder_lift_joint
     - elbow_joint

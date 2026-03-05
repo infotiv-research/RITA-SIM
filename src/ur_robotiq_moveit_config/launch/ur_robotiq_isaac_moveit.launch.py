@@ -36,24 +36,12 @@ def normalize_numeric_param_types(value):
     return value
 
 
-ROBOT_VARIANT_CONFIG = {
-    "ur10e_6dof": {
-        "description_file": "ur_robotiq.urdf.xacro",
-        "srdf_file": "ur_robotiq.srdf.xacro",
-        "moveit_controllers_file": "config/moveit_controllers_isaac.yaml",
-        "ros2_controllers_file": "config/ur_robotiq_controllers_isaac.yaml",
-        "joint_limits_file": "config/joint_limits.yaml",
-        "cumotion_xrdf_file": "config/ur10e_robotiq_2f_140.xrdf",
-    },
-    "ur10e_gantry_7dof": {
-        "description_file": "ur_robotiq_gantry.urdf.xacro",
-        "srdf_file": "ur_robotiq_gantry.srdf.xacro",
-        "moveit_controllers_file": "config/moveit_controllers_isaac_gantry.yaml",
-        "ros2_controllers_file": "config/ur_robotiq_controllers_isaac_gantry.yaml",
-        "joint_limits_file": "config/joint_limits_gantry.yaml",
-        "cumotion_xrdf_file": "config/ur10e_robotiq_2f_140_gantry.xrdf",
-    },
-}
+GANTRY_DESCRIPTION_FILE = "ur_robotiq_gantry.urdf.xacro"
+GANTRY_SRDF_FILE = "ur_robotiq_gantry.srdf.xacro"
+GANTRY_MOVEIT_CONTROLLERS_FILE = "config/moveit_controllers_isaac_gantry.yaml"
+GANTRY_ROS2_CONTROLLERS_FILE = "config/ur_robotiq_controllers_isaac_gantry.yaml"
+GANTRY_MOVEIT_JOINT_LIMITS_FILE = "config/joint_limits_gantry.yaml"
+GANTRY_CUMOTION_XRDF_FILE = "config/ur10e_robotiq_2f_140_gantry.xrdf"
 
 
 def parse_csv_list(raw_value):
@@ -126,7 +114,6 @@ def launch_setup(context, *args, **kwargs):
     safety_limits = LaunchConfiguration("safety_limits")
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
     safety_k_position = LaunchConfiguration("safety_k_position")
-    robot_variant = LaunchConfiguration("robot_variant")
 
     warehouse_sqlite_path = LaunchConfiguration("warehouse_sqlite_path")
     prefix = LaunchConfiguration("prefix")
@@ -137,7 +124,6 @@ def launch_setup(context, *args, **kwargs):
     launch_move_group = LaunchConfiguration("launch_move_group")
     launch_cumotion_planner = LaunchConfiguration("launch_cumotion_planner")
     cumotion_use_patched_node = LaunchConfiguration("cumotion_use_patched_node")
-    cumotion_robot_xrdf = LaunchConfiguration("cumotion_robot_xrdf")
     collision_cache_cuboid = LaunchConfiguration("collision_cache_cuboid")
     collision_cache_mesh = LaunchConfiguration("collision_cache_mesh")
     cumotion_time_dilation_factor = LaunchConfiguration("cumotion_time_dilation_factor")
@@ -186,30 +172,14 @@ def launch_setup(context, *args, **kwargs):
     safety_pos_margin_value = safety_pos_margin.perform(context)
     safety_k_position_value = safety_k_position.perform(context)
     prefix_value = prefix.perform(context)
-    robot_variant_value = robot_variant.perform(context)
-
-    variant_config = ROBOT_VARIANT_CONFIG.get(robot_variant_value)
-    if variant_config is None:
-        raise RuntimeError(
-            f"Unsupported robot_variant '{robot_variant_value}'. "
-            f"Expected one of: {', '.join(sorted(ROBOT_VARIANT_CONFIG.keys()))}"
-        )
-
-    ur_robotiq_description_file = variant_config["description_file"]
-    moveit_config_file = variant_config["srdf_file"]
-    moveit_controllers_file = variant_config["moveit_controllers_file"]
-    ros2_controllers_file = variant_config["ros2_controllers_file"]
-    moveit_joint_limits_file = variant_config["joint_limits_file"]
-    default_cumotion_robot_xrdf = os.path.join(
+    ur_robotiq_description_file = GANTRY_DESCRIPTION_FILE
+    moveit_config_file = GANTRY_SRDF_FILE
+    moveit_controllers_file = GANTRY_MOVEIT_CONTROLLERS_FILE
+    ros2_controllers_file = GANTRY_ROS2_CONTROLLERS_FILE
+    moveit_joint_limits_file = GANTRY_MOVEIT_JOINT_LIMITS_FILE
+    selected_cumotion_robot_xrdf = os.path.join(
         get_package_share_directory(moveit_config_package),
-        variant_config["cumotion_xrdf_file"],
-    )
-
-    cumotion_robot_xrdf_value = cumotion_robot_xrdf.perform(context).strip()
-    selected_cumotion_robot_xrdf = (
-        cumotion_robot_xrdf_value
-        if cumotion_robot_xrdf_value
-        else default_cumotion_robot_xrdf
+        GANTRY_CUMOTION_XRDF_FILE,
     )
 
     ur_description_share = get_package_share_directory(ur_description_package)
@@ -508,12 +478,9 @@ def launch_setup(context, *args, **kwargs):
     )
 
     exclude_collision_objects_value = exclude_collision_objects.perform(context)
-    if robot_variant_value == "ur10e_gantry_7dof":
-        effective_exclude_collision_objects = merge_csv_values(
-            exclude_collision_objects_value, ["robot_arm_beam"]
-        )
-    else:
-        effective_exclude_collision_objects = exclude_collision_objects_value
+    effective_exclude_collision_objects = merge_csv_values(
+        exclude_collision_objects_value, ["robot_arm_beam"]
+    )
 
     environment_collision_node = Node(
         package=moveit_config_package,
@@ -571,15 +538,6 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_limits", default_value="true"),
         DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
-        DeclareLaunchArgument(
-            "robot_variant",
-            default_value="ur10e_6dof",
-            choices=["ur10e_6dof", "ur10e_gantry_7dof"],
-            description=(
-                "Robot model variant. ur10e_gantry_7dof enables an integrated gantry "
-                "prismatic joint in URDF/SRDF/controllers/XRDF."
-            ),
-        ),
 
         # General
         DeclareLaunchArgument(
@@ -611,14 +569,6 @@ def generate_launch_description():
             "cumotion_use_patched_node",
             default_value="true",
             description="Use local patched cuMotion action server for better stability under repeated goals.",
-        ),
-        DeclareLaunchArgument(
-            "cumotion_robot_xrdf",
-            default_value="",
-            description=(
-                "Optional override path to XRDF for cuMotion. "
-                "If empty, launch selects XRDF from robot_variant."
-            ),
         ),
         DeclareLaunchArgument(
             "collision_cache_cuboid",
