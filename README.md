@@ -2,20 +2,12 @@
 
 RITA (Robot In The Air) is a collaborative robot project developed as a use case for human-robot collaboration (HRC) within the manufacturing industry, specifically for Volvo Group Trucks Operations (GTO).
 
-This repository provides a dual-container workflow:
+This repository has three components:
 - ROS 2 container for robot control, MoveIt, and controllers.
 - Isaac Sim container for simulation.
-
-You can also run an optional third container for cuMotion planning.
-
-Both containers (or all three with cuMotion) can run at the same time.
-
-
+- cuMotion container planning.
 
 [![SIMLAN demo](https://img.youtube.com/vi/LNKdTfKMO6s/0.jpg)](https://www.youtube.com/watch?v=LNKdTfKMO6s)
-
-
-
 
 ## Prerequisites
 
@@ -25,6 +17,7 @@ Make sure your machine has:
 - VS Code extension: **Dev Containers**.
 - NVIDIA driver + GPU support in Docker (required for Isaac Sim GUI).
 
+Run the commands below to check that the prerequisites are installed correctly.
 ```
 # Check Docker installation
 docker --version
@@ -35,37 +28,26 @@ nvidia-smi
 docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 ```
 
-
-
 For Linux GUI forwarding, run this after each reboot:
 
 ```bash
 xhost +
 ```
 
-## Clone and Open
+## DevContainers
 
 Clone and open the project in VS Code.
 
-If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) and run:
-
-```text
-Dev Containers: Reopen in Container
-```
-
-## DevContainer Choices
+If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) and run `Dev Containers: Reopen in Container`.
 
 You have three configurations:
 - `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
 - `IsaacSim DevContainer`: Isaac Sim runtime and ROS bridge side.
 - `UR10e cuMotion DevContainer`: cuMotion planner runtime.
 
-Use two VS Code windows for ROS 2 + Isaac Sim, or three if using cuMotion.
+### UR10 ROS2
 
-
-## Start the ROS 2 Side
-
-> Open in container: `UR10 ROS2 DevContainer`.
+> in container: `UR10 ROS2 DevContainer`.
 
 The best place to learn the available workflows, start components, and understand the command entrypoints is:
 
@@ -93,9 +75,9 @@ Inside the container terminal start robot control:
 ./control.sh robot_control
 ```
 
-## Start the Isaac Side
+### IsaacSim
 
-> Open in container: `IsaacSim DevContainer`.
+>  in container: `IsaacSim DevContainer`.
 
 Inside the container terminal:
 
@@ -105,9 +87,9 @@ Inside the container terminal:
 
 In Isaac Sim: `Start the simulation`.
 
-## Start the cuMotion Side
+### UR10e cuMotion
 
-Open in container: `UR10e cuMotion DevContainer`.
+> in container: `UR10e cuMotion DevContainer`.
 
 Inside the container terminal:
 
@@ -120,11 +102,7 @@ cuMotion can take a few minutes to start on first run.
 Start planning only after the `cuMotion is ready for planning queries` message appears. 
 The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
 
-## Run Pick and Place
-
-Run this only after `ur_robotiq_isaac_moveit.launch.py` is up (for example via `./control.sh cumotion`).
-
-In the same container but new terminal:
+** Run Pick and Place example:** once the `./control.sh cumotion` is up and running, in a new terminal (but the same container):
 
 ```bash
 # Default: requests cuMotion pipeline
@@ -134,21 +112,11 @@ In the same container but new terminal:
 ./control.sh pick_and_place planning_pipeline:=ompl
 ```
 
-Briefly how it works:
 - The launch command starts `pick_and_place_main.py`.
 - The node connects to MoveIt at `/move_action`, plans approach/grasp/home/release motions, and executes them.
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl`.
 
-## Quick Checks
-
-If Isaac Sim does not start:
-- Verify NVIDIA drivers on host.
-- Verify Docker GPU access:
-
-```bash
-docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
-```
 
 # Credits
 
