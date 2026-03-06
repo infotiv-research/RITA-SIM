@@ -17,13 +17,11 @@ Make sure your machine has:
 - VS Code extension: **Dev Containers**.
 - NVIDIA driver + GPU support in Docker (required for Isaac Sim GUI).
 
-Run the commands below to check that the prerequisites are installed correctly.
+Run the commands below to check that the prerequisites (e.g docker and ocker-compose) and drivers (NVIDIA drivers and Docker GPU access) are installed correctly.
 ```
-# Check Docker installation
 docker --version
 docker-compose --version
 
-# Check NVIDIA drivers and Docker GPU access
 nvidia-smi
 docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 ```
@@ -45,9 +43,6 @@ You have three configurations:
 - `IsaacSim DevContainer`: Isaac Sim runtime and ROS bridge side.
 - `UR10e cuMotion DevContainer`: cuMotion planner runtime.
 
-### UR10 ROS2
-
-> in container: `UR10 ROS2 DevContainer`.
 
 The best place to learn the available workflows, start components, and understand the command entrypoints is:
 
@@ -55,19 +50,17 @@ The best place to learn the available workflows, start components, and understan
 ./control.sh help
 ```
 
-To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`):
+### UR10 ROS2
+
+> in container: `UR10 ROS2 DevContainer`.
+
+
+To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`) and rebuild the workspace:
 
 ```bash
 ./control.sh clean
-```
-
-To clean and rebuild the workspace:
-
-```bash
 ./control.sh build
 ```
-
-
 
 Inside the container terminal start robot control:
 
@@ -120,10 +113,11 @@ The default planner is set to cuMotion. The OMPL planner is also available and c
 
 # Credits
 
-Team/Tech Lead: Hamid Ebadi
-
+The project is done by as a part of Master Thesis within infotiv:
 - Elias Wilsborn
 - Marcus Olsson
+
+Team/Tech Lead: Hamid Ebadi
 
 The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted for this project 
 
