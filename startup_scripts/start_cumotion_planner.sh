@@ -54,7 +54,6 @@ set_profile_params() {
       cumotion_trajopt_finetune_iters_value=360
       cumotion_interpolation_dt_value=0.02
       cumotion_time_dilation_factor_value=0.30
-      cumotion_pose_ik_retries_value=4
       ;;
 
     high)
@@ -67,7 +66,6 @@ set_profile_params() {
       cumotion_trajopt_finetune_iters_value=600
       cumotion_interpolation_dt_value=0.02
       cumotion_time_dilation_factor_value=0.25
-      cumotion_pose_ik_retries_value=4
       ;;
     *)
       log "WARNING: Unknown profile '${profile}', using low."
@@ -118,7 +116,7 @@ else
   log "Could not detect GPU VRAM -> using cuMotion profile=${selected_profile}"
 fi
 
-log "cuMotion params: cuboid=${collision_cache_cuboid_value} mesh=${collision_cache_mesh_value} max_attempts=${cumotion_max_attempts_value} graph_seeds=${cumotion_num_graph_seeds_value} trajopt_seeds=${cumotion_num_trajopt_seeds_value} time_steps=${cumotion_num_trajopt_time_steps_value} finetune_iters=${cumotion_trajopt_finetune_iters_value} interp_dt=${cumotion_interpolation_dt_value} time_dilation=${cumotion_time_dilation_factor_value} pose_ik_retries=${cumotion_pose_ik_retries_value}"
+log "cuMotion params: cuboid=${collision_cache_cuboid_value} mesh=${collision_cache_mesh_value} max_attempts=${cumotion_max_attempts_value} graph_seeds=${cumotion_num_graph_seeds_value} trajopt_seeds=${cumotion_num_trajopt_seeds_value} time_steps=${cumotion_num_trajopt_time_steps_value} finetune_iters=${cumotion_trajopt_finetune_iters_value} interp_dt=${cumotion_interpolation_dt_value} time_dilation=${cumotion_time_dilation_factor_value}"
 
 if [ "${CUMOTION_SKIP_BOOTSTRAP:-false}" != "true" ]; then
   if [ ! -x "${SCRIPT_DIR}/bootstrap_cumotion_workspace.sh" ]; then
@@ -167,9 +165,6 @@ launch_cmd=(
   cumotion_num_trajopt_time_steps:=${cumotion_num_trajopt_time_steps_value}
   cumotion_trajopt_finetune_iters:=${cumotion_trajopt_finetune_iters_value}
   cumotion_interpolation_dt:=${cumotion_interpolation_dt_value}
-  cumotion_pose_ik_retries:=${cumotion_pose_ik_retries_value}
-  cumotion_reject_goal_while_busy:=true
-  enable_robot_arm_beam:=false
   enable_joint_state_filter:=true
   moveit_joint_states_topic:=/moveit_joint_states
   "$@"

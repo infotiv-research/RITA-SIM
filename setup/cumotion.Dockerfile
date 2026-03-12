@@ -15,6 +15,8 @@ ENV ROS_DISTRO=${ROS_DISTRO}
 ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
+ENV PIP_DEFAULT_TIMEOUT=300
+ENV PIP_RETRIES=10
 
 SHELL ["/bin/bash", "-lc"]
 
@@ -29,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     locales \
     ninja-build \
     python3-pip \
+    qtbase5-dev \
     software-properties-common \
     sudo \
     && locale-gen en_US en_US.UTF-8 \
@@ -54,9 +57,15 @@ RUN add-apt-repository universe \
     ros-humble-moveit-ros-move-group \
     ros-humble-moveit-ros-visualization \
     ros-humble-moveit-simple-controller-manager \
+    ros-humble-nav2-msgs \
+    ros-humble-pluginlib \
     ros-humble-robot-state-publisher \
+    ros-humble-cv-bridge \
+    ros-humble-rosidl-default-generators \
     ros-humble-rviz2 \
+    ros-humble-rviz-common \
     ros-humble-rviz-default-plugins \
+    ros-humble-rviz-rendering \
     ros-humble-ros2-control \
     ros-humble-ros2-controllers \
     ros-humble-teleop-twist-joy \
@@ -91,19 +100,43 @@ RUN apt-get update \
 
 
 RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
     --index-url https://download.pytorch.org/whl/${TORCH_WHL_CHANNEL} \
     torch==${TORCH_VERSION}
 
-RUN pip3 install --no-cache-dir warp-lang
+RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
+    warp-lang
 
 RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
+    open3d
+
+RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
+    ros2-numpy \
+    transforms3d \
+    pandas \
+    scikit-learn \
+    pyarrow
+
+RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
     trimesh \
     scipy \
     yourdfpy \
     tqdm \
     "numpy<2"
 
-RUN pip3 install --no-cache-dir keyboard
+RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
+    keyboard
 
 RUN rosdep init || true
 

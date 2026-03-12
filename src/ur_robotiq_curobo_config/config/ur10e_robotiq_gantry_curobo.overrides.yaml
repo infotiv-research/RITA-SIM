@@ -1,0 +1,71 @@
+robot_cfg:
+  kinematics:
+    # Hard-lock joints at fixed values. Locked joints are removed from the solver's freedom.
+    # Use this for joints that should never be planned, such as passive gripper mimic joints.
+    lock_joints:
+      finger_joint: 0.0
+    cspace:
+      # Planning joint order used by cuRobo.
+      # All cspace arrays below must match this order exactly.
+      joint_names:
+        - gantry_joint
+        - shoulder_pan_joint
+        - shoulder_lift_joint
+        - elbow_joint
+        - wrist_1_joint
+        - wrist_2_joint
+        - wrist_3_joint
+      # Preferred nominal posture.
+      # IK and redundant solutions are biased toward this configuration when possible.
+      retract_config:
+        - 0.0
+        - 0.0
+        - -0.872665
+        - -1.308997
+        - 2.199115
+        - -1.5708
+        - -3.14159
+      # Per-joint weight for staying near retract_config during IK / null-space resolution.
+      # Higher value = stronger preference for keeping that joint near retract_config.
+      null_space_weight:
+        - 1.0
+        - 3.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+      # Per-joint path-length penalty during motion planning.
+      # Higher value = cuRobo prefers to move that joint less across the trajectory.
+      # Lower value = cuRobo is more willing to use that joint to solve the motion.
+      cspace_distance_weight:
+        - 0.5
+        - 3.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+      # Per-joint acceleration limits used by the planner.
+      # Lower values make the joint less aggressive and can indirectly discourage using it.
+      max_acceleration:
+        - 0.6
+        - 12.0
+        - 12.0
+        - 12.0
+        - 9.0
+        - 9.0
+        - 6.0
+      # Per-joint jerk limits used by the planner.
+      # Lower values enforce smoother changes and can also reduce how much a joint is used aggressively.
+      max_jerk:
+        - 50.0
+        - 500.0
+        - 500.0
+        - 500.0
+        - 350.0
+        - 350.0
+        - 200.0
+      # Margin used when clipping near joint position limits.
+      # Increasing this keeps planned motion farther away from hard position bounds.
+      position_limit_clip: 0.1

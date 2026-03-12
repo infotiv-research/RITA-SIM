@@ -83,12 +83,14 @@ Isaac container commands:
 
 UR10 cuMotion container commands:
   cumotion        Start cuMotion with 7dof UR10e gantry config by default.
+  curobo          Start curobo_ros with dedicated RViz workflow.
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
                     ./control.sh pick_and_place <object_id> [object_frame]
                     ./control.sh pick_and_place _03_cracker_box _03_cracker_box
                     ./control.sh pick_and_place _03_cracker_box _03_cracker_box planning_pipeline:=ompl
+                    ./control.sh pick_and_place motion_backend:=curobo_ros
 
 Misc:
   cmd <...>       Run any command directly (passthrough)
@@ -101,18 +103,30 @@ source_ws() {
     source install/setup.bash 2>/dev/null
 }
 
+reset_workspace_prefix_env() {
+    unset AMENT_PREFIX_PATH
+    unset CMAKE_PREFIX_PATH
+    unset COLCON_PREFIX_PATH
+}
+
 kill_processes() {
     echo "---[ killing launch processes ]---"
     local patterns=(
         "ur_robotiq_isaac_control.launch.py"
         "ur_robotiq_isaac_moveit.launch.py"
+        "ur_robotiq_curobo.launch.py"
         "pick_and_place.launch.py"
         "pick_and_place_main.py"
         "start_cumotion_planner.sh"
+        "start_curobo_planner.sh"
         "bootstrap_cumotion_workspace.sh"
         "cumotion_planner_upstream_framefix.py"
         "cumotion_planner_node"
+        "curobo_trajectory_planner"
+        "curobo_live_collision_spheres.py"
         "isaac_urdf_collision_publisher.py"
+        "curobo_world_bridge.py"
+        "joint_state_publisher"
         "moveit_joint_state_filter"
         "move_group"
         "rviz2"
@@ -140,6 +154,7 @@ cleanup_stale_robot_control_stack() {
 build() {
     clean
     echo "---[ building workspace ]---"
+    reset_workspace_prefix_env
     source_ws
     if ! command -v colcon >/dev/null 2>&1; then
         echo "---[ Error: colcon not found in PATH ]---"
@@ -226,6 +241,11 @@ cumotion() {
     ./startup_scripts/start_cumotion_planner.sh "$@"
 }
 
+curobo() {
+    echo "---[ starting curobo script ]---"
+    ./startup_scripts/start_curobo_planner.sh "$@"
+}
+
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
@@ -279,6 +299,9 @@ elif [[ "$1" == "sim_cylinder" ]]; then
 elif [[ "$1" == "cumotion" ]]; then
     shift 1
     cumotion "$@"
+elif [[ "$1" == "curobo" ]]; then
+    shift 1
+    curobo "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

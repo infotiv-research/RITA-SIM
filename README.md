@@ -95,21 +95,50 @@ cuMotion can take a few minutes to start on first run.
 Start planning only after the `cuMotion is ready for planning queries` message appears. 
 The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
 
-## Run Pick and Place example: 
-Once the `./control.sh cumotion` is up and running, in a new terminal (but the same container):
+To start the separate curobo workflow in the same container:
 
 ```bash
-# Default: requests cuMotion pipeline
+./control.sh curobo
+```
+
+This launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
+
+This repository vendors the cuRobo ROS packages directly in `src/`:
+
+- `src/curobo_msgs`
+- `src/curobo_ros`
+- `src/curobo_rviz`
+
+These packages originated from the following upstream repositories:
+
+- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
+- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
+- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
+
+## Run Pick and Place
+
+Run this only after the selected motion backend is up:
+- MoveIt backend: `./control.sh cumotion`
+- curobo backend: `./control.sh curobo`
+
+In the same container but new terminal:
+
+```bash
+# Default: MoveIt backend with cuMotion pipeline
 ./control.sh pick_and_place
 
-# Optional: request OMPL pipeline for pick-and-place
+# Optional: MoveIt backend with OMPL pipeline
 ./control.sh pick_and_place planning_pipeline:=ompl
+
+# Optional: curobo_ros backend
+./control.sh pick_and_place motion_backend:=curobo_ros
 ```
 
 - The launch command starts `pick_and_place_main.py`.
-- The node connects to MoveIt at `/move_action`, plans approach/grasp/home/release motions, and executes them.
+- `motion_backend:=moveit` connects to MoveIt at `/move_action`.
+- `motion_backend:=curobo_ros` requests trajectories from `/unified_planner/generate_trajectory` and executes them through the existing arm controller action.
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
-- The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl`.
+- The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for the MoveIt backend.
 
 
 ## Run Moving Cylinder Obstacle

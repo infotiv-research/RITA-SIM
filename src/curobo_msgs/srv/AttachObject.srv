@@ -1,0 +1,7 @@
+string link_name
+bool attach
+float64[] sphere_data    # flattened [x,y,z,r, x,y,z,r, ...] in link-local coords
+---
+bool success
+string message
+int32 sphere_count
