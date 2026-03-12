@@ -95,7 +95,8 @@ cuMotion can take a few minutes to start on first run.
 Start planning only after the `cuMotion is ready for planning queries` message appears. 
 The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
 
-** Run Pick and Place example:** once the `./control.sh cumotion` is up and running, in a new terminal (but the same container):
+## Run Pick and Place example: 
+Once the `./control.sh cumotion` is up and running, in a new terminal (but the same container):
 
 ```bash
 # Default: requests cuMotion pipeline
@@ -109,6 +110,41 @@ The default planner is set to cuMotion. The OMPL planner is also available and c
 - The node connects to MoveIt at `/move_action`, plans approach/grasp/home/release motions, and executes them.
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl`.
+
+
+## Run Moving Cylinder Obstacle
+
+To run the moving cylinder obstacle, run `./control.sh sim_cylinder` instead of `./control.sh sim`.
+This loads the same Isaac Sim scene, but with the moving cylinder obstacle enabled.
+
+Open in container: `IsaacSim DevContainer`.
+
+In the Isaac container terminal:
+
+```bash
+# Starts the same scene as `./control.sh sim`, but with the moving cylinder obstacle
+./control.sh sim_cylinder
+```
+
+Then in Isaac Sim click `Start the simulation`.
+
+In the same container, open a new terminal to toggle or change the moving cylinder motion:
+
+```bash
+# Toggle the current cylinder motion on or off
+./control.sh cylinder
+
+# Switch to vertical up/down motion
+./control.sh cylinder 2
+
+# Switch to triangle motion in front of the flow rack
+./control.sh cylinder 3
+
+# Switch to square motion in front of the flow rack
+./control.sh cylinder 4
+```
+
+When you pass a mode (`2`, `3`, or `4`), the cylinder path is changed and movement is automatically turned on.
 
 
 # Credits

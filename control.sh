@@ -30,7 +30,7 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 ROS_LAUNCH_DELAY="${ROS_LAUNCH_DELAY:-3}"
-
+CYLINDER_TOGGLE_STATE_FILE="${CYLINDER_TOGGLE_STATE_FILE:-/tmp/cylinder_move_state}"
 echo "---[ ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0} ]---"
 #endregion
 
@@ -72,6 +72,14 @@ UR10 ROS2 container commands:
 
 Isaac container commands:
   sim             Start Isaac Sim loaded with main_scene.usd
+  sim_cylinder    Start Isaac Sim loaded with flowrack_crates_and_robot_cylinder.usd (The same scene but scaled down and with an moving cylinder (obstacle)
+                  for dynamic path planning)
+  cylinder        Toggle cylinder movement on and off
+                  Switch mode and force motion on with:
+                    ./control.sh cylinder 2 (Cylinder moving up and down)
+                    ./control.sh cylinder 3 (Cylinder moving in a triangle in front of the flowrack)
+                    ./control.sh cylinder 4 (Cylinder moving in a square in front of the flowrack)
+
 
 UR10 cuMotion container commands:
   cumotion        Start cuMotion with 7dof UR10e gantry config by default.
@@ -189,6 +197,30 @@ isaac_sim() {
     ./startup_scripts/post_install_ros2_isaac_start.sh
 }
 
+isaac_sim_cylinder() {
+    export CYLINDER_LOOP_PRESET="${CYLINDER_LOOP_PRESET:-2}"
+    export ISAAC_STARTUP_OPEN_SCRIPT="${SCRIPT_DIR}/startup_scripts/cylinder_ros_control.py"
+    
+    ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/flowrack_crates_and_robot_cylinder.usd"
+}
+
+cylinder_toggle() {
+    source_ws
+
+    if [ -n "$1" ]; then
+        ros2 topic pub --once /move_cylinder_loop std_msgs/msg/Int32 "{data: $1}"
+        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: true}"
+        echo "true" > "$CYLINDER_TOGGLE_STATE_FILE"
+        return
+    fi
+
+    LAST_STATE=$(cat "$CYLINDER_TOGGLE_STATE_FILE" 2>/dev/null)
+    NEXT_STATE=$([ "$LAST_STATE" == "true" ] && echo "false" || echo "true")
+
+    ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: $NEXT_STATE}"
+    echo "$NEXT_STATE" > "$CYLINDER_TOGGLE_STATE_FILE"
+}
+
 cumotion() {
     echo "---[ starting cuMotion script ]---"
     ./startup_scripts/start_cumotion_planner.sh "$@"
@@ -242,12 +274,17 @@ elif [[ "$1" == "ur10" ]]; then
     plan_and_control
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
+elif [[ "$1" == "sim_cylinder" ]]; then
+    isaac_sim_cylinder
 elif [[ "$1" == "cumotion" ]]; then
     shift 1
     cumotion "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"
+elif [[ "$1" == "cylinder" ]]; then
+    shift 1
+    cylinder_toggle "$@"
 elif [[ "$1" == "cmd" ]]; then
     shift 1
     echo "running ::: $*"
