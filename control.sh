@@ -31,6 +31,7 @@ fi
 
 ROS_LAUNCH_DELAY="${ROS_LAUNCH_DELAY:-3}"
 CYLINDER_TOGGLE_STATE_FILE="${CYLINDER_TOGGLE_STATE_FILE:-/tmp/cylinder_move_state}"
+CYLINDER_PATH_VALUE_FILE="${CYLINDER_PATH_VALUE_FILE:-/tmp/cylinder_path_value}"
 echo "---[ ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0} ]---"
 #endregion
 
@@ -74,11 +75,16 @@ Isaac container commands:
   sim             Start Isaac Sim loaded with main_scene.usd
   sim_cylinder    Start Isaac Sim loaded with flowrack_crates_and_robot_cylinder.usd (The same scene but scaled down and with an moving cylinder (obstacle)
                   for dynamic path planning)
-  cylinder        Toggle cylinder movement on and off
-                  Switch mode and force motion on with:
-                    ./control.sh cylinder 2 (Cylinder moving up and down)
-                    ./control.sh cylinder 3 (Cylinder moving in a triangle in front of the flowrack)
-                    ./control.sh cylinder 4 (Cylinder moving in a square in front of the flowrack)
+  sim_humanoid    Start Isaac Sim loaded with flowrack_crates_and_robot_humanoid.usd
+  cylinder        Control cylinder movement.
+                  Usage:
+                    ./control.sh cylinder set <number>  - Set the desired path number for cylinder movement (2, 3 or 4)
+                    ./control.sh cylinder start         - Start cylinder movement using the set path number
+                    ./control.sh cylinder stop          - Stop cylinder movement
+  humanoid        Control humanoid animation.
+                  Usage:
+                    ./control.sh humanoid start         - Start humanoid animation
+                    ./control.sh humanoid stop          - Stop humanoid animation
 
 
 UR10 cuMotion container commands:
@@ -208,7 +214,7 @@ plan_and_control() {
 }
 
 isaac_sim() {
-    echo "---[ starting Isaac Sim helper script ]---"
+    echo "---[ starting Isaac Sim ]---"
     ./startup_scripts/post_install_ros2_isaac_start.sh
 }
 
@@ -219,21 +225,60 @@ isaac_sim_cylinder() {
     ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/flowrack_crates_and_robot_cylinder.usd"
 }
 
-cylinder_toggle() {
+isaac_sim_humanoid() {
+    echo "---[ starting Isaac Sim with humanoid ]---"
+    ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/flowrack_crates_and_robot_humanoid.usd"
+}
+
+cylinder_action() {
     source_ws
 
-    if [ -n "$1" ]; then
-        ros2 topic pub --once /move_cylinder_loop std_msgs/msg/Int32 "{data: $1}"
+    if [ "$1" == "set" ]; then
+        if [ -z "$2" ]; then
+            echo "---[ Error: Please provide a number, e.g., ./control.sh cylinder set 2 ]---"
+            return 1
+        fi
+        echo "$2" > "$CYLINDER_PATH_VALUE_FILE"
+        echo "---[ Cylinder path value set to: $2 ]---"
+
+    elif [ "$1" == "start" ]; then
+        if [ ! -f "$CYLINDER_PATH_VALUE_FILE" ]; then
+            echo "---[ Error: Path value not set! Run './control.sh cylinder set <number>' first. ]---"
+            return 1
+        fi
+        
+        PATH_NUM=$(cat "$CYLINDER_PATH_VALUE_FILE")
+        ros2 topic pub --once /move_cylinder_loop std_msgs/msg/Int32 "{data: $PATH_NUM}"
         ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: true}"
         echo "true" > "$CYLINDER_TOGGLE_STATE_FILE"
-        return
+        echo "---[ Cylinder started with path value: $PATH_NUM ]---"
+
+    elif [ "$1" == "stop" ]; then
+        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: false}"
+        echo "false" > "$CYLINDER_TOGGLE_STATE_FILE"
+        echo "---[ Cylinder stopped ]---"
+
+    else
+        echo "---[ Unknown command. Usage: ./control.sh cylinder <set <number> | start | stop> ]---"
+        return 1
     fi
+}
 
-    LAST_STATE=$(cat "$CYLINDER_TOGGLE_STATE_FILE" 2>/dev/null)
-    NEXT_STATE=$([ "$LAST_STATE" == "true" ] && echo "false" || echo "true")
+humanoid_action() {
+    source_ws
 
-    ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: $NEXT_STATE}"
-    echo "$NEXT_STATE" > "$CYLINDER_TOGGLE_STATE_FILE"
+    if [ "$1" == "start" ]; then
+        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: true}"
+        echo "---[ Humanoid animation started ]---"
+
+    elif [ "$1" == "stop" ]; then
+        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: false}"
+        echo "---[ Humanoid animation stopped ]---"
+
+    else
+        echo "---[ Unknown command. Usage: ./control.sh humanoid <start | stop> ]---"
+        return 1
+    fi
 }
 
 cumotion() {
@@ -296,6 +341,8 @@ elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "sim_cylinder" ]]; then
     isaac_sim_cylinder
+elif [[ "$1" == "sim_humanoid" ]]; then
+    isaac_sim_humanoid
 elif [[ "$1" == "cumotion" ]]; then
     shift 1
     cumotion "$@"
@@ -307,7 +354,10 @@ elif [[ "$1" == "pick_and_place" ]]; then
     pick_and_place "$@"
 elif [[ "$1" == "cylinder" ]]; then
     shift 1
-    cylinder_toggle "$@"
+    cylinder_action "$@"
+elif [[ "$1" == "humanoid" ]]; then
+    shift 1
+    humanoid_action "$@"
 elif [[ "$1" == "cmd" ]]; then
     shift 1
     echo "running ::: $*"

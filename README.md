@@ -157,23 +157,53 @@ In the Isaac container terminal:
 
 Then in Isaac Sim click `Start the simulation`.
 
-In the same container, open a new terminal to toggle or change the moving cylinder motion:
+In the same container, open a new terminal to configure and control the moving cylinder:
 
 ```bash
-# Toggle the current cylinder motion on or off
-./control.sh cylinder
+# Set the cylinder to vertical up/down motion
+./control.sh cylinder set 2
 
-# Switch to vertical up/down motion
-./control.sh cylinder 2
+# Start the cylinder using the currently selected path
+./control.sh cylinder start
 
-# Switch to triangle motion in front of the flow rack
-./control.sh cylinder 3
-
-# Switch to square motion in front of the flow rack
-./control.sh cylinder 4
+# Stop the cylinder
+./control.sh cylinder stop
 ```
 
-When you pass a mode (`2`, `3`, or `4`), the cylinder path is changed and movement is automatically turned on.
+Available path presets:
+
+- `2`: Vertical up/down motion
+- `3`: Triangle motion in front of the flow rack
+- `4`: Square motion in front of the flow rack
+
+Set the path first with `./control.sh cylinder set <number>`, then run `./control.sh cylinder start`.
+The selected path is reused until you change it with another `set` command.
+
+## Run Humanoid Obstacle
+
+To run the humanoid obstacle, run `./control.sh sim_humanoid` instead of `./control.sh sim`.
+This loads the Isaac Sim scene with the humanoid obstacle enabled.
+
+Open in container: `IsaacSim DevContainer`.
+
+In the Isaac container terminal:
+
+```bash
+# Starts the scene with the humanoid obstacle
+./control.sh sim_humanoid
+```
+
+Then in Isaac Sim click `Start the simulation`.
+
+In the same container, open a new terminal to control the humanoid animation:
+
+```bash
+# Start the humanoid animation
+./control.sh humanoid start
+
+# Stop the humanoid animation
+./control.sh humanoid stop
+```
 
 
 # Credits
