@@ -150,7 +150,7 @@ fi
 set -u
 
 launch_cmd=(
-  ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+  ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit_human.launch.py
   planning_pipeline:=cumotion
   launch_move_group:=true
   launch_cumotion_planner:=true
