@@ -1,0 +1,20 @@
+# GraspObject service - Execute grasp sequence with MPC reactive control
+#
+# This service plans and executes a complete grasp-and-lift sequence:
+# 1. Approach: Move to pre-grasp pose (above object)
+# 2. Grasp: Move to grasp pose and close gripper
+# 3. Attach: Add object as collision spheres to robot
+# 4. Retreat: Lift object to post-grasp pose
+
+# Request fields
+geometry_msgs/Pose target_pose          # Grasp pose (end-effector at object)
+string object_name                       # Object to grasp (must exist in obstacle manager)
+geometry_msgs/Vector3 pre_grasp_offset  # Approach offset (default: [0,0,0.1])
+geometry_msgs/Vector3 post_grasp_offset # Retreat offset (default: [0,0,0.15])
+bool use_current_state true              # Start from current robot position
+
+---
+# Response fields
+bool success
+string message
+float64 execution_time                   # Total execution time in seconds

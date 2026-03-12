@@ -20,9 +20,13 @@ required_system_packages=(
 )
 
 required_workspace_packages=(
+  curobo_msgs
+  curobo_ros
+  curobo_rviz
   ur_description
   robotiq_description
   ur_robotiq_description
+  ur_robotiq_curobo_config
   ur_robotiq_moveit_config
   ur_robotiq_servo
 )
@@ -53,8 +57,8 @@ if [ "${#missing_system_packages[@]}" -gt 0 ]; then
   exit 1
 fi
 
-if ! python3 -c "import torch; import warp; import curobo; from isaac_ros_cumotion.cumotion_planner import CumotionActionServer" >/dev/null 2>&1; then
-  echo "ERROR: cuMotion Python runtime import check failed (torch/warp/curobo/isaac_ros_cumotion)."
+if ! python3 -c "import torch; import warp; import curobo; import curobo_ros; from curobo_msgs.srv import TrajectoryGeneration; from isaac_ros_cumotion.cumotion_planner import CumotionActionServer" >/dev/null 2>&1; then
+  echo "ERROR: cuMotion Python runtime import check failed (torch/warp/curobo/curobo_ros/curobo_msgs/isaac_ros_cumotion)."
   echo "Rebuild the cumotion image: docker compose -f setup/docker-compose.ros2.yaml build cumotion"
   exit 1
 fi

@@ -1,0 +1,28 @@
+<library path="curobo_rviz">
+
+  <class name="curobo_rviz/RvizArgsPanel"
+        type="curobo_rviz::RvizArgsPanel"
+        base_class_type="rviz_common::Panel">
+    <description>Curobo Rviz Panel</description>
+  </class>
+
+  <class name="add_objects_panel/AddObjectsPanel"
+          type="add_objects_panel::AddObjectsPanel"
+          base_class_type="rviz_common::Panel">
+      <description>Add Objects Panel</description>
+      <message_type>curobo_msgs/msg/ObjectParameters</message_type>
+  </class>
+
+  <class name="add_objects_display/AddObjectsDisplay"
+        type="add_objects_display::AddObjectsDisplay"
+        base_class_type="rviz_common::Display">
+    <description>Add Objects Display</description>
+  </class>
+
+  <class name="curobo_rviz/ArrowInteractionDisplay"
+        type="curobo_rviz::ArrowInteractionDisplay"
+        base_class_type="rviz_common::Display">
+    <description>Interactive 6-DOF Arrow Marker for Target Pose</description>
+  </class>
+
+</library>

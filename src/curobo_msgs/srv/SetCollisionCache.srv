@@ -1,0 +1,22 @@
+# Service pour modifier dynamiquement les paramètres du cache de collision
+#
+# Le cache de collision contrôle le nombre d'objets mis en cache pour chaque type:
+# - obb: Cache pour Oriented Bounding Boxes
+# - mesh: Cache pour les meshes détaillés
+# - blox: Cache pour les voxels blox
+#
+# Valeurs -1 = ne pas modifier cette valeur
+
+# Request: nouvelles valeurs de cache
+int32 obb   # Taille cache OBB (-1 pour ne pas modifier)
+int32 mesh  # Taille cache mesh (-1 pour ne pas modifier)
+int32 blox  # Taille cache blox (-1 pour ne pas modifier)
+
+---
+
+# Response
+bool success           # True si modification réussie
+string message         # Message de statut
+int32 obb_cache        # Valeur actuelle cache OBB
+int32 mesh_cache       # Valeur actuelle cache mesh
+int32 blox_cache       # Valeur actuelle cache blox

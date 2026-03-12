@@ -72,6 +72,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   openssh-client \
   python3-argcomplete \
   python3-pip \
+  qtbase5-dev \
   ros-dev-tools \
   ros-humble-ament-* \
   vim \
@@ -151,14 +152,18 @@ ARG ISAAC_ROS_APT_COMPONENT=release-3.0
 
 # Paquets ROS supplémentaires (hardware interface, joy, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-joy \
-    ros-humble-teleop-twist-joy \
-    ros-humble-hardware-interface \
-    ros-humble-controller-interface \
-    ros-humble-xacro \
-    python3-colcon-common-extensions \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+  ros-humble-joy \
+  ros-humble-teleop-twist-joy \
+  ros-humble-hardware-interface \
+  ros-humble-controller-interface \
+  ros-humble-cv-bridge \
+  ros-humble-nav2-msgs \
+  ros-humble-pluginlib \
+  ros-humble-rosidl-default-generators \
+  ros-humble-xacro \
+  python3-colcon-common-extensions \
+  python3-pip \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update \
     && keyring=/usr/share/keyrings/nvidia-isaac-ros.gpg \

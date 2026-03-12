@@ -1,0 +1,7 @@
+string[] names
+geometry_msgs/Pose[] poses
+---
+bool success
+string message
+int32 updated_count
+string[] failed_names

@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+
+"""Move the arm to a known-safe home pose when the live robot state is all zeros."""
+
+import math
+import sys
+import time
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if SCRIPT_DIR.name == "curobo":
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+
+import rclpy
+from control_msgs.action import FollowJointTrajectory
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+from pick_and_place.constants import ARM_CONTROLLER_JOINT_NAMES, HOME_JOINT_VALUES, JOINT_NAMES
+
+
+class CuroboHomeBootstrap(Node):
+    def __init__(self):
+        super().__init__("curobo_home_bootstrap")
+        self.declare_parameter("joint_states_topic", "/joint_states")
+        self.declare_parameter(
+            "controller_action_name",
+            "/joint_trajectory_controller/follow_joint_trajectory",
+        )
+        self.declare_parameter("zero_tolerance", 0.05)
+        self.declare_parameter("joint_state_wait_sec", 15.0)
+        self.declare_parameter("controller_wait_sec", 15.0)
+        self.declare_parameter("trajectory_duration_sec", 4.0)
+        self.declare_parameter("result_wait_sec", 30.0)
+
+        self._latest_joint_state = None
+        self._joint_state_sub = self.create_subscription(
+            JointState,
+            str(self.get_parameter("joint_states_topic").value),
+            self._joint_state_callback,
+            10,
+        )
+        self._action_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            str(self.get_parameter("controller_action_name").value),
+        )
+
+    def _joint_state_callback(self, msg):
+        self._latest_joint_state = msg
+
+    def _wait_future_result(self, future, timeout_sec=30.0):
+        rclpy.spin_until_future_complete(self, future, timeout_sec=float(timeout_sec))
+        if not future.done():
+            return None
+        try:
+            return future.result()
+        except Exception:
+            return None
+
+    def _wait_for_joint_state(self, timeout_sec):
+        deadline = time.monotonic() + float(timeout_sec)
+        while time.monotonic() < deadline:
+            if self._latest_joint_state is not None:
+                return self._latest_joint_state
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return None
+
+    @staticmethod
+    def _positions_by_name(msg):
+        return {name: position for name, position in zip(msg.name, msg.position)}
+
+    def _is_all_zero_state(self, positions_by_name, tolerance):
+        required = [joint_name for joint_name in JOINT_NAMES if joint_name in positions_by_name]
+        if len(required) < len(ARM_CONTROLLER_JOINT_NAMES):
+            return False
+        return all(math.fabs(float(positions_by_name[joint_name])) <= tolerance for joint_name in required)
+
+    def _build_home_goal(self):
+        trajectory = JointTrajectory()
+        trajectory.joint_names = list(ARM_CONTROLLER_JOINT_NAMES)
+        point = JointTrajectoryPoint()
+        point.positions = [
+            float(HOME_JOINT_VALUES[joint_name]) for joint_name in ARM_CONTROLLER_JOINT_NAMES
+        ]
+        duration = float(self.get_parameter("trajectory_duration_sec").value)
+        point.time_from_start.sec = int(duration)
+        point.time_from_start.nanosec = int((duration % 1.0) * 1e9)
+        trajectory.points.append(point)
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = trajectory
+        return goal
+
+    def run(self):
+        joint_state_wait_sec = float(self.get_parameter("joint_state_wait_sec").value)
+        controller_wait_sec = float(self.get_parameter("controller_wait_sec").value)
+        result_wait_sec = float(self.get_parameter("result_wait_sec").value)
+        zero_tolerance = float(self.get_parameter("zero_tolerance").value)
+
+        msg = self._wait_for_joint_state(joint_state_wait_sec)
+        if msg is None:
+            self.get_logger().warn(
+                f"No /joint_states received within {joint_state_wait_sec:.1f}s; skipping curobo home bootstrap."
+            )
+            return 0
+
+        positions_by_name = self._positions_by_name(msg)
+        if not self._is_all_zero_state(positions_by_name, zero_tolerance):
+            preview = [
+                f"{joint_name}={positions_by_name.get(joint_name, float('nan')):.3f}"
+                for joint_name in JOINT_NAMES
+                if joint_name in positions_by_name
+            ]
+            self.get_logger().info(
+                "Skipping curobo home bootstrap because robot is not in the zero start pose: "
+                + ", ".join(preview)
+            )
+            return 0
+
+        self.get_logger().warn(
+            "Detected all-zero live joint state. Sending arm to HOME_JOINT_VALUES before curobo launch."
+        )
+
+        if not self._action_client.wait_for_server(timeout_sec=controller_wait_sec):
+            self.get_logger().warn(
+                "Arm FollowJointTrajectory action server is unavailable; skipping curobo home bootstrap."
+            )
+            return 0
+
+        future = self._action_client.send_goal_async(self._build_home_goal())
+        goal_handle = self._wait_future_result(future, timeout_sec=5.0)
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().warn("Home bootstrap trajectory goal was rejected.")
+            return 0
+
+        result = self._wait_future_result(goal_handle.get_result_async(), timeout_sec=result_wait_sec)
+        if result is None:
+            self.get_logger().warn("Home bootstrap trajectory returned no result.")
+            return 0
+
+        raw_error_code = result.result.error_code
+        error_code = raw_error_code.val if hasattr(raw_error_code, "val") else int(raw_error_code)
+        if error_code != 0:
+            self.get_logger().warn(
+                f"Home bootstrap trajectory failed with error code {error_code}: "
+                f"{result.result.error_string}"
+            )
+            return 0
+
+        self.get_logger().info("Curobo home bootstrap trajectory completed successfully.")
+        return 0
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CuroboHomeBootstrap()
+    try:
+        return node.run()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

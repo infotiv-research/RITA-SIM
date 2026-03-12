@@ -1,0 +1,7 @@
+# Service to retrieve the list of available robot strategies
+---
+string[] strategy_names      # Human-readable display names (e.g. "Doosan M1013", "Emulator")
+uint8[] strategy_ids         # Corresponding SetRobotStrategy enum IDs
+string current_strategy_name # Display name of the currently active strategy
+uint8 current_strategy_id    # Enum ID of the currently active strategy
+bool success

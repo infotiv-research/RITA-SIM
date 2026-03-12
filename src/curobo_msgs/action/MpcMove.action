@@ -1,0 +1,7 @@
+geometry_msgs/Pose target_pose
+---
+bool success
+string message
+---
+sensor_msgs/JointState joint_command
+float32 step_progression

@@ -8,6 +8,7 @@ Responsibilities:
 """
 
 GRIPPER_JOINT = "finger_joint"
+ARM_TRAJECTORY_ACTION = "/joint_trajectory_controller/follow_joint_trajectory"
 GRIPPER_TRAJECTORY_ACTION = (
     "/robotiq_gripper_joint_trajectory_controller/follow_joint_trajectory"
 )
@@ -21,6 +22,8 @@ JOINT_NAMES = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
+
+ARM_CONTROLLER_JOINT_NAMES = list(JOINT_NAMES)
 
 # Home target hardcoded from ur_robotiq_gantry_macro.srdf.xacro group_state "home".
 HOME_JOINT_VALUES = {

@@ -22,17 +22,29 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, String
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
 from .constants import (
+    ARM_TRAJECTORY_ACTION,
     END_EFFECTOR_LINK,
     GRIPPER_TRAJECTORY_ACTION,
 )
+from .backend_curobo import CuroboMotionBackend
+from .backend_moveit import MoveItMotionBackend
 from .cumotion_attachment_ops import CumotionAttachmentOpsMixin
+from .curobo_object_tracking import CuroboObjectTracker
 from .gripper_control import GripperControlMixin
 from .math_tf_utils import MathTfMixin
 from .move_group_ops import MoveGroupOpsMixin
 from .planning_scene_ops import PlanningSceneOpsMixin
+
+try:
+    from curobo_msgs.srv import AddObject, RemoveObject, SetLinkCollision
+except ImportError:
+    AddObject = None
+    RemoveObject = None
+    SetLinkCollision = None
 
 
 class PickAndPlaceTargetObject(
@@ -49,13 +61,17 @@ class PickAndPlaceTargetObject(
         # Parameters
         self.declare_parameter("target_object_id", "rubiks_cube")
         self.declare_parameter("target_object_frame", "rubiks_cube")
+        self.declare_parameter("assets_root", "")
         self.declare_parameter("world_frame", "world")
         self.declare_parameter("pre_grasp_offset_z", 0.15)
         self.declare_parameter("planning_time", 10.0)
         self.declare_parameter("max_velocity_scaling", 0.3)
         self.declare_parameter("max_acceleration_scaling", 0.3)
         self.declare_parameter("num_planning_attempts", 10)
+        self.declare_parameter("motion_backend", "moveit")
         self.declare_parameter("planning_pipeline", "cumotion")
+        self.declare_parameter("curobo_planner_type", "classic")
+        self.declare_parameter("curobo_carried_object_sphere_count", 3)
         self.declare_parameter("grasp_offset_z", 0.00)
         self.declare_parameter("post_grasp_lift_z", 0.08)
         self.declare_parameter("grasp_retry_count", 4)
@@ -121,13 +137,28 @@ class PickAndPlaceTargetObject(
 
         self.target_object_id = str(self.get_parameter("target_object_id").value)
         self.target_object_frame = str(self.get_parameter("target_object_frame").value)
+        self._curobo_attachment_assets_root = str(self.get_parameter("assets_root").value)
         self.world_frame = self.get_parameter("world_frame").value
         self.pre_grasp_offset_z = self.get_parameter("pre_grasp_offset_z").value
         self.planning_time = self.get_parameter("planning_time").value
         self.max_velocity_scaling = self.get_parameter("max_velocity_scaling").value
         self.max_acceleration_scaling = self.get_parameter("max_acceleration_scaling").value
         self.num_planning_attempts = self.get_parameter("num_planning_attempts").value
-        self.planning_pipeline = self.get_parameter("planning_pipeline").value
+        requested_motion_backend = str(self.get_parameter("motion_backend").value).strip().lower()
+        if requested_motion_backend in {"curobo", "curobo_ros"}:
+            self.motion_backend = "curobo_ros"
+        elif requested_motion_backend in {"moveit", "move_it"}:
+            self.motion_backend = "moveit"
+        else:
+            self.motion_backend = "moveit"
+            self.get_logger().warn(
+                f"Unknown motion_backend '{requested_motion_backend}', falling back to MoveIt."
+            )
+        self.planning_pipeline = str(self.get_parameter("planning_pipeline").value).strip().lower()
+        self.curobo_planner_type = str(self.get_parameter("curobo_planner_type").value)
+        self.curobo_carried_object_sphere_count = int(
+            self.get_parameter("curobo_carried_object_sphere_count").value
+        )
         self.grasp_offset_z = self.get_parameter("grasp_offset_z").value
         self.post_grasp_lift_z = self.get_parameter("post_grasp_lift_z").value
         self.grasp_retry_count = self.get_parameter("grasp_retry_count").value
@@ -226,6 +257,7 @@ class PickAndPlaceTargetObject(
         )
         self._use_cumotion_object_attachment = (
             self.enable_cumotion_object_attachment
+            and str(self.motion_backend).lower() == "moveit"
             and str(self.planning_pipeline).lower() == "cumotion"
         )
         self.cumotion_attachment_min_spheres = max(
@@ -236,6 +268,10 @@ class PickAndPlaceTargetObject(
             int(self.cumotion_attachment_max_spheres),
         )
         self.gripper_touch_links = list(self.get_parameter("gripper_touch_links").value)
+        if self.motion_backend != "moveit":
+            self.get_logger().info(
+                "motion_backend=curobo_ros selected. planning_pipeline is ignored for this run."
+            )
 
         # TF
         self.tf_buffer = Buffer()
@@ -246,6 +282,12 @@ class PickAndPlaceTargetObject(
         self.move_group_client = ActionClient(
             self, MoveGroup, "/move_action", callback_group=self.cb_group
         )
+        self.arm_traj_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            ARM_TRAJECTORY_ACTION,
+            callback_group=self.cb_group,
+        )
         self.gripper_traj_client = ActionClient(
             self,
             FollowJointTrajectory,
@@ -253,6 +295,26 @@ class PickAndPlaceTargetObject(
             callback_group=self.cb_group,
         )
         self._init_cumotion_attachment_client()
+        self.curobo_add_object_client = (
+            self.create_client(AddObject, "/unified_planner/add_object")
+            if AddObject is not None
+            else None
+        )
+        self.curobo_remove_object_client = (
+            self.create_client(RemoveObject, "/unified_planner/remove_object")
+            if RemoveObject is not None
+            else None
+        )
+        self.curobo_set_link_collision_client = (
+            self.create_client(SetLinkCollision, "/unified_planner/set_link_collision")
+            if SetLinkCollision is not None
+            else None
+        )
+        self.curobo_get_obstacles_client = (
+            self.create_client(Trigger, "/unified_planner/get_obstacles")
+            if str(self.motion_backend).lower() == "curobo_ros"
+            else None
+        )
 
         # Planning scene + environment-collision interfaces.
         self.planning_scene_pub = self.create_publisher(
@@ -280,6 +342,12 @@ class PickAndPlaceTargetObject(
 
         self._executed = False
         self._shutdown_requested = False
+        if str(self.motion_backend).lower() == "curobo_ros":
+            self._motion_backend_adapter = CuroboMotionBackend(self)
+            self._curobo_object_tracker = CuroboObjectTracker(self)
+        else:
+            self._motion_backend_adapter = MoveItMotionBackend(self)
+            self._curobo_object_tracker = None
 
         # Run execution in a background thread after a wall-clock delay
         self._thread = threading.Thread(target=self._delayed_execute, daemon=True)
@@ -288,7 +356,9 @@ class PickAndPlaceTargetObject(
         self.get_logger().info(
             "Pick-and-place node initialized. Waiting 3s for TF... "
             "Surface gripper commands will be published to /gripper_command. "
+            f"Motion backend: {self.motion_backend}. "
             f"Requested planning pipeline: {self.planning_pipeline}. "
+            f"Requested curobo planner type: {self.curobo_planner_type}. "
             f"Target object id/frame: {self.target_object_id}/{self.target_object_frame}. "
             f"cuMotion object attachment={'enabled' if self._use_cumotion_object_attachment else 'disabled'}. "
             f"attachment sphere target_d={float(self.cumotion_attachment_target_sphere_diameter_m):.3f} m "
@@ -320,342 +390,367 @@ class PickAndPlaceTargetObject(
         if self._executed:
             return
         self._executed = True
-
-        self.get_logger().info("Waiting for MoveGroup action server (/move_action)...")
-        if not self.move_group_client.wait_for_server(timeout_sec=30.0):
-            self.get_logger().error(
-                "MoveGroup action server not available after 30s! "
-                "Is ur_robotiq_isaac_moveit.launch.py running?"
-            )
-            return
-        if not self.gripper_traj_client.wait_for_server(timeout_sec=30.0):
-            self.get_logger().error(
-                f"Gripper trajectory action server not available after 30s: "
-                f"{GRIPPER_TRAJECTORY_ACTION}"
-            )
-            return
-        if self._use_cumotion_object_attachment:
-            self.get_logger().info(
-                f"Waiting for cuMotion object-attachment action server "
-                f"'{self.cumotion_attach_action_name}'..."
-            )
-            if not self._wait_for_cumotion_attachment_server(
-                timeout_sec=float(self.cumotion_attach_timeout_s)
-            ):
+        shutdown_reason = None
+        try:
+            if not self.gripper_traj_client.wait_for_server(timeout_sec=30.0):
                 self.get_logger().error(
-                    f"cuMotion attachment action server '{self.cumotion_attach_action_name}' "
-                    "is required but not available. Aborting."
+                    f"Gripper trajectory action server not available after 30s: "
+                    f"{GRIPPER_TRAJECTORY_ACTION}"
+                )
+                return
+            if not self._motion_backend_adapter.wait_until_ready():
+                return
+
+            self.get_logger().info(
+                f"{self.motion_backend} motion backend connected. Starting sequence..."
+            )
+
+            # 1. Look up target object pose
+            object_pose = self._lookup_target_object_pose()
+            if object_pose is None:
+                self.get_logger().error(
+                    f"Failed to look up target object frame '{self.target_object_frame}'. Aborting."
                 )
                 return
 
-        self.get_logger().info("MoveGroup action server connected. Starting sequence...")
-
-        # 1. Look up target object pose
-        object_pose = self._lookup_target_object_pose()
-        if object_pose is None:
-            self.get_logger().error(
-                f"Failed to look up target object frame '{self.target_object_frame}'. Aborting."
+            ox, oy, oz, oqx, oqy, oqz, oqw = object_pose
+            self.get_logger().info(
+                f"Target object '{self.target_object_id}' pose in world: "
+                f"x={ox:.3f}, y={oy:.3f}, z={oz:.3f}, "
+                f"q=({oqx:.3f}, {oqy:.3f}, {oqz:.3f}, {oqw:.3f})"
             )
-            return
 
-        ox, oy, oz, oqx, oqy, oqz, oqw = object_pose
-        self.get_logger().info(
-            f"Target object '{self.target_object_id}' pose in world: "
-            f"x={ox:.3f}, y={oy:.3f}, z={oz:.3f}, "
-            f"q=({oqx:.3f}, {oqy:.3f}, {oqz:.3f}, {oqw:.3f})"
-        )
+            # 2. Open gripper via ros2_control trajectory action
+            self.get_logger().info("Opening gripper...")
+            success = self._move_gripper(0.0)
+            if not success:
+                self.get_logger().error("Failed to open gripper. Aborting.")
+                return
+            self.get_logger().info("Gripper opened.")
 
-        # 2. Open gripper via ros2_control trajectory action
-        self.get_logger().info("Opening gripper...")
-        success = self._move_gripper(0.0)
-        if not success:
-            self.get_logger().error("Failed to open gripper. Aborting.")
-            return
-        self.get_logger().info("Gripper opened.")
-
-        # 3. Move to pre-grasp pose (above target object)
-        pre_grasp_z = oz + self.pre_grasp_offset_z
-        self.get_logger().info(
-            f"Moving to pre-grasp pose: x={ox:.3f}, y={oy:.3f}, z={pre_grasp_z:.3f}"
-        )
-        success = self._move_to_pose(ox, oy, pre_grasp_z, oqx, oqy, oqz, oqw)
-        if not success:
-            self.get_logger().warn(
-                "Pre-grasp plan failed. Retrying once with extended planning budget."
+            # 3. Move to pre-grasp pose (above target object)
+            pre_grasp_z = oz + self.pre_grasp_offset_z
+            self.get_logger().info(
+                f"Moving to pre-grasp pose: x={ox:.3f}, y={oy:.3f}, z={pre_grasp_z:.3f}"
             )
-            success = self._move_to_pose(
-                ox,
-                oy,
-                pre_grasp_z,
-                oqx,
-                oqy,
-                oqz,
-                oqw,
-                planning_time=20.0,
-                num_attempts=20,
+            success = self._motion_backend_adapter.move_to_pose(
+                ox, oy, pre_grasp_z, oqx, oqy, oqz, oqw
             )
             if not success:
-                self.get_logger().error("Failed to move to pre-grasp pose. Aborting.")
-                return
-        self.get_logger().info("Reached pre-grasp pose.")
-
-        # 4. Move to grasp pose (gripper around object) while object remains in scene
-        # Try grasp poses with increasing z offset. This helps recover from
-        # cuMotion IK failures when the nominal low grasp target is too constrained.
-        success = False
-        grasp_retry_count = max(1, int(self.grasp_retry_count))
-        grasp_retry_step = float(self.grasp_retry_step_z)
-        used_grasp_offset_z = float(self.grasp_offset_z)
-        for grasp_try in range(grasp_retry_count):
-            offset_z = float(self.grasp_offset_z) + grasp_try * grasp_retry_step
-            used_grasp_offset_z = offset_z
-            grasp_z = oz + offset_z
-            self.get_logger().info(
-                f"Moving to grasp pose attempt {grasp_try + 1}/{grasp_retry_count}: "
-                f"x={ox:.3f}, y={oy:.3f}, z={grasp_z:.3f}, offset_z={offset_z:.3f} "
-                f"(TCP at z={grasp_z:.3f}, object center at z={oz:.3f})"
-            )
-            success = self._move_to_pose(
-                ox,
-                oy,
-                grasp_z,
-                oqx,
-                oqy,
-                oqz,
-                oqw,
-                planning_time=20.0,
-                num_attempts=20,
-            )
-            if success:
-                break
-
-        if not success:
-            self.get_logger().error("Failed to move to grasp pose. Aborting.")
-            return
-        self.get_logger().info("Reached grasp pose. Gripper is around the object.")
-
-        # 5. Snapshot current world geometry for exact attach representation.
-        self.get_logger().info(
-            f"Snapshotting world collision geometry for '{self.target_object_id}'..."
-        )
-        object_snapshot = self._snapshot_world_object_geometry(
-            self.target_object_id, timeout_sec=1.0
-        )
-        if object_snapshot is None:
-            self.get_logger().warn(
-                f"Could not snapshot world geometry for '{self.target_object_id}'. "
-                "Attempting one recovery pass (unsuppress + resnapshot)..."
-            )
-            recovered = self._set_environment_object_suppressed(
-                self.target_object_id, suppress=False, wait_timeout_sec=2.0
-            )
-            if not recovered:
                 self.get_logger().warn(
-                    f"Recovery unsuppress could not confirm '{self.target_object_id}' "
-                    "in world collision objects."
+                    "Pre-grasp plan failed. Retrying once with extended planning budget."
                 )
-            self._target_object_suppressed = False
-            object_snapshot = self._snapshot_world_object_geometry(
-                self.target_object_id, timeout_sec=2.0
-            )
-            if object_snapshot is None:
-                self.get_logger().error(
-                    f"Could not snapshot world geometry for '{self.target_object_id}' "
-                    "after recovery. Aborting because cuMotion attachment requires "
-                    "runtime object collision geometry."
+                success = self._motion_backend_adapter.move_to_pose(
+                    ox,
+                    oy,
+                    pre_grasp_z,
+                    oqx,
+                    oqy,
+                    oqz,
+                    oqw,
+                    planning_time=20.0,
+                    num_attempts=20,
                 )
+                if not success:
+                    self.get_logger().error("Failed to move to pre-grasp pose. Aborting.")
+                    return
+            self.get_logger().info("Reached pre-grasp pose.")
+
+            # 4. Move to grasp pose (gripper around object) while object remains in scene
+            # Try grasp poses with increasing z offset. This helps recover from
+            # cuMotion IK failures when the nominal low grasp target is too constrained.
+            success = False
+            grasp_retry_count = max(1, int(self.grasp_retry_count))
+            grasp_retry_step = float(self.grasp_retry_step_z)
+            used_grasp_offset_z = float(self.grasp_offset_z)
+            for grasp_try in range(grasp_retry_count):
+                offset_z = float(self.grasp_offset_z) + grasp_try * grasp_retry_step
+                used_grasp_offset_z = offset_z
+                grasp_z = oz + offset_z
+                self.get_logger().info(
+                    f"Moving to grasp pose attempt {grasp_try + 1}/{grasp_retry_count}: "
+                    f"x={ox:.3f}, y={oy:.3f}, z={grasp_z:.3f}, offset_z={offset_z:.3f} "
+                    f"(TCP at z={grasp_z:.3f}, object center at z={oz:.3f})"
+                )
+                success = self._motion_backend_adapter.move_to_pose(
+                    ox,
+                    oy,
+                    grasp_z,
+                    oqx,
+                    oqy,
+                    oqz,
+                    oqw,
+                    planning_time=20.0,
+                    num_attempts=20,
+                )
+                if success:
+                    break
+
+            if not success:
+                self.get_logger().error("Failed to move to grasp pose. Aborting.")
                 return
+            self.get_logger().info("Reached grasp pose. Gripper is around the object.")
 
-        # 6. Suppress world collision right before the close command.
-        self.get_logger().info(
-            f"Suppressing world collision object '{self.target_object_id}' before closing..."
-        )
-        success = self._set_environment_object_suppressed(
-            self.target_object_id, suppress=True, wait_timeout_sec=2.0
-        )
-        if not success:
-            self.get_logger().error(
-                f"Failed to suppress '{self.target_object_id}' in environment collisions. Aborting."
+            object_snapshot = None
+            if str(self.motion_backend).lower() == "moveit":
+            # Snapshot exact world geometry only for the MoveIt backend.
+                self.get_logger().info(
+                    f"Snapshotting world collision geometry for '{self.target_object_id}'..."
+                )
+                object_snapshot = self._snapshot_world_object_geometry(
+                    self.target_object_id, timeout_sec=1.0
+                )
+                if object_snapshot is None:
+                    self.get_logger().warn(
+                        f"Could not snapshot world geometry for '{self.target_object_id}'. "
+                        "Attempting one recovery pass (unsuppress + resnapshot)..."
+                    )
+                    recovered = self._set_environment_object_suppressed(
+                        self.target_object_id, suppress=False, wait_timeout_sec=2.0
+                    )
+                    if not recovered:
+                        self.get_logger().warn(
+                            f"Recovery unsuppress could not confirm '{self.target_object_id}' "
+                            "in world collision objects."
+                        )
+                    self._target_object_suppressed = False
+                    object_snapshot = self._snapshot_world_object_geometry(
+                        self.target_object_id, timeout_sec=2.0
+                    )
+                    if object_snapshot is None:
+                        self.get_logger().error(
+                            f"Could not snapshot world geometry for '{self.target_object_id}' "
+                            "after recovery. Aborting because MoveIt/cumotion attachment requires "
+                            "runtime object collision geometry."
+                        )
+                        return
+
+            # 6. Suppress world collision right before the close command.
+            self.get_logger().info(
+                f"Suppressing world collision object '{self.target_object_id}' before closing..."
             )
-            return
-        self._target_object_suppressed = True
-
-        # 7. Close gripper and attach object collision geometry to the gripper
-        self.get_logger().info(
-            f"Closing gripper to {float(self.gripper_close_position):.3f} rad..."
-        )
-        success = self._move_gripper(
-            float(self.gripper_close_position), allow_stall_success=True
-        )
-        if not success:
-            self.get_logger().error("Failed to close gripper. Aborting.")
-            self._restore_suppressed_object_collision()
-            return
-        self.get_logger().info("Gripper closed.")
-
-        self._sleep(float(self.post_grasp_settle_s))
-        # Isaac attachment must happen before lift so the simulated object follows
-        # the gripper during the lift motion.
-        self.get_logger().info(
-            "Attaching in Isaac (surface gripper command) before post-grasp lift..."
-        )
-        self._publish_surface_gripper_command(True)
-
-        # Lift slightly after close.
-        lift_z = oz + used_grasp_offset_z + float(self.post_grasp_lift_z)
-        self.get_logger().info(
-            "Performing post-grasp lift: "
-            f"x={ox:.3f}, y={oy:.3f}, z={lift_z:.3f}"
-        )
-        success = self._move_to_pose(
-            ox,
-            oy,
-            lift_z,
-            oqx,
-            oqy,
-            oqz,
-            oqw,
-            planning_time=10.0,
-            num_attempts=10,
-        )
-        if not success:
-            self.get_logger().error("Failed post-grasp lift. Aborting.")
-            self._restore_suppressed_object_collision()
-            return
-        self.get_logger().info("Post-grasp lift completed.")
-
-        object_pose_after_lift = self._lookup_target_object_pose()
-        if object_pose_after_lift is None:
-            object_pose_after_lift = (ox, oy, lift_z, oqx, oqy, oqz, oqw)
-            self.get_logger().warn(
-                "Could not refresh object world pose after post-grasp lift. "
-                "Using commanded lifted pose for attachment projection fallback."
-            )
-        if object_snapshot is not None:
-            ax, ay, az, aqx, aqy, aqz, aqw = object_pose_after_lift
-            object_snapshot.pose.position.x = float(ax)
-            object_snapshot.pose.position.y = float(ay)
-            object_snapshot.pose.position.z = float(az)
-            object_snapshot.pose.orientation.x = float(aqx)
-            object_snapshot.pose.orientation.y = float(aqy)
-            object_snapshot.pose.orientation.z = float(aqz)
-            object_snapshot.pose.orientation.w = float(aqw)
-            object_snapshot.header.frame_id = self.world_frame
-
-        if self._use_cumotion_object_attachment:
-            success = self._attach_object_to_cumotion(
-                target_object_world_pose=object_pose_after_lift,
-                grasp_offset_z=used_grasp_offset_z,
-                world_object_snapshot=object_snapshot,
+            success = self._set_environment_object_suppressed(
+                self.target_object_id, suppress=True, wait_timeout_sec=2.0
             )
             if not success:
                 self.get_logger().error(
-                    "Failed to attach target object to cuMotion robot collision spheres. Aborting."
+                    f"Failed to suppress '{self.target_object_id}' in environment collisions. Aborting."
                 )
+                return
+            self._target_object_suppressed = True
+
+            # 7. Close gripper and attach object collision geometry to the gripper
+            self.get_logger().info(
+                f"Closing gripper to {float(self.gripper_close_position):.3f} rad..."
+            )
+            success = self._move_gripper(
+                float(self.gripper_close_position), allow_stall_success=True
+            )
+            if not success:
+                self.get_logger().error("Failed to close gripper. Aborting.")
                 self._restore_suppressed_object_collision()
                 return
+            self.get_logger().info("Gripper closed.")
 
-        self.get_logger().info(
-            f"Attaching '{self.target_object_id}' collision object to gripper in MoveIt after lift..."
-        )
-        success = self._attach_object_collision(
-            self.target_object_id,
-            object_pose_after_lift,
-            world_object_snapshot=object_snapshot,
-            grasp_offset_z=used_grasp_offset_z,
-            publish_surface_gripper_command=False,
-        )
-        if not success:
-            self.get_logger().error(
-                f"Failed to attach '{self.target_object_id}' collision object. Aborting."
+            self._sleep(float(self.post_grasp_settle_s))
+            # Isaac attachment must happen before lift so the simulated object follows
+            # the gripper during the lift motion.
+            self.get_logger().info(
+                "Attaching in Isaac (surface gripper command) before post-grasp lift..."
             )
-            self._detach_object_from_cumotion(best_effort=True)
-            self._restore_suppressed_object_collision()
-            return
-        self.get_logger().info(
-            f"Collision object '{self.target_object_id}' attached to gripper."
-        )
-        if self.verify_attached_in_scene:
-            attached_seen = self._wait_for_attached_object_in_planning_scene(
-                self.target_object_id, timeout_sec=2.0
+            self._publish_surface_gripper_command(True)
+
+            # Lift slightly after close.
+            lift_z = oz + used_grasp_offset_z + float(self.post_grasp_lift_z)
+            self.get_logger().info(
+                "Performing post-grasp lift: "
+                f"x={ox:.3f}, y={oy:.3f}, z={lift_z:.3f}"
             )
-            if attached_seen:
-                self.get_logger().info(
-                    f"Verified '{self.target_object_id}' is attached in MoveIt's planning scene."
-                )
-            else:
+            success = self._motion_backend_adapter.move_to_pose(
+                ox,
+                oy,
+                lift_z,
+                oqx,
+                oqy,
+                oqz,
+                oqw,
+                planning_time=10.0,
+                num_attempts=10,
+            )
+            if not success:
+                self.get_logger().error("Failed post-grasp lift. Aborting.")
+                self._restore_suppressed_object_collision()
+                return
+            self.get_logger().info("Post-grasp lift completed.")
+
+            object_pose_after_lift = self._lookup_target_object_pose()
+            if object_pose_after_lift is None:
+                object_pose_after_lift = (ox, oy, lift_z, oqx, oqy, oqz, oqw)
                 self.get_logger().warn(
-                    f"Could not verify '{self.target_object_id}' in MoveIt's attached objects "
-                    "before release planning."
+                    "Could not refresh object world pose after post-grasp lift. "
+                    "Using commanded lifted pose for attachment projection fallback."
+                )
+            if object_snapshot is not None:
+                ax, ay, az, aqx, aqy, aqz, aqw = object_pose_after_lift
+                object_snapshot.pose.position.x = float(ax)
+                object_snapshot.pose.position.y = float(ay)
+                object_snapshot.pose.position.z = float(az)
+                object_snapshot.pose.orientation.x = float(aqx)
+                object_snapshot.pose.orientation.y = float(aqy)
+                object_snapshot.pose.orientation.z = float(aqz)
+                object_snapshot.pose.orientation.w = float(aqw)
+                object_snapshot.header.frame_id = self.world_frame
+
+            if str(self.motion_backend).lower() == "moveit":
+                if self._use_cumotion_object_attachment:
+                    success = self._attach_object_to_cumotion(
+                        target_object_world_pose=object_pose_after_lift,
+                        grasp_offset_z=used_grasp_offset_z,
+                        world_object_snapshot=object_snapshot,
+                    )
+                    if not success:
+                        self.get_logger().error(
+                            "Failed to attach target object to cuMotion robot collision spheres. Aborting."
+                        )
+                        self._restore_suppressed_object_collision()
+                        return
+
+                self.get_logger().info(
+                    f"Attaching '{self.target_object_id}' collision object to gripper in MoveIt after lift..."
+                )
+                success = self._attach_object_collision(
+                    self.target_object_id,
+                    object_pose_after_lift,
+                    world_object_snapshot=object_snapshot,
+                    grasp_offset_z=used_grasp_offset_z,
+                    publish_surface_gripper_command=False,
+                )
+                if not success:
+                    self.get_logger().error(
+                        f"Failed to attach '{self.target_object_id}' collision object. Aborting."
+                    )
+                    self._detach_object_from_cumotion(best_effort=True)
+                    self._restore_suppressed_object_collision()
+                    return
+                self.get_logger().info(
+                    f"Collision object '{self.target_object_id}' attached to gripper."
+                )
+                if self.verify_attached_in_scene:
+                    attached_seen = self._wait_for_attached_object_in_planning_scene(
+                        self.target_object_id, timeout_sec=2.0
+                    )
+                    if attached_seen:
+                        self.get_logger().info(
+                            f"Verified '{self.target_object_id}' is attached in MoveIt's planning scene."
+                        )
+                    else:
+                        self.get_logger().warn(
+                            f"Could not verify '{self.target_object_id}' in MoveIt's attached objects "
+                            "before release planning."
+                        )
+            else:
+                object_pose_in_ee = self._lookup_target_object_pose_in_end_effector(
+                    target_object_world_pose=object_pose_after_lift,
+                )
+                success = self._curobo_object_tracker.attach(
+                    object_pose_world=object_pose_after_lift,
+                    object_pose_in_ee=object_pose_in_ee,
+                )
+                if not success:
+                    self.get_logger().error(
+                        "Failed to attach carried-object spheres for curobo backend. Aborting."
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
+
+            # 8. Move directly to release pose while carrying attached collision geometry.
+            success = self._motion_backend_adapter.move_to_release_pose_with_retries()
+            if not success:
+                self.get_logger().error("Failed to move to release pose. Aborting.")
+                self._detach_dynamic_collision_representations(best_effort=True)
+                self._restore_suppressed_object_collision()
+                return
+            self.get_logger().info("Reached release pose.")
+
+            # 9. Open gripper to release object
+            self.get_logger().info(f"Opening gripper to release '{self.target_object_id}'...")
+            success = self._move_gripper(0.0)
+            if not success:
+                self.get_logger().error(
+                    f"Failed to open gripper at release pose for '{self.target_object_id}'. Aborting."
+                )
+                self._detach_dynamic_collision_representations(best_effort=True)
+                self._restore_suppressed_object_collision()
+                return
+            self.get_logger().info("Gripper opened at release pose.")
+
+            if str(self.motion_backend).lower() == "moveit":
+                # 10. Detach object in MoveIt planning scene
+                self.get_logger().info(
+                    f"Releasing '{self.target_object_id}' attachment in MoveIt planning scene..."
+                )
+                success = self._detach_object_collision(self.target_object_id)
+                if not success:
+                    self.get_logger().error(
+                        f"Failed to release '{self.target_object_id}' attachment. Aborting."
+                    )
+                    self._detach_object_from_cumotion(best_effort=True)
+                    self._restore_suppressed_object_collision()
+                    return
+
+                success = self._detach_object_from_cumotion(retry_once=True)
+                if not success:
+                    self.get_logger().error(
+                        "Failed to detach target object from cuMotion collision spheres. Aborting."
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
+            else:
+                self._publish_surface_gripper_command(False)
+                success = self._curobo_object_tracker.detach()
+                if not success:
+                    self.get_logger().error(
+                        "Failed to detach carried-object spheres from curobo backend. Aborting."
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
+
+            # 11. Unsuppress object so environment publisher resumes world ownership
+            self.get_logger().info(
+                f"Unsuppressing world collision object '{self.target_object_id}' after release..."
+            )
+            success = self._set_environment_object_suppressed(
+                self.target_object_id, suppress=False, wait_timeout_sec=2.0
+            )
+            if not success:
+                self.get_logger().error(
+                    f"Failed to unsuppress world collision object '{self.target_object_id}'. Aborting."
+                )
+                self._detach_dynamic_collision_representations(best_effort=True)
+                return
+            self._target_object_suppressed = False
+
+            # 12. Return to home
+            self.get_logger().info("Returning to home joint state...")
+            success = self._motion_backend_adapter.move_to_home()
+            if not success:
+                self.get_logger().error("Failed to return to home joint state. Aborting.")
+                self._detach_dynamic_collision_representations(best_effort=True)
+                return
+
+            self.get_logger().info(
+                "Pick-and-place sequence complete. Object released, environment collision restored, and robot returned home."
+            )
+            shutdown_reason = "Sequence complete"
+        finally:
+            restored = self._motion_backend_adapter.restore_previous_planner()
+            if not restored:
+                self.get_logger().warn(
+                    "Pick-and-place could not restore the previous planner state."
                 )
 
-        # 8. Move directly to release pose while carrying attached collision geometry.
-        success = self._move_to_release_pose_with_retries()
-        if not success:
-            self.get_logger().error("Failed to move to release pose. Aborting.")
-            self._detach_object_from_cumotion(best_effort=True)
-            return
-        self.get_logger().info("Reached release pose.")
-
-        # 9. Open gripper to release object
-        self.get_logger().info(f"Opening gripper to release '{self.target_object_id}'...")
-        success = self._move_gripper(0.0)
-        if not success:
-            self.get_logger().error(
-                f"Failed to open gripper at release pose for '{self.target_object_id}'. Aborting."
-            )
-            self._detach_object_from_cumotion(best_effort=True)
-            return
-        self.get_logger().info("Gripper opened at release pose.")
-
-        # 10. Detach object in MoveIt planning scene
-        self.get_logger().info(
-            f"Releasing '{self.target_object_id}' attachment in MoveIt planning scene..."
-        )
-        success = self._detach_object_collision(self.target_object_id)
-        if not success:
-            self.get_logger().error(
-                f"Failed to release '{self.target_object_id}' attachment. Aborting."
-            )
-            self._detach_object_from_cumotion(best_effort=True)
-            self._restore_suppressed_object_collision()
-            return
-
-        success = self._detach_object_from_cumotion(retry_once=True)
-        if not success:
-            self.get_logger().error(
-                "Failed to detach target object from cuMotion collision spheres. Aborting."
-            )
-            self._restore_suppressed_object_collision()
-            return
-
-        # 11. Unsuppress object so environment publisher resumes world ownership
-        self.get_logger().info(
-            f"Unsuppressing world collision object '{self.target_object_id}' after release..."
-        )
-        success = self._set_environment_object_suppressed(
-            self.target_object_id, suppress=False, wait_timeout_sec=2.0
-        )
-        if not success:
-            self.get_logger().error(
-                f"Failed to unsuppress world collision object '{self.target_object_id}'. Aborting."
-            )
-            self._detach_object_from_cumotion(best_effort=True)
-            return
-        self._target_object_suppressed = False
-
-        # 12. Return to home
-        self.get_logger().info("Returning to home joint state...")
-        success = self._move_to_home()
-        if not success:
-            self.get_logger().error("Failed to return to home joint state. Aborting.")
-            self._detach_object_from_cumotion(best_effort=True)
-            return
-
-        self.get_logger().info(
-            "Pick-and-place sequence complete. Object released, environment collision restored, and robot returned home."
-        )
-        self._request_shutdown("Sequence complete")
+        if shutdown_reason is not None:
+            self._request_shutdown(shutdown_reason)
 
     def _move_to_release_pose_with_retries(self):
         """Move to release pose using a deterministic dropoff retry ladder."""
@@ -868,8 +963,16 @@ class PickAndPlaceTargetObject(
             )
         return tuple(component / norm for component in release_q)
 
+    def _detach_dynamic_collision_representations(self, best_effort=False):
+        """Cleanup for carried-object collision state across backends."""
+        success = True
+        if self._curobo_object_tracker is not None:
+            success = self._curobo_object_tracker.detach(best_effort=best_effort) and success
+        success = self._detach_object_from_cumotion(best_effort=best_effort) and success
+        return success or best_effort
+
     def _restore_suppressed_object_collision(self):
-        """Best-effort cleanup to re-enable world collisions after an abort path."""
+        """Cleanup to re-enable world collisions after an abort path."""
         if not self._target_object_suppressed:
             return True
         restored = self._set_environment_object_suppressed(

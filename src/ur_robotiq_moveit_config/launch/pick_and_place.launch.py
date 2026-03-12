@@ -1,10 +1,14 @@
 """
 Launch file for the modular target-object pick-and-place node.
 
-Launch this AFTER ur_robotiq_isaac_moveit.launch.py is already running
-(which provides move_group, environment collisions, and RViz).
+Launch this after the selected planner backend is already running:
+- MoveIt backend: ur_robotiq_isaac_moveit.launch.py / ./control.sh cumotion
+- curobo backend: ur_robotiq_curobo.launch.py / ./control.sh curobo
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -12,6 +16,18 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    default_assets_root = os.path.abspath(
+        os.path.join(
+            get_package_share_directory("ur_robotiq_moveit_config"),
+            "..",
+            "..",
+            "..",
+            "..",
+            "assets",
+            "isaac_urdf_exports",
+        )
+    )
+
     declared_arguments = [
         DeclareLaunchArgument(
             "use_sim_time",
@@ -19,9 +35,24 @@ def generate_launch_description():
             description="Use simulation time.",
         ),
         DeclareLaunchArgument(
+            "motion_backend",
+            default_value="moveit",
+            description="Motion backend: moveit or curobo_ros.",
+        ),
+        DeclareLaunchArgument(
             "planning_pipeline",
             default_value="cumotion",
             description="Pipeline hint for MoveGroup requests: cumotion or ompl.",
+        ),
+        DeclareLaunchArgument(
+            "curobo_planner_type",
+            default_value="classic",
+            description="Planner type hint for curobo backend: classic, multipoint, or mpc.",
+        ),
+        DeclareLaunchArgument(
+            "curobo_carried_object_sphere_count",
+            default_value="3",
+            description="Number of temporary carried-object spheres for curobo transport planning.",
         ),
         DeclareLaunchArgument(
             "move_group_replan_attempts",
@@ -44,6 +75,11 @@ def generate_launch_description():
             "target_object_frame",
             default_value="rubiks_cube",
             description="TF frame used to look up the grasp target pose.",
+        ),
+        DeclareLaunchArgument(
+            "assets_root",
+            default_value=default_assets_root,
+            description="Path to exported Isaac object URDF assets.",
         ),
         DeclareLaunchArgument(
             "release_pose_qx",
@@ -142,13 +178,19 @@ def generate_launch_description():
         parameters=[
             {
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "motion_backend": LaunchConfiguration("motion_backend"),
                 "planning_pipeline": LaunchConfiguration("planning_pipeline"),
+                "curobo_planner_type": LaunchConfiguration("curobo_planner_type"),
+                "curobo_carried_object_sphere_count": LaunchConfiguration(
+                    "curobo_carried_object_sphere_count"
+                ),
                 "move_group_replan_attempts": LaunchConfiguration(
                     "move_group_replan_attempts"
                 ),
                 "post_grasp_lift_z": LaunchConfiguration("post_grasp_lift_z"),
                 "target_object_id": LaunchConfiguration("target_object_id"),
                 "target_object_frame": LaunchConfiguration("target_object_frame"),
+                "assets_root": LaunchConfiguration("assets_root"),
                 "release_pose_qx": LaunchConfiguration("release_pose_qx"),
                 "release_pose_qy": LaunchConfiguration("release_pose_qy"),
                 "release_pose_qz": LaunchConfiguration("release_pose_qz"),

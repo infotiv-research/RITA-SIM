@@ -19,6 +19,7 @@ from moveit_msgs.msg import (
 )
 from moveit_msgs.srv import GetPlanningScene
 from std_msgs.msg import Bool, String
+from std_srvs.srv import Trigger
 
 from .constants import END_EFFECTOR_LINK
 
@@ -127,6 +128,23 @@ class PlanningSceneOpsMixin:
             return None
         return response.scene
 
+    def _query_curobo_obstacles(self, timeout_sec=0.5):
+        client = getattr(self, "curobo_get_obstacles_client", None)
+        if client is None:
+            return None
+        if not client.wait_for_service(timeout_sec=timeout_sec):
+            return None
+
+        future = client.call_async(Trigger.Request())
+        response = self._wait_future_result(future, timeout_sec=timeout_sec)
+        if response is None or not bool(getattr(response, "success", False)):
+            return None
+        return {
+            line.strip()
+            for line in str(getattr(response, "message", "")).splitlines()
+            if line.strip()
+        }
+
     def _get_world_collision_object(self, object_id):
         scene = self._query_planning_scene(
             PlanningSceneComponents.WORLD_OBJECT_GEOMETRY, timeout_sec=0.5
@@ -156,6 +174,25 @@ class PlanningSceneOpsMixin:
             self._sleep(0.05)
         return False
 
+    def _wait_for_curobo_obstacle_state(self, object_id, present, timeout_sec=1.0):
+        """Wait until object appears or disappears in cuRobo's obstacle manager."""
+        client = getattr(self, "curobo_get_obstacles_client", None)
+        if client is None:
+            self.get_logger().warn(
+                "Cannot verify cuRobo obstacle state: /unified_planner/get_obstacles client is unavailable."
+            )
+            return False
+
+        end_time = time.monotonic() + float(timeout_sec)
+        while time.monotonic() < end_time:
+            obstacle_names = self._query_curobo_obstacles(timeout_sec=0.25)
+            if obstacle_names is not None:
+                observed_present = str(object_id) in obstacle_names
+                if observed_present == bool(present):
+                    return True
+            self._sleep(0.05)
+        return False
+
     def _set_environment_object_suppressed(
         self, object_id, suppress=True, wait_timeout_sec=1.0
     ):
@@ -173,12 +210,21 @@ class PlanningSceneOpsMixin:
             f"Published environment collision control command: {msg.data}"
         )
         expected_present = not bool(suppress)
-        verified = self._wait_for_world_object_state(
-            object_id, present=expected_present, timeout_sec=wait_timeout_sec
-        )
+        if str(getattr(self, "motion_backend", "")).lower() == "curobo_ros":
+            verified = self._wait_for_curobo_obstacle_state(
+                object_id, present=expected_present, timeout_sec=wait_timeout_sec
+            )
+            if not verified:
+                self.get_logger().warn(
+                    f"Timed out waiting for cuRobo obstacle '{object_id}' present={expected_present}."
+                )
+        else:
+            verified = self._wait_for_world_object_state(
+                object_id, present=expected_present, timeout_sec=wait_timeout_sec
+            )
         if not verified:
             self.get_logger().warn(
-                f"Timed out waiting for world object '{object_id}' present={expected_present}."
+                f"Timed out waiting for environment object '{object_id}' present={expected_present}."
             )
         return verified
 

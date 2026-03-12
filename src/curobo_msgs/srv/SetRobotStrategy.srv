@@ -1,0 +1,16 @@
+# Service to switch the active trajectory planner
+#
+# Constants for planner types
+uint8 DOOSAN_M1013 = 0
+uint8 EMULATOR = 1
+uint8 UR10 = 2
+
+# Request: desired robot_strategy type
+uint8 robot_strategy
+
+---
+# Response
+bool success                 # True if switch was successful
+string message              # Human-readable status message
+string previous_robot_strategy     # Name of the previous planner
+string current_robot_strategy      # Name of the new planner
