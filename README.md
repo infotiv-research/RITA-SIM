@@ -11,7 +11,7 @@ This repository has three components:
 
 ## Prerequisites
 
-Make sure your machine has:
+Follow the [instruction](https://github.com/infotiv-research/SIMLAN/blob/main/dependencies.md) to make sure your machine has:
 - Docker installed and working for your user account.
 - Visual Studio Code installed.
 - VS Code extension: **Dev Containers**.
@@ -29,7 +29,7 @@ docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 For Linux GUI forwarding, run this after each reboot:
 
 ```bash
-xhost +
+xhost +local:docker
 ```
 
 ## DevContainers
