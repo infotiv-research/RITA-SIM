@@ -6,6 +6,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include "rclcpp_action/rclcpp_action.hpp"
 #include <control_msgs/action/follow_joint_trajectory.hpp>
+#include <controller_manager_msgs/srv/switch_controller.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/float32.hpp>
@@ -96,6 +97,7 @@ namespace curobo_rviz
     void eulerToQuaternion(double roll, double pitch, double yaw, geometry_msgs::msg::Quaternion& q);
     bool generateTrajectory();
     bool executeGeneratedTrajectory();
+    bool activateTrajectoryController();
     trajectory_msgs::msg::JointTrajectory buildControllerTrajectory() const;
 
   private:
@@ -106,6 +108,7 @@ namespace curobo_rviz
     std::shared_ptr<std_srvs::srv::Trigger::Request> motion_gen_config_request_;
     rclcpp_action::Client<curobo_msgs::action::SendTrajectory>::SharedPtr action_ptr_;
     rclcpp_action::Client<control_msgs::action::FollowJointTrajectory>::SharedPtr controller_action_client_;
+    rclcpp::Client<controller_manager_msgs::srv::SwitchController>::SharedPtr controller_switch_client_;
     rclcpp::Client<curobo_msgs::srv::TrajectoryGeneration>::SharedPtr trajectory_generation_client_;
     rclcpp_action::Client<curobo_msgs::action::SendTrajectory>::GoalHandle::SharedPtr goal_handle_;
     rclcpp_action::ClientGoalHandle<control_msgs::action::FollowJointTrajectory>::SharedPtr controller_goal_handle_;
@@ -142,6 +145,9 @@ namespace curobo_rviz
     std::vector<sensor_msgs::msg::JointState> last_generated_trajectory_;
     double last_generated_dt_;
     std::string controller_action_name_;
+    std::string controller_manager_switch_service_;
+    std::string trajectory_controller_name_;
+    std::string streaming_controller_name_;
     std::vector<std::string> controller_joint_names_;
 
   };

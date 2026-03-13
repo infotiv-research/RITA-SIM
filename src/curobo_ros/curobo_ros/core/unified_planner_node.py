@@ -8,12 +8,15 @@ and allows dynamic switching between them.
 
 import torch
 import rclpy
+import inspect
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
+from controller_manager_msgs.srv import ListControllers, SwitchController
 from sensor_msgs.msg import JointState as JointStateMsg
+from std_msgs.msg import Float64MultiArray, String
 from curobo_msgs.srv import TrajectoryGeneration, SetPlanner, GetPlanners
 from curobo_msgs.action import SendTrajectory, MpcMove
 
@@ -22,9 +25,11 @@ from curobo.types.math import Pose
 from curobo.types.robot import JointState
 from curobo.wrap.reacher.mpc import MpcSolver, MpcSolverConfig
 from curobo.geom.types import Cuboid
+from curobo.geom.sdf.world import CollisionQueryBuffer
 from curobo.util_file import load_yaml
 
 from curobo_ros.robot.robot_context import RobotContext
+from curobo_ros.core.controller_trajectory import wait_future_result
 from curobo_ros.core.config_wrapper_motion import ConfigWrapperMotion, ConfigWrapperMPC
 from curobo_ros.planners import (
     PlannerFactory,
@@ -82,6 +87,22 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('collision_activation_distance', 0.025)
         self.declare_parameter('convergence_threshold', 0.01)
         self.declare_parameter('max_mpc_iterations', 1000)
+        self.declare_parameter('mpc_position_convergence_threshold', 0.02)
+        self.declare_parameter('mpc_rotation_convergence_threshold', 0.35)
+        self.declare_parameter('mpc_step_dt', 0.03)
+        self.declare_parameter('mpc_horizon_steps', 30)
+        self.declare_parameter('mpc_step_max_attempts', 2)
+        self.declare_parameter('mpc_execution_interface', 'trajectory_action')
+        self.declare_parameter('mpc_stream_controller_name', 'forward_position_controller')
+        self.declare_parameter('mpc_stream_controller_topic', '/forward_position_controller/commands')
+        self.declare_parameter('mpc_deactivate_controller_name', 'joint_trajectory_controller')
+        self.declare_parameter('controller_manager_switch_service', '/controller_manager/switch_controller')
+        self.declare_parameter('mpc_infeasible_abort_steps', 10)
+        self.declare_parameter('mpc_debug_logging', False)
+        self.declare_parameter('mpc_debug_log_every_n_steps', 10)
+        self.declare_parameter('mpc_debug_publish_topic', True)
+        self.declare_parameter('mpc_goal_update_position_epsilon', 0.001)
+        self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.001)
 
         # Initialize ONLY the base config wrapper
         # Other wrappers will be created on-demand (lazy loading)
@@ -90,6 +111,38 @@ class UnifiedPlannerNode(Node):
 
         # Resolve joint order after robot_config_file has been declared by ConfigWrapperMotion.
         self._robot_joint_names = self._load_robot_joint_names()
+        self.declare_parameter('controller_joint_names', list(self._robot_joint_names))
+        configured_controller_names = list(
+            self.get_parameter('controller_joint_names').get_parameter_value().string_array_value
+        )
+        self.controller_joint_names = configured_controller_names or list(self._robot_joint_names)
+        self.controller_switch_client = self.create_client(
+            SwitchController,
+            self.get_parameter('controller_manager_switch_service').get_parameter_value().string_value,
+        )
+        self.controller_list_client = self.create_client(
+            ListControllers,
+            '/controller_manager/list_controllers',
+        )
+        self.mpc_stream_controller_name = (
+            self.get_parameter('mpc_stream_controller_name').get_parameter_value().string_value
+        )
+        self.mpc_stream_controller_topic = (
+            self.get_parameter('mpc_stream_controller_topic').get_parameter_value().string_value
+        )
+        self.mpc_deactivate_controller_name = (
+            self.get_parameter('mpc_deactivate_controller_name').get_parameter_value().string_value
+        )
+        self.mpc_stream_publisher = self.create_publisher(
+            Float64MultiArray,
+            self.mpc_stream_controller_topic,
+            10,
+        )
+        self.mpc_debug_publisher = self.create_publisher(
+            String,
+            f'{self.get_name()}/mpc_debug',
+            10,
+        )
 
         # Shared world_cfg for all planners - references ObstacleManager's world_cfg
         # This is a reference, not a copy, so all planners see the same obstacles
@@ -227,12 +280,29 @@ class UnifiedPlannerNode(Node):
             if shared_checker is not None:
                 self.get_logger().info("  → Sharing world_coll_checker with MotionGen (no extra VRAM)")
 
+            load_from_robot_config_parameters = inspect.signature(
+                MpcSolverConfig.load_from_robot_config
+            ).parameters
+            mpc_config_kwargs = {
+                'store_rollouts': True,
+                'step_dt': float(self.get_parameter('mpc_step_dt').value),
+                'world_coll_checker': shared_checker,
+            }
+            if 'horizon' in load_from_robot_config_parameters:
+                mpc_config_kwargs['horizon'] = int(
+                    self.get_parameter('mpc_horizon_steps').value
+                )
+            else:
+                self.get_logger().warn(
+                    'Installed cuRobo does not support configuring MPC horizon '
+                    'through MpcSolverConfig.load_from_robot_config(); '
+                    'using the library default horizon.'
+                )
+
             mpc_config = MpcSolverConfig.load_from_robot_config(
                 robot_cfg,
                 self.shared_world_cfg,
-                store_rollouts=True,
-                step_dt=0.03,
-                world_coll_checker=shared_checker,
+                **mpc_config_kwargs,
             )
 
             self.mpc = MpcSolver(mpc_config)
@@ -272,31 +342,281 @@ class UnifiedPlannerNode(Node):
     def _joint_state_callback(self, msg: JointStateMsg):
         self._latest_joint_state_msg = msg
 
-    def _get_current_joint_pose(self):
+    def _get_current_joint_pose(self, require_live_state=False):
         """Return the latest /joint_states ordered for the loaded cuRobo robot config."""
-        if self._latest_joint_state_msg is not None and self._robot_joint_names:
-            positions_by_name = {
-                name: position
-                for name, position in zip(
-                    self._latest_joint_state_msg.name,
-                    self._latest_joint_state_msg.position,
-                )
-            }
-            missing_names = [
-                joint_name for joint_name in self._robot_joint_names
-                if joint_name not in positions_by_name
-            ]
-            if not missing_names:
-                return [
-                    float(positions_by_name[joint_name])
-                    for joint_name in self._robot_joint_names
-                ]
-            self.get_logger().warn(
-                f'Latest /joint_states is missing required joints: {missing_names}. '
-                'Falling back to robot_context state.'
-            )
+        live_state = self._get_live_joint_state_dict()
+        if live_state is not None:
+            return list(live_state['position'])
+
+        if require_live_state:
+            return None
 
         return self.robot_context.get_joint_pose()
+
+    def _get_live_joint_state_dict(self):
+        """Return ordered live joint state data from `/joint_states` when available."""
+        if self._latest_joint_state_msg is None or not self._robot_joint_names:
+            return None
+
+        msg = self._latest_joint_state_msg
+        positions_by_name = {
+            name: float(position)
+            for name, position in zip(msg.name, msg.position)
+        }
+        velocity_values = list(msg.velocity) if len(msg.velocity) == len(msg.name) else []
+        velocities_by_name = {
+            name: float(velocity)
+            for name, velocity in zip(msg.name, velocity_values)
+        }
+
+        missing_names = [
+            joint_name for joint_name in self._robot_joint_names
+            if joint_name not in positions_by_name
+        ]
+        if missing_names:
+            self.get_logger().warn(
+                f'Latest /joint_states is missing required joints: {missing_names}.'
+            )
+            return None
+
+        ordered_positions = [
+            positions_by_name[joint_name]
+            for joint_name in self._robot_joint_names
+        ]
+        ordered_velocities = [
+            velocities_by_name.get(joint_name, 0.0)
+            for joint_name in self._robot_joint_names
+        ]
+
+        return {
+            'joint_names': list(self._robot_joint_names),
+            'position': ordered_positions,
+            'velocity': ordered_velocities,
+            'acceleration': [0.0] * len(ordered_positions),
+            'jerk': [0.0] * len(ordered_positions),
+        }
+
+    def get_current_joint_pose(self):
+        """Public state accessor for planners that need real robot feedback."""
+        return self._get_current_joint_pose()
+
+    def get_live_joint_pose(self):
+        """Return ordered /joint_states only, or None if no live robot state is available."""
+        return self._get_current_joint_pose(require_live_state=True)
+
+    def get_current_joint_state(self):
+        """Return the latest ordered joint state, falling back to robot_context if needed."""
+        live_state = self._get_live_joint_state_dict()
+        if live_state is not None:
+            return live_state
+
+        fallback_positions = list(self.robot_context.get_joint_pose())
+        fallback_joint_names = list(self._robot_joint_names) or list(self.robot_context.get_joint_name())
+
+        return {
+            'joint_names': fallback_joint_names,
+            'position': fallback_positions,
+            'velocity': [0.0] * len(fallback_positions),
+            'acceleration': [0.0] * len(fallback_positions),
+            'jerk': [0.0] * len(fallback_positions),
+        }
+
+    def get_live_joint_state(self):
+        """Return ordered live joint position/velocity data or None."""
+        return self._get_live_joint_state_dict()
+
+    def get_controller_joint_names(self):
+        """Controller joint order used for Isaac/ros2_control execution."""
+        return list(self.controller_joint_names or self._robot_joint_names)
+
+    def get_mpc_execution_interface(self):
+        """Return the configured MPC execution transport."""
+        return str(self.get_parameter('mpc_execution_interface').value).strip().lower()
+
+    def use_mpc_position_streaming(self):
+        """Whether MPC should stream one joint-position command per tick."""
+        return self.get_mpc_execution_interface() == 'stream_position'
+
+    def should_log_mpc_debug(self, step_index=None):
+        """Return True when verbose MPC debug output is enabled for the current step."""
+        if not bool(self.get_parameter('mpc_debug_logging').value):
+            return False
+        if step_index is None:
+            return True
+        log_every_n_steps = max(int(self.get_parameter('mpc_debug_log_every_n_steps').value), 1)
+        return int(step_index) % log_every_n_steps == 0
+
+    def emit_mpc_debug(self, message, step_index=None):
+        """Emit MPC debug information to logs and an optional ROS topic."""
+        if self.should_log_mpc_debug(step_index):
+            self.get_logger().info(f"[MPC_DEBUG] {message}")
+        if bool(self.get_parameter('mpc_debug_publish_topic').value):
+            self.mpc_debug_publisher.publish(String(data=str(message)))
+
+    def get_state_collision_debug(self, joint_positions):
+        """
+        Return a compact world-collision summary for a joint configuration.
+
+        The summary is based on robot collision-sphere distances against the
+        active world collision checker. Negative values indicate penetration.
+        """
+        checker = None
+        if self.motion_gen is not None:
+            checker = self.motion_gen.world_coll_checker
+        elif self.mpc is not None:
+            checker = self.mpc.world_coll_checker
+
+        if checker is None or joint_positions is None:
+            return None
+
+        try:
+            joint_tensor = torch.tensor(
+                joint_positions,
+                dtype=self.config_wrapper_motion._ops_dtype,
+                device=self.config_wrapper_motion._device,
+            )
+            kinematics_state = self.config_wrapper_motion.kin_model.get_state(joint_tensor)
+            robot_spheres = kinematics_state.link_spheres_tensor.view(1, 1, -1, 4)
+            query_buffer = CollisionQueryBuffer.initialize_from_shape(
+                robot_spheres.shape,
+                self.tensor_args,
+                checker.collision_types,
+            )
+            activation_distance = self.tensor_args.to_device([
+                float(self.get_parameter('collision_activation_distance').value)
+            ])
+            weight = self.tensor_args.to_device([1.0])
+            env_query_idx = torch.zeros(
+                (robot_spheres.shape[0],),
+                device=self.tensor_args.device,
+                dtype=torch.int32,
+            )
+            sphere_dist = checker.get_sphere_distance(
+                robot_spheres,
+                query_buffer,
+                weight,
+                activation_distance,
+                env_query_idx,
+                compute_esdf=True,
+            )
+            sphere_dist = torch.flatten(sphere_dist, start_dim=0)
+            if sphere_dist.numel() == 0:
+                return None
+
+            min_dist = float(torch.min(sphere_dist).item())
+            max_dist = float(torch.max(sphere_dist).item())
+            return {
+                'min_sphere_dist': min_dist,
+                'max_sphere_dist': max_dist,
+                'world_collision_free': min_dist >= 0.0,
+            }
+        except Exception as exc:
+            self.get_logger().debug(f'Collision debug unavailable: {exc}')
+            return None
+
+    def activate_mpc_streaming_controller(self, wait_timeout_sec=2.0):
+        """Switch ros2_control to the configured MPC streaming controller."""
+        return self._switch_controllers(
+            activate_controllers=[self.mpc_stream_controller_name],
+            deactivate_controllers=[self.mpc_deactivate_controller_name],
+            wait_timeout_sec=wait_timeout_sec,
+        )
+
+    def activate_trajectory_execution_controller(self, wait_timeout_sec=2.0):
+        """Switch ros2_control back to the trajectory controller for classic execution."""
+        return self._switch_controllers(
+            activate_controllers=[self.mpc_deactivate_controller_name],
+            deactivate_controllers=[self.mpc_stream_controller_name],
+            wait_timeout_sec=wait_timeout_sec,
+        )
+
+    def _get_controller_states(self, wait_timeout_sec=2.0):
+        """Return a mapping of controller name -> lifecycle state."""
+        if not self.controller_list_client.wait_for_service(timeout_sec=float(wait_timeout_sec)):
+            self.get_logger().warn('Controller list service unavailable.')
+            return None
+
+        future = self.controller_list_client.call_async(ListControllers.Request())
+        response = wait_future_result(future, timeout_sec=5.0)
+        if response is None:
+            self.get_logger().warn('Controller list request returned no response.')
+            return None
+
+        return {
+            controller.name: controller.state
+            for controller in response.controller
+        }
+
+    def _switch_controllers(
+        self,
+        activate_controllers,
+        deactivate_controllers,
+        wait_timeout_sec=2.0,
+    ):
+        """Switch ros2_control controllers, filtering out no-op requests when possible."""
+        activate_controllers = list(activate_controllers or [])
+        deactivate_controllers = list(deactivate_controllers or [])
+
+        controller_states = self._get_controller_states(wait_timeout_sec=wait_timeout_sec)
+        if controller_states is not None:
+            activate_controllers = [
+                name for name in activate_controllers
+                if controller_states.get(name) != 'active'
+            ]
+            deactivate_controllers = [
+                name for name in deactivate_controllers
+                if controller_states.get(name) == 'active'
+            ]
+
+        if not activate_controllers and not deactivate_controllers:
+            return True
+
+        if not self.controller_switch_client.wait_for_service(timeout_sec=float(wait_timeout_sec)):
+            self.get_logger().error('Controller switch service unavailable.')
+            return False
+
+        request = SwitchController.Request(
+            deactivate_controllers=deactivate_controllers,
+            activate_controllers=activate_controllers,
+            strictness=SwitchController.Request.BEST_EFFORT,
+        )
+        future = self.controller_switch_client.call_async(request)
+        response = wait_future_result(future, timeout_sec=5.0)
+        if response is None:
+            self.get_logger().error('Controller switch request returned no response.')
+            return False
+        if not response.ok:
+            self.get_logger().error(
+                'Failed to switch controllers. '
+                f'activate={activate_controllers}, deactivate={deactivate_controllers}'
+            )
+            return False
+        return True
+
+    def publish_mpc_stream_position(self, joint_names, positions):
+        """Publish one ordered joint-position command to the streaming controller."""
+        ordered_joint_names = self.get_controller_joint_names()
+        if list(joint_names) != ordered_joint_names:
+            self.get_logger().error(
+                'Streaming command joint order mismatch: '
+                f'{list(joint_names)} != {ordered_joint_names}'
+            )
+            return False
+
+        if len(positions) != len(ordered_joint_names):
+            self.get_logger().error(
+                f'Streaming command length mismatch: {len(positions)} != {len(ordered_joint_names)}'
+            )
+            return False
+
+        if any(not torch.isfinite(torch.tensor(float(value))) for value in positions):
+            self.get_logger().error('Streaming command contains non-finite values.')
+            return False
+
+        message = Float64MultiArray()
+        message.data = [float(value) for value in positions]
+        self.mpc_stream_publisher.publish(message)
+        return True
 
     def generate_trajectory_callback(self, request: TrajectoryGeneration, response):
         """
@@ -322,14 +642,48 @@ class UnifiedPlannerNode(Node):
                 )
             else:
                 # Fall back to current robot position from /joint_states if available
-                start_joint_pose = self._get_current_joint_pose()
+                start_joint_state = self.get_current_joint_state()
+                start_joint_pose = start_joint_state['position']
                 self.get_logger().info(
                     f"📍 Using robot current position for planning: {[f'{x:.3f}' for x in start_joint_pose]}"
                 )
 
-            start_state = JointState.from_position(
-                torch.Tensor([start_joint_pose])
-                .to(device=self.tensor_args.device)
+            joint_names = (
+                list(start_joint_state.get('joint_names', []))
+                if 'start_joint_state' in locals()
+                else list(self._robot_joint_names)
+            ) or None
+            if 'start_joint_state' not in locals():
+                start_joint_state = {
+                    'position': start_joint_pose,
+                    'velocity': [0.0] * len(start_joint_pose),
+                    'acceleration': [0.0] * len(start_joint_pose),
+                    'jerk': [0.0] * len(start_joint_pose),
+                    'joint_names': joint_names or [],
+                }
+
+            start_state = JointState(
+                position=torch.tensor(
+                    [start_joint_state['position']],
+                    device=self.tensor_args.device,
+                    dtype=self.tensor_args.dtype,
+                ),
+                velocity=torch.tensor(
+                    [start_joint_state['velocity']],
+                    device=self.tensor_args.device,
+                    dtype=self.tensor_args.dtype,
+                ),
+                acceleration=torch.tensor(
+                    [start_joint_state.get('acceleration', [0.0] * len(start_joint_state['position']))],
+                    device=self.tensor_args.device,
+                    dtype=self.tensor_args.dtype,
+                ),
+                jerk=torch.tensor(
+                    [start_joint_state.get('jerk', [0.0] * len(start_joint_state['position']))],
+                    device=self.tensor_args.device,
+                    dtype=self.tensor_args.dtype,
+                ),
+                joint_names=joint_names,
             )
 
             # Build config from parameters
@@ -429,6 +783,17 @@ class UnifiedPlannerNode(Node):
                 f"Executing with {planner.get_planner_name()}"
             )
 
+            if not isinstance(planner, MPCPlanner):
+                if not self.activate_trajectory_execution_controller():
+                    result_msg = SendTrajectory.Result()
+                    result_msg.success = False
+                    result_msg.message = (
+                        f"Failed to activate {self.mpc_deactivate_controller_name} "
+                        "for trajectory execution"
+                    )
+                    goal_handle.abort()
+                    return result_msg
+
             # Execute using the planner's strategy
             success = planner.execute(self.robot_context, goal_handle)
 
@@ -511,11 +876,39 @@ class UnifiedPlannerNode(Node):
         # Only update if MPC planner is active
         from curobo_ros.planners.mpc_planner import MPCPlanner
         if isinstance(planner, MPCPlanner):
-            # Store raw list — converted to cuRobo Pose inside the MPC execution thread
-            planner.latest_goal_from_topic = [
+            raw_goal = [
                 msg.position.x, msg.position.y, msg.position.z,
-                msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z
+                msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w
             ]
+            previous_goal = getattr(planner, 'latest_goal_from_topic', None)
+            if previous_goal is None:
+                previous_goal = getattr(planner, 'last_goal_topic_raw', None)
+
+            if previous_goal is not None:
+                position_delta = max(
+                    abs(float(new_value) - float(old_value))
+                    for new_value, old_value in zip(raw_goal[:3], previous_goal[:3])
+                )
+                orientation_delta = max(
+                    abs(float(new_value) - float(old_value))
+                    for new_value, old_value in zip(raw_goal[3:], previous_goal[3:])
+                )
+                if (
+                    position_delta < float(self.get_parameter('mpc_goal_update_position_epsilon').value)
+                    and orientation_delta < float(self.get_parameter('mpc_goal_update_orientation_epsilon').value)
+                ):
+                    planner.ignored_goal_update_count = getattr(planner, 'ignored_goal_update_count', 0) + 1
+                    if self.should_log_mpc_debug():
+                        self.emit_mpc_debug(
+                            f"ignored_goal_update pos_delta={position_delta:.6f} "
+                            f"quat_delta={orientation_delta:.6f}"
+                        )
+                    return
+
+            # Store raw list — converted to cuRobo Pose inside the MPC execution thread
+            planner.latest_goal_from_topic = raw_goal
+            planner.last_goal_topic_raw = list(raw_goal)
+            planner.received_goal_update_count = getattr(planner, 'received_goal_update_count', 0) + 1
             self.get_logger().debug(
                 f"MPC goal updated from topic: [{msg.position.x:.3f}, {msg.position.y:.3f}, {msg.position.z:.3f}]"
             )
@@ -589,6 +982,12 @@ class UnifiedPlannerNode(Node):
         elif isinstance(planner, MPCPlanner):
             return {
                 'convergence_threshold': self.get_parameter('convergence_threshold').value,
+                'position_convergence_threshold': self.get_parameter(
+                    'mpc_position_convergence_threshold'
+                ).value,
+                'rotation_convergence_threshold': self.get_parameter(
+                    'mpc_rotation_convergence_threshold'
+                ).value,
                 'max_iterations': self.get_parameter('max_mpc_iterations').value,
             }
 

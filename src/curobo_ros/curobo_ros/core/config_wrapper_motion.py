@@ -5,6 +5,7 @@ import torch
 from functools import partial
 import threading
 import time
+import inspect
 
 # cuRobo
 from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
@@ -46,12 +47,22 @@ class ConfigWrapperMPC(ConfigWrapper):
         mpc_step_dt = node.get_parameter('mpc_step_dt').get_parameter_value().double_value
         mpc_horizon_steps = node.get_parameter('mpc_horizon_steps').get_parameter_value().integer_value
 
+        mpc_config_kwargs = {
+            'store_rollouts': True,
+            'step_dt': mpc_step_dt,
+        }
+        if 'horizon' in inspect.signature(MpcSolverConfig.load_from_robot_config).parameters:
+            mpc_config_kwargs['horizon'] = mpc_horizon_steps
+        else:
+            node.get_logger().warn(
+                'Installed cuRobo does not support MPC horizon override in '
+                'load_from_robot_config(); using the library default horizon.'
+            )
+
         self.mpc_config = MpcSolverConfig.load_from_robot_config(
             self.robot_cfg,
             self.world_cfg,
-            store_rollouts=True,
-            step_dt=mpc_step_dt,
-            horizon=mpc_horizon_steps,
+            **mpc_config_kwargs,
         )
         node.mpc = MpcSolver(self.mpc_config)
 

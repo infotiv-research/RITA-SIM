@@ -43,6 +43,15 @@ namespace curobo_rviz
     node_->declare_parameter<std::string>(
       "controller_action_name",
       "/joint_trajectory_controller/follow_joint_trajectory");
+    node_->declare_parameter<std::string>(
+      "controller_manager_switch_service",
+      "/controller_manager/switch_controller");
+    node_->declare_parameter<std::string>(
+      "trajectory_controller_name",
+      "joint_trajectory_controller");
+    node_->declare_parameter<std::string>(
+      "streaming_controller_name",
+      "forward_position_controller");
     node_->declare_parameter<std::vector<std::string>>(
       "controller_joint_names",
       {"gantry_joint", "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
@@ -61,10 +70,19 @@ namespace curobo_rviz
       node_,
       "/unified_planner/execute_trajectory");
     controller_action_name_ = node_->get_parameter("controller_action_name").as_string();
+    controller_manager_switch_service_ =
+      node_->get_parameter("controller_manager_switch_service").as_string();
+    trajectory_controller_name_ =
+      node_->get_parameter("trajectory_controller_name").as_string();
+    streaming_controller_name_ =
+      node_->get_parameter("streaming_controller_name").as_string();
     controller_joint_names_ = node_->get_parameter("controller_joint_names").as_string_array();
     this->controller_action_client_ =
       rclcpp_action::create_client<control_msgs::action::FollowJointTrajectory>(
         node_, controller_action_name_);
+    this->controller_switch_client_ =
+      node_->create_client<controller_manager_msgs::srv::SwitchController>(
+        controller_manager_switch_service_);
 
     // create service client to generate traj
     this->trajectory_generation_client_ = node_->create_client<curobo_msgs::srv::TrajectoryGeneration>("/unified_planner/generate_trajectory");
@@ -497,6 +515,10 @@ namespace curobo_rviz
         return false;
       }
 
+      if (!activateTrajectoryController()) {
+        return false;
+      }
+
       if (!controller_action_client_->wait_for_action_server(std::chrono::seconds(5))) {
         RCLCPP_ERROR(node_->get_logger(), "Arm controller action server not available: %s", controller_action_name_.c_str());
         return false;
@@ -523,6 +545,41 @@ namespace curobo_rviz
       ui_->sendTrajectory->setEnabled(false);
       ui_->generateTrajectory->setEnabled(false);
       ui_->stopRobot->setEnabled(true);
+      return true;
+    }
+
+    bool RvizArgsPanel::activateTrajectoryController() {
+      if (!controller_switch_client_->wait_for_service(std::chrono::seconds(3))) {
+        RCLCPP_ERROR(
+          node_->get_logger(),
+          "Controller switch service not available: %s",
+          controller_manager_switch_service_.c_str());
+        return false;
+      }
+
+      auto request =
+        std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
+      request->activate_controllers = {trajectory_controller_name_};
+      request->deactivate_controllers = {streaming_controller_name_};
+      request->strictness = controller_manager_msgs::srv::SwitchController::Request::BEST_EFFORT;
+
+      auto future = controller_switch_client_->async_send_request(request);
+      if (rclcpp::spin_until_future_complete(node_, future, std::chrono::seconds(5)) !=
+          rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(node_->get_logger(), "Failed to switch controllers before classic execution.");
+        return false;
+      }
+
+      const auto response = future.get();
+      if (!response || !response->ok) {
+        RCLCPP_ERROR(
+          node_->get_logger(),
+          "Controller switch rejected: activate=%s deactivate=%s",
+          trajectory_controller_name_.c_str(),
+          streaming_controller_name_.c_str());
+        return false;
+      }
+
       return true;
     }
 

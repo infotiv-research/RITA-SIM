@@ -15,7 +15,7 @@ from curobo.types.math import Pose
 from curobo.rollout.rollout_base import Goal
 import traceback
 from .trajectory_planner import TrajectoryPlanner, PlannerResult, ExecutionMode
-from curobo_ros.robot.joint_control_strategy import RobotState
+from curobo_ros.core.controller_trajectory import extract_ordered_waypoints
 
 
 from curobo_msgs.action import SendTrajectory
@@ -56,9 +56,19 @@ class MPCPlanner(TrajectoryPlanner):
 
         # Performance tracking
         self.mpc_time = []
+        self.initial_pose_error = None
+        self.best_pose_error = None
+        self.best_position_error = None
+        self.best_rotation_error = None
+        self.received_goal_update_count = 0
+        self.applied_goal_update_count = 0
+        self.ignored_goal_update_count = 0
+        self.last_goal_topic_raw = None
 
         # MPC parameters
         self.convergence_threshold = 0.01  # meters
+        self.position_convergence_threshold = 0.02  # meters
+        self.rotation_convergence_threshold = 0.35  # radians
         self.max_iterations = 1000
 
     def _get_execution_mode(self) -> ExecutionMode:
@@ -73,6 +83,8 @@ class MPCPlanner(TrajectoryPlanner):
         """List of ROS parameters used by this planner."""
         return [
             'convergence_threshold',
+            'position_convergence_threshold',
+            'rotation_convergence_threshold',
             'max_mpc_iterations',
         ]
 
@@ -123,9 +135,25 @@ class MPCPlanner(TrajectoryPlanner):
         # Store for execution
         self.start_state = start_state
         self.goal_pose = goal_pose
+        self.initial_pose_error = None
+        self.best_pose_error = None
+        self.best_position_error = None
+        self.best_rotation_error = None
+        self.received_goal_update_count = 0
+        self.applied_goal_update_count = 0
+        self.ignored_goal_update_count = 0
+        self.last_goal_topic_raw = goal_pose.tolist(q_xyzw=True)
 
         # Extract config
         self.convergence_threshold = config.get('convergence_threshold', 0.01)
+        self.position_convergence_threshold = config.get(
+            'position_convergence_threshold',
+            self.convergence_threshold,
+        )
+        self.rotation_convergence_threshold = config.get(
+            'rotation_convergence_threshold',
+            0.35,
+        )
         self.max_iterations = config.get('max_iterations', 1000)
 
         try:
@@ -159,7 +187,8 @@ class MPCPlanner(TrajectoryPlanner):
                 self.node.get_logger().info(f"MPC: Initialized robot position to start_state: {[f'{x:.3f}' for x in start_position]}")
 
             self.node.get_logger().info(
-                f"MPC goal setup: convergence={self.convergence_threshold}m, "
+                f"MPC goal setup: pos_convergence={self.position_convergence_threshold}m, "
+                f"rot_convergence={self.rotation_convergence_threshold}rad, "
                 f"max_iter={self.max_iterations}"
             )
 
@@ -170,6 +199,8 @@ class MPCPlanner(TrajectoryPlanner):
                 metadata={
                     'goal_buffer': self.goal_buffer,
                     'convergence_threshold': self.convergence_threshold,
+                    'position_convergence_threshold': self.position_convergence_threshold,
+                    'rotation_convergence_threshold': self.rotation_convergence_threshold,
                     'max_iterations': self.max_iterations,
                 }
             )
@@ -209,12 +240,47 @@ class MPCPlanner(TrajectoryPlanner):
             # Update stored goal
             self.goal_pose = new_goal_pose
             self.goal_buffer = new_goal_buffer
+            # Restart progress tracking against the new target so debug output is
+            # meaningful after a live target change.
+            self.initial_pose_error = None
+            self.best_pose_error = None
+            self.best_position_error = None
+            self.best_rotation_error = None
+            self.applied_goal_update_count += 1
 
             return True
 
         except Exception as e:
             self.node.get_logger().error(f"Failed to update MPC goal: {e}")
             return False
+
+    @staticmethod
+    def _metric_scalar(value):
+        """Best-effort conversion of cuRobo metric tensors to a Python float."""
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.detach().abs().max().item())
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _max_abs_delta(row_a, row_b):
+        """Maximum absolute difference between two equal-length numeric vectors."""
+        if row_a is None or row_b is None or len(row_a) != len(row_b):
+            return None
+        return max(abs(float(value_a) - float(value_b)) for value_a, value_b in zip(row_a, row_b))
+
+    @staticmethod
+    def _format_vector(values, precision=3):
+        """Compact string formatting for short numeric vectors."""
+        if values is None:
+            return "[]"
+        return "[" + ", ".join(f"{float(value):.{precision}f}" for value in values) + "]"
 
     def execute(self, robot_context, goal_handle=None) -> bool:
         """
@@ -242,16 +308,55 @@ class MPCPlanner(TrajectoryPlanner):
             current_state = self.start_state.clone()
             converged = False
             tstep = 0
-            traj_list = []
             self.mpc_time = []
+            execution_interface = getattr(
+                self.node,
+                "get_mpc_execution_interface",
+                lambda: "stream_position",
+            )()
+            stream_mode = execution_interface == 'stream_position'
+            controller_dt = max(
+                float(self.node.get_parameter('mpc_step_dt').value),
+                1e-3,
+            )
+            step_max_attempts = max(
+                int(self.node.get_parameter('mpc_step_max_attempts').value),
+                1,
+            )
+            stream_publish_count = 0
+            infeasible_streak = 0
+            divergence_warned = False
 
             self.node.get_logger().info("Starting MPC execution loop")
+            if not stream_mode:
+                self.node.get_logger().error(
+                    f"Unsupported MPC execution interface: {execution_interface}"
+                )
+                return False
+            if not self.node.activate_mpc_streaming_controller():
+                self.node.get_logger().error("Failed to activate MPC streaming controller.")
+                return False
+            self.node.emit_mpc_debug(
+                " ".join([
+                    "config",
+                    f"execution_interface={execution_interface}",
+                    f"controller_dt={controller_dt:.3f}",
+                    f"step_max_attempts={step_max_attempts}",
+                    f"position_threshold={self.position_convergence_threshold:.4f}",
+                    f"rotation_threshold={self.rotation_convergence_threshold:.4f}",
+                    f"max_iterations={self.max_iterations}",
+                ])
+            )
 
             while not converged and self.is_goal_active:
+                loop_started_at = time.monotonic()
                 # Check for cancellation
                 if goal_handle is not None and not goal_handle.is_active:
                     self.node.get_logger().warn("MPC execution cancelled")
-                    robot_context.stop_robot()
+                    self.node.publish_mpc_stream_position(
+                        self.node.get_controller_joint_names(),
+                        actual_joint_state['position'] if 'actual_joint_state' in locals() else self.start_state.position[0].detach().cpu().tolist(),
+                    )
                     return False
 
                 # Check for goal update from topic (for real-time tracking)
@@ -259,20 +364,101 @@ class MPCPlanner(TrajectoryPlanner):
                 if self.latest_goal_from_topic is not None:
                     raw = self.latest_goal_from_topic
                     self.latest_goal_from_topic = None  # Consume before CUDA work
-                    new_goal = Pose.from_list(raw)      # Safe: we are on the MPC thread
+                    new_goal = Pose.from_list(raw, q_xyzw=True)  # Safe: we are on the MPC thread
                     self.update_goal_pose(new_goal)
 
-                # Read actual robot position to close the feedback loop
-                # This ensures MPC uses real robot state, not predicted state
-                actual_joint_pose = robot_context.get_joint_pose()
-                current_state = JointState.from_position(
-                    torch.Tensor([actual_joint_pose]).to(device=self.node.tensor_args.device)
+                # Read actual robot state to close the feedback loop.
+                # Velocities matter for MPC smoothness; forcing zero at every step
+                # makes the optimizer behave as if the robot keeps stopping.
+                actual_joint_state = self.node.get_current_joint_state()
+                if not actual_joint_state:
+                    self.node.get_logger().error(
+                        "MPC execution requires a recent /joint_states sample."
+                    )
+                    return False
+                current_state = JointState(
+                    position=torch.tensor(
+                        [actual_joint_state['position']],
+                        device=self.node.tensor_args.device,
+                        dtype=self.node.tensor_args.dtype,
+                    ),
+                    velocity=torch.tensor(
+                        [actual_joint_state['velocity']],
+                        device=self.node.tensor_args.device,
+                        dtype=self.node.tensor_args.dtype,
+                    ),
+                    acceleration=torch.tensor(
+                        [actual_joint_state.get('acceleration', [0.0] * len(actual_joint_state['position']))],
+                        device=self.node.tensor_args.device,
+                        dtype=self.node.tensor_args.dtype,
+                    ),
+                    jerk=torch.tensor(
+                        [actual_joint_state.get('jerk', [0.0] * len(actual_joint_state['position']))],
+                        device=self.node.tensor_args.device,
+                        dtype=self.node.tensor_args.dtype,
+                    ),
+                    joint_names=list(actual_joint_state.get('joint_names', []))
+                    or (
+                        list(self.node._robot_joint_names)
+                        if getattr(self.node, "_robot_joint_names", None)
+                        else None
+                    ),
                 )
 
                 st_time = time.time()
 
                 # MPC optimization step with actual robot state
-                result = self.mpc.step(current_state, 1)
+                result = self.mpc.step(
+                    current_state,
+                    shift_steps=1,
+                    max_attempts=step_max_attempts,
+                )
+                pose_error = float(result.metrics.pose_error.item())
+                position_error = self._metric_scalar(getattr(result.metrics, 'position_error', None))
+                rotation_error = self._metric_scalar(getattr(result.metrics, 'rotation_error', None))
+                cspace_error = self._metric_scalar(getattr(result.metrics, 'cspace_error', None))
+                total_cost = self._metric_scalar(getattr(result.metrics, 'cost', None))
+                constraint_cost = self._metric_scalar(getattr(result.metrics, 'constraint', None))
+                feasible = bool(torch.all(result.metrics.feasible).item()) if result.metrics.feasible is not None else None
+                current_kinematics = self.mpc.compute_kinematics(current_state)
+                current_ee_pose = current_kinematics.ee_pose.tolist(q_xyzw=True)
+                goal_ee_pose = self.goal_pose.tolist(q_xyzw=True)
+                infeasible_streak = 0 if feasible else infeasible_streak + 1
+                if self.initial_pose_error is None:
+                    self.initial_pose_error = max(pose_error, self.convergence_threshold, 1e-6)
+                self.best_pose_error = (
+                    pose_error
+                    if self.best_pose_error is None
+                    else min(self.best_pose_error, pose_error)
+                )
+                if position_error is not None:
+                    self.best_position_error = (
+                        position_error
+                        if self.best_position_error is None
+                        else min(self.best_position_error, position_error)
+                    )
+                if rotation_error is not None:
+                    self.best_rotation_error = (
+                        rotation_error
+                        if self.best_rotation_error is None
+                        else min(self.best_rotation_error, rotation_error)
+                    )
+
+                if (
+                    not divergence_warned
+                    and self.best_pose_error is not None
+                    and tstep > 20
+                    and pose_error > max(self.best_pose_error * 1.75, self.best_pose_error + 0.5)
+                ):
+                    self.node.get_logger().warn(
+                        "MPC appears to be diverging away from its best state: "
+                        f"step={tstep}, pose_error={pose_error:.4f}, "
+                        f"best_pose_error={self.best_pose_error:.4f}, "
+                        f"position_error={(position_error if position_error is not None else float('nan')):.4f}, "
+                        f"rotation_error={(rotation_error if rotation_error is not None else float('nan')):.4f}, "
+                        f"stream_publishes={stream_publish_count}"
+                    )
+                    divergence_warned = True
 
                 # Synchronize CUDA
                 torch.cuda.synchronize()
@@ -281,40 +467,127 @@ class MPCPlanner(TrajectoryPlanner):
                 if tstep > 5:
                     self.mpc_time.append(time.time() - st_time)
 
-                # Store trajectory for visualization
-                traj_list.append(result.action.get_state_tensor())
-
-                # Send command to robot in real-time
-                # For MPC, we send individual waypoints as they're computed
-                self._send_mpc_command(robot_context, result.action)
+                immediate_positions, immediate_velocities, immediate_accelerations = extract_ordered_waypoints(
+                    result.js_action if result.js_action is not None else result.action,
+                    self.node.get_controller_joint_names(),
+                    max_points=1,
+                )
+                if not immediate_positions:
+                    self.node.get_logger().error("Failed to extract MPC stream command.")
+                    return False
+                joint_names = self.node.get_controller_joint_names()
+                robot_context.set_command(
+                    joint_names,
+                    immediate_velocities,
+                    immediate_accelerations,
+                    immediate_positions,
+                )
+                if not self.node.publish_mpc_stream_position(
+                    joint_names,
+                    immediate_positions[0],
+                ):
+                    return False
+                stream_publish_count += 1
 
                 # Publish feedback (use generic SendTrajectory feedback)
                 if goal_handle is not None and tstep % 10 == 0:
                     feedback_msg = SendTrajectory.Feedback()
-                    # SendTrajectory uses step_progression (0.0 to 1.0)
-                    # Estimate progress based on pose error reduction
-                    progress = 1.0 - min(result.metrics.pose_error.item() / 0.1, 1.0)  # Assume 10cm initial error
+                    progress = 1.0 - min(
+                        pose_error / max(self.initial_pose_error, 1e-6),
+                        1.0,
+                    )
                     feedback_msg.step_progression = progress
                     goal_handle.publish_feedback(feedback_msg)
 
+                if self.node.should_log_mpc_debug(tstep):
+                    first_waypoint_delta = self._max_abs_delta(
+                        actual_joint_state['position'],
+                        immediate_positions[0] if immediate_positions else None,
+                    )
+                    velocity_peak = max(
+                        abs(float(value)) for value in actual_joint_state.get('velocity', [])
+                    ) if actual_joint_state.get('velocity') else 0.0
+                    collision_debug = self.node.get_state_collision_debug(
+                        actual_joint_state['position']
+                    )
+                    self.node.emit_mpc_debug(
+                        " ".join([
+                            f"step={tstep}",
+                            f"pose_error={pose_error:.5f}",
+                            f"best_pose_error={(self.best_pose_error if self.best_pose_error is not None else pose_error):.5f}",
+                            f"best_position_error={(self.best_position_error if self.best_position_error is not None else float('nan')):.5f}",
+                            f"best_rotation_error={(self.best_rotation_error if self.best_rotation_error is not None else float('nan')):.5f}",
+                            f"position_error={(position_error if position_error is not None else float('nan')):.5f}",
+                            f"rotation_error={(rotation_error if rotation_error is not None else float('nan')):.5f}",
+                            f"cspace_error={(cspace_error if cspace_error is not None else float('nan')):.5f}",
+                            f"solve_ms={float(result.solve_time) * 1000.0:.2f}",
+                            f"feasible={feasible}",
+                            f"cost={(total_cost if total_cost is not None else float('nan')):.5f}",
+                            f"constraint={(constraint_cost if constraint_cost is not None else float('nan')):.5f}",
+                            f"first_cmd_delta={(first_waypoint_delta if first_waypoint_delta is not None else float('nan')):.5f}",
+                            f"joint_vel_peak={velocity_peak:.5f}",
+                            f"stream_publishes={stream_publish_count}",
+                            f"infeasible_streak={infeasible_streak}",
+                            f"goal_updates_rx={self.received_goal_update_count}",
+                            f"goal_updates_applied={self.applied_goal_update_count}",
+                            f"goal_updates_ignored={self.ignored_goal_update_count}",
+                            f"min_sphere_dist={(collision_debug['min_sphere_dist'] if collision_debug is not None else float('nan')):.5f}",
+                            f"max_sphere_dist={(collision_debug['max_sphere_dist'] if collision_debug is not None else float('nan')):.5f}",
+                            f"world_collision_free={collision_debug['world_collision_free'] if collision_debug is not None else 'unknown'}",
+                        ]),
+                        step_index=tstep,
+                    )
+                    self.node.emit_mpc_debug(
+                        " ".join([
+                            f"ee_current_pos={self._format_vector(current_ee_pose[:3])}",
+                            f"ee_goal_pos={self._format_vector(goal_ee_pose[:3])}",
+                            f"ee_current_quat={self._format_vector(current_ee_pose[3:])}",
+                            f"ee_goal_quat={self._format_vector(goal_ee_pose[3:])}",
+                        ]),
+                        step_index=tstep,
+                    )
+
+                if infeasible_streak >= max(
+                    int(self.node.get_parameter('mpc_infeasible_abort_steps').value),
+                    1,
+                ):
+                    self.node.get_logger().warn(
+                        "Aborting MPC streaming after repeated infeasible solves: "
+                        f"streak={infeasible_streak}, "
+                        f"position_error={(position_error if position_error is not None else float('nan')):.4f}m, "
+                        f"rotation_error={(rotation_error if rotation_error is not None else float('nan')):.4f}rad"
+                    )
+                    return False
+
                 # Check convergence
-                if result.metrics.pose_error.item() < self.convergence_threshold:
+                if (
+                    position_error is not None
+                    and rotation_error is not None
+                    and position_error < self.position_convergence_threshold
+                    and rotation_error < self.rotation_convergence_threshold
+                ):
                     converged = True
                     self.node.get_logger().info(
-                        f"MPC converged at step {tstep} with error {result.metrics.pose_error.item():.4f}m"
+                        "MPC converged at step "
+                        f"{tstep} with position_error={position_error:.4f}m "
+                        f"and rotation_error={rotation_error:.4f}rad"
                     )
+
+                remaining_time = controller_dt - (time.monotonic() - loop_started_at)
+                if remaining_time > 0.0:
+                    time.sleep(remaining_time)
 
                 tstep += 1
 
-                # Safety timeout
-                # if tstep > self.max_iterations:
-                #     self.node.get_logger().warn(
-                #         f"MPC max iterations ({self.max_iterations}) reached without convergence"
-                #     )
-                #     break
-
-            # Stop robot at end
-            robot_context.stop_robot()
+                if tstep >= self.max_iterations:
+                    self.node.get_logger().warn(
+                        f"MPC max iterations ({self.max_iterations}) reached without convergence "
+                        f"(last position_error: "
+                        f"{(position_error if position_error is not None else float('nan')):.4f}m, "
+                        f"last rotation_error: "
+                        f"{(rotation_error if rotation_error is not None else float('nan')):.4f}rad)"
+                    )
+                    break
 
             # Log statistics
             if self.mpc_time:
@@ -322,51 +595,42 @@ class MPCPlanner(TrajectoryPlanner):
                 self.node.get_logger().info(
                     f"MPC completed: {tstep} steps, avg time={avg_time*1000:.1f}ms/step"
                 )
+            self.node.emit_mpc_debug(
+                " ".join([
+                    f"summary steps={tstep}",
+                    f"converged={converged}",
+                    f"best_pose_error={(self.best_pose_error if self.best_pose_error is not None else float('nan')):.5f}",
+                    f"best_position_error={(self.best_position_error if self.best_position_error is not None else float('nan')):.5f}",
+                    f"best_rotation_error={(self.best_rotation_error if self.best_rotation_error is not None else float('nan')):.5f}",
+                    f"final_pose_error={(pose_error if 'pose_error' in locals() else float('nan')):.5f}",
+                    f"final_position_error={(position_error if 'position_error' in locals() and position_error is not None else float('nan')):.5f}",
+                    f"final_rotation_error={(rotation_error if 'rotation_error' in locals() and rotation_error is not None else float('nan')):.5f}",
+                    f"stream_publishes={stream_publish_count}",
+                    f"goal_updates_rx={self.received_goal_update_count}",
+                    f"goal_updates_applied={self.applied_goal_update_count}",
+                    f"goal_updates_ignored={self.ignored_goal_update_count}",
+                ])
+            )
 
+            if not converged:
+                self.node.publish_mpc_stream_position(
+                    self.node.get_controller_joint_names(),
+                    actual_joint_state['position'] if 'actual_joint_state' in locals() else self.start_state.position[0].detach().cpu().tolist(),
+                )
             return converged
 
         except Exception as e:
             self.node.get_logger().error(f"MPC execution error: {e}")
             self.node.get_logger().error(traceback.format_exc())
+            try:
+                self.node.publish_mpc_stream_position(
+                    self.node.get_controller_joint_names(),
+                    current_state.position[0].detach().cpu().tolist(),
+                )
+            except Exception:
+                pass
             robot_context.stop_robot()
             return False
-
-    def _send_mpc_command(self, robot_context, action_state: JointState):
-        """
-        Send a single MPC action to the robot.
-
-        For real-time MPC, we send commands as they're computed rather than
-        batching them like in open-loop planning.
-
-        Args:
-            robot_context: RobotContext for command sending
-            action_state: JointState with position, velocity, acceleration
-        """
-        # Convert tensors to lists
-        # Note: action_state has batch dimension [1, n_joints], need to extract first element
-        position = action_state.position[0].cpu().tolist() if action_state.position.dim() > 1 else action_state.position.cpu().tolist()
-
-        if action_state.velocity is not None:
-            velocity = action_state.velocity[0].cpu().tolist() if action_state.velocity.dim() > 1 else action_state.velocity.cpu().tolist()
-        else:
-            velocity = [0.0] * len(position)
-        
-        if action_state.acceleration is not None:
-            acceleration = action_state.acceleration[0].cpu().tolist() if action_state.acceleration.dim() > 1 else action_state.acceleration.cpu().tolist()
-        else:
-            acceleration = [0.0] * len(position)
-
-        # Get joint names
-        joint_names = robot_context.get_joint_name()
-        # self.node.get_logger().info(f"position : {position}")
-        # Send single command (wrapped in list for trajectory format)
-        robot_context.set_command(
-            joint_names,
-            [velocity],      # List of waypoints (1 waypoint)
-            [acceleration],  # List of waypoints (1 waypoint)
-            [position]       # List of waypoints (1 waypoint)
-        )
-        robot_context.send_trajectrory()
 
     def cancel(self):
         """Cancel the current MPC execution."""

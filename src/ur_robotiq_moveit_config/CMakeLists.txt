@@ -19,5 +19,4 @@ install(PROGRAMS scripts/isaac_urdf_collision_publisher.py DESTINATION lib/${PRO
 install(PROGRAMS scripts/curobo/curobo_world_bridge.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/cumotion_planner_upstream_framefix.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/human_skeleton_collision_publisher.py DESTINATION lib/${PROJECT_NAME})
-install(PROGRAMS scripts/cumotion_planner_upstream_framefix.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pick_and_place_main.py DESTINATION lib/${PROJECT_NAME})

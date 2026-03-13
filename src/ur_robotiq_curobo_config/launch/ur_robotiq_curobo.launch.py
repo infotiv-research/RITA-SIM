@@ -21,6 +21,12 @@ def _load_yaml_file(path):
     return data or {}
 
 
+def _load_ros_parameters(path):
+    data = _load_yaml_file(path)
+    ros_params = data.get("/**", {}).get("ros__parameters", {})
+    return ros_params if isinstance(ros_params, dict) else {}
+
+
 def _deep_update(dst, src):
     for key, value in src.items():
         if isinstance(value, dict) and isinstance(dst.get(key), dict):
@@ -229,6 +235,8 @@ def _generate_runtime_robot_config(xrdf_path, urdf_path, override_path, gripper_
 
 def launch_setup(context, *args, **kwargs):
     package_share = get_package_share_directory("ur_robotiq_curobo_config")
+    planner_params_file = LaunchConfiguration("planner_params_file").perform(context)
+    planner_defaults = _load_ros_parameters(planner_params_file)
     xrdf_path = os.path.join(
         get_package_share_directory("ur_robotiq_moveit_config"),
         "config",
@@ -266,20 +274,13 @@ def launch_setup(context, *args, **kwargs):
         executable="curobo_trajectory_planner",
         output="screen",
         parameters=[
+            planner_params_file,
             {
                 "robot_config_file": runtime_yaml,
                 "cameras_config_file": "",
                 "base_link": "gantry_base_link",
                 "world_file": "",
-                "max_attempts": int(LaunchConfiguration("max_attempts").perform(context)),
-                "timeout": float(LaunchConfiguration("timeout").perform(context)),
-                "time_dilation_factor": float(
-                    LaunchConfiguration("time_dilation_factor").perform(context)
-                ),
-                "voxel_size": float(LaunchConfiguration("voxel_size").perform(context)),
-                "collision_activation_distance": float(
-                    LaunchConfiguration("collision_activation_distance").perform(context)
-                ),
+                "controller_joint_names": list(arm_joint_names),
             }
         ],
     )
@@ -338,16 +339,21 @@ def launch_setup(context, *args, **kwargs):
         arguments=["-d", rviz_config],
         parameters=[
             {
-                "max_attempts": LaunchConfiguration("max_attempts").perform(context),
-                "timeout": LaunchConfiguration("timeout").perform(context),
-                "time_dilation_factor": LaunchConfiguration("time_dilation_factor").perform(context),
-                "voxel_size": LaunchConfiguration("voxel_size").perform(context),
-                "collision_activation_distance": LaunchConfiguration(
-                    "collision_activation_distance"
-                ).perform(context),
+                "max_attempts": int(planner_defaults.get("max_attempts", 12)),
+                "timeout": float(planner_defaults.get("timeout", 15.0)),
+                "time_dilation_factor": float(
+                    planner_defaults.get("time_dilation_factor", 0.4)
+                ),
+                "voxel_size": float(planner_defaults.get("voxel_size", 0.05)),
+                "collision_activation_distance": float(
+                    planner_defaults.get("collision_activation_distance", 0.005)
+                ),
                 "base_link": "gantry_base_link",
                 "tool_frame": "TCP_point",
                 "controller_action_name": "/joint_trajectory_controller/follow_joint_trajectory",
+                "controller_manager_switch_service": "/controller_manager/switch_controller",
+                "trajectory_controller_name": "joint_trajectory_controller",
+                "streaming_controller_name": "forward_position_controller",
                 "controller_joint_names": list(arm_joint_names),
             }
         ],
@@ -454,6 +460,11 @@ def generate_launch_description():
             "isaac_urdf_exports",
         )
     )
+    default_planner_params = os.path.join(
+        get_package_share_directory("ur_robotiq_curobo_config"),
+        "config",
+        "curobo_planner_params.yaml",
+    )
 
     return LaunchDescription(
         [
@@ -462,6 +473,10 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_rviz", default_value="true"),
             DeclareLaunchArgument("world_frame", default_value="world"),
             DeclareLaunchArgument("assets_root", default_value=default_assets_root),
+            DeclareLaunchArgument(
+                "planner_params_file",
+                default_value=default_planner_params,
+            ),
             DeclareLaunchArgument("environment_publish_rate_hz", default_value="30.0"),
             DeclareLaunchArgument("environment_startup_delay_sec", default_value="3.0"),
             DeclareLaunchArgument("environment_collision_padding", default_value="0.000"),
@@ -496,11 +511,6 @@ def generate_launch_description():
             DeclareLaunchArgument("curobo_collision_cache_obb", default_value="100"),
             DeclareLaunchArgument("curobo_collision_cache_mesh", default_value="10"),
             DeclareLaunchArgument("curobo_collision_cache_blox", default_value="10"),
-            DeclareLaunchArgument("max_attempts", default_value="12"),
-            DeclareLaunchArgument("timeout", default_value="15.0"),
-            DeclareLaunchArgument("time_dilation_factor", default_value="0.4"),
-            DeclareLaunchArgument("voxel_size", default_value="0.05"),
-            DeclareLaunchArgument("collision_activation_distance", default_value="0.005"),
             OpaqueFunction(function=launch_setup),
         ]
     )

@@ -44,6 +44,7 @@ set(dependencies_pkgs
   tf2
   tf2_ros
   control_msgs
+  controller_manager_msgs
   sensor_msgs
   trajectory_msgs
 )
