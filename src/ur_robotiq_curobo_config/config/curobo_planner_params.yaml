@@ -1,0 +1,21 @@
+/**:
+  ros__parameters:
+    planner_type: classic
+    max_attempts: 12
+    timeout: 15.0
+    time_dilation_factor: 0.4
+    voxel_size: 0.05
+    collision_activation_distance: 0.005
+
+    # MPC tuning
+    convergence_threshold: 0.02
+    mpc_position_convergence_threshold: 0.01
+    mpc_rotation_convergence_threshold: 0.05
+    max_mpc_iterations: 1000
+    mpc_step_max_attempts: 2
+    mpc_execution_interface: stream_position
+    mpc_stream_controller_name: forward_position_controller
+    mpc_stream_controller_topic: /forward_position_controller/commands
+    mpc_deactivate_controller_name: joint_trajectory_controller
+    controller_manager_switch_service: /controller_manager/switch_controller
+    mpc_infeasible_abort_steps: 10

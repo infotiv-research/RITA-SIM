@@ -62,7 +62,7 @@
   <!-- gantry parameters -->
   <xacro:arg name="gantry_lower_limit" default="-0.75"/>
   <xacro:arg name="gantry_upper_limit" default="0.75"/>
-  <xacro:arg name="gantry_velocity_limit" default="0.8"/>
+  <xacro:arg name="gantry_velocity_limit" default="1.0"/>
   <xacro:arg name="gantry_effort_limit" default="2000.0"/>
   <xacro:arg name="gantry_beam_length" default="3.0"/>
   <xacro:arg name="gantry_beam_width" default="0.16"/>
