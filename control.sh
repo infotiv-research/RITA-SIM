@@ -83,8 +83,9 @@ Isaac container commands:
                     ./control.sh cylinder stop          - Stop cylinder movement
   humanoid        Control humanoid animation.
                   Usage:
-                    ./control.sh humanoid start         - Start humanoid animation
                     ./control.sh humanoid stop          - Stop humanoid animation
+                    ./control.sh humanoid play dab      - Select and play the dab animation
+                    ./control.sh humanoid play pick     - Select and play the pick animation
 
 
 UR10 cuMotion container commands:
@@ -121,6 +122,7 @@ kill_processes() {
         "ur_robotiq_isaac_control.launch.py"
         "ur_robotiq_isaac_moveit.launch.py"
         "ur_robotiq_curobo.launch.py"
+        "ur_robotiq_curobo_human.launch.py"
         "pick_and_place.launch.py"
         "pick_and_place_main.py"
         "start_cumotion_planner.sh"
@@ -129,6 +131,7 @@ kill_processes() {
         "cumotion_planner_upstream_framefix.py"
         "cumotion_planner_node"
         "curobo_trajectory_planner"
+        "curobo_human_skeleton_collision_publisher.py"
         "curobo_live_collision_spheres.py"
         "isaac_urdf_collision_publisher.py"
         "curobo_world_bridge.py"
@@ -267,16 +270,29 @@ cylinder_action() {
 humanoid_action() {
     source_ws
 
-    if [ "$1" == "start" ]; then
-        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: true}"
-        echo "---[ Humanoid animation started ]---"
-
-    elif [ "$1" == "stop" ]; then
+    if [ "$1" == "stop" ]; then
         ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: false}"
         echo "---[ Humanoid animation stopped ]---"
 
+    elif [ "$1" == "play" ]; then
+        if [ -z "${2:-}" ]; then
+            echo "---[ Error: Please provide an animation name: dab or pick ]---"
+            return 1
+        fi
+
+        case "$2" in
+            dab|pick)
+                ros2 topic pub --once /humanoid/select_anim std_msgs/msg/String "{data: '$2'}"
+                echo "---[ Humanoid animation selected: $2 ]---"
+                ;;
+            *)
+                echo "---[ Error: Unknown humanoid animation '$2'. Use: dab or pick ]---"
+                return 1
+                ;;
+        esac
+
     else
-        echo "---[ Unknown command. Usage: ./control.sh humanoid <start | stop> ]---"
+        echo "---[ Unknown command. Usage: ./control.sh humanoid <stop | play <dab|pick>> ]---"
         return 1
     fi
 }
