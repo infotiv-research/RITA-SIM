@@ -50,7 +50,7 @@ The best place to learn the available workflows, start components, and understan
 ./control.sh help
 ```
 
-### UR10 ROS2
+### ROS2
 
 > in container: `UR10 ROS2 DevContainer`.
 
@@ -68,59 +68,48 @@ Inside the container terminal start robot control:
 ./control.sh robot_control
 ```
 
-### IsaacSim
+### IsaacSim simulation
 
 >  in container: `IsaacSim DevContainer`.
 
-Inside the container terminal:
+Inside the container terminal run **one of the follwing commands** and then click on  `Start the simulation` in the GUI:
 
 ```bash
-./control.sh sim
+./control.sh sim # simple
+
+./control.sh sim_cylinder # Starts the scene with the moving cylinder obstacle enabled
+
+./control.sh sim_humanoid # Starts the scene with the humanoid obstacle
 ```
 
-In Isaac Sim: `Start the simulation`.
 
-### UR10e cuMotion
+### UR10e arm
 
 > in container: `UR10e cuMotion DevContainer`.
 
-Inside the container terminal:
+Inside the container terminal execute one of the motion backend below:
 
 ```bash
 ./control.sh cumotion
+
+./control.sh curobo
+
+./control.sh ompl # CPU based
 ```
 
-cuMotion can take a few minutes to start on first run.
+Keep in mind that cuMotion can take a few minutes to start on first run.
 
-Start planning only after the `cuMotion is ready for planning queries` message appears. 
+for cumotion workflow, start planning only after the `cuMotion is ready for planning queries` message appears. 
 The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
 
-To start the separate curobo workflow in the same container:
 
-```bash
-./control.sh curobo
-```
 
-This launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
-
-This repository vendors the cuRobo ROS packages directly in `src/`:
-
-- `src/curobo_msgs`
-- `src/curobo_ros`
-- `src/curobo_rviz`
-
-These packages originated from the following upstream repositories:
-
-- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
-- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
-- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
+curobo workflow launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
 
 
 ## Robot controls
 
-Run the followign commands only after the selected motion backend is up:
-- MoveIt backend: `./control.sh cumotion`
-- curobo backend: `./control.sh curobo`
+Make sure that a motion backend (preferebly curobo or cumotion) is up and running before executing the pick and place control commands
 
 [![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
 
@@ -153,29 +142,15 @@ In the same container but new terminal:
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for the MoveIt backend.
 
-## Simulation controls
 
-These commands need to be run in `IsaacSim DevContainer`
 
 
 ### Run Moving Cylinder Obstacle
 
 [![SIMLAN demo](https://img.youtube.com/vi/3uVEBaCn-WE/0.jpg)](https://www.youtube.com/watch?v=3uVEBaCn-WE)
 
-To run the moving cylinder obstacle, run `./control.sh sim_cylinder` instead of `./control.sh sim`.
-This loads the same Isaac Sim scene, but with the moving cylinder obstacle enabled.
 
-
-In the Isaac container terminal:
-
-```bash
-# Starts the same scene as `./control.sh sim`, but with the moving cylinder obstacle
-./control.sh sim_cylinder
-```
-
-Then in Isaac Sim click `Start the simulation`.
-
-In the same container, open a new terminal to configure and control the moving cylinder:
+In the Isaac Sim container, open a new terminal to configure and control the moving cylinder:
 
 ```bash
 # Set the cylinder to vertical up/down motion
@@ -205,19 +180,7 @@ The selected path is reused until you change it with another `set` command.
 
 
 
-To run the humanoid obstacle, run `./control.sh sim_humanoid` instead of `./control.sh sim`.
-This loads the Isaac Sim scene with the humanoid obstacle enabled.
-
-In the Isaac container terminal:
-
-```bash
-# Starts the scene with the humanoid obstacle
-./control.sh sim_humanoid
-```
-
-Then in Isaac Sim click `Start the simulation`.
-
-In the same container, open a new terminal to control the humanoid animation:
+In the Isaac Sim container, open a new terminal to control the humanoid animation:
 
 ```bash
 # Play the dab animation
@@ -249,6 +212,20 @@ Portions of the code are adapted from:
 - Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
 - ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
 ```
+
+
+This repository vendors the cuRobo ROS packages directly in `src/`:
+
+- `src/curobo_msgs`
+- `src/curobo_ros`
+- `src/curobo_rviz`
+
+These packages originated from the following upstream repositories:
+
+- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
+- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
+- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
+
 
 RITA designs are Inspired by:
 - [Towards an infrastructure for preparation and control of intelligent automation systems](https://research.chalmers.se/publication/528129/file/528129_Fulltext.pdf)

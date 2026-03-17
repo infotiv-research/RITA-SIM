@@ -194,26 +194,9 @@ robot_control() {
     ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 }
 
-moveit_planning() {
+ompl() {
     echo "---[ launching ur_robotiq_isaac_moveit ]---"
     source_ws
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
-}
-
-plan_and_control() {
-    echo "---[ launching both ROS 2 launch files ]---"
-    source_ws
-    cleanup_stale_robot_control_stack
-
-    ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py &
-    control_pid=$!
-
-    cleanup() {
-        kill "$control_pid" 2>/dev/null
-    }
-    trap cleanup EXIT INT TERM
-
-    sleep "$ROS_LAUNCH_DELAY"
     ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
 }
 
@@ -350,22 +333,18 @@ elif [[ "$1" == "kill" ]]; then
     kill_processes
 elif [[ "$1" == "robot_control" ]]; then
     robot_control
-elif [[ "$1" == "planning" ]]; then
-    moveit_planning
-elif [[ "$1" == "ur10" ]]; then
-    plan_and_control
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "sim_cylinder" ]]; then
     isaac_sim_cylinder
 elif [[ "$1" == "sim_humanoid" ]]; then
     isaac_sim_humanoid
+elif [[ "$1" == "ompl" ]]; then
+    ompl
 elif [[ "$1" == "cumotion" ]]; then
-    shift 1
-    cumotion "$@"
+    cumotion
 elif [[ "$1" == "curobo" ]]; then
-    shift 1
-    curobo "$@"
+    curobo
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"
