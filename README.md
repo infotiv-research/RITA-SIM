@@ -115,11 +115,20 @@ These packages originated from the following upstream repositories:
 - `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
 - `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
 
-## Run Pick and Place
 
-Run this only after the selected motion backend is up:
+## Robot controls
+
+Run the followign commands only after the selected motion backend is up:
 - MoveIt backend: `./control.sh cumotion`
 - curobo backend: `./control.sh curobo`
+
+[![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
+
+
+
+### Pick and Place
+
+
 
 In the same container but new terminal:
 
@@ -144,13 +153,18 @@ In the same container but new terminal:
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for the MoveIt backend.
 
+## Simulation controls
 
-## Run Moving Cylinder Obstacle
+These commands need to be run in `IsaacSim DevContainer`
+
+
+### Run Moving Cylinder Obstacle
+
+[![SIMLAN demo](https://img.youtube.com/vi/3uVEBaCn-WE/0.jpg)](https://www.youtube.com/watch?v=3uVEBaCn-WE)
 
 To run the moving cylinder obstacle, run `./control.sh sim_cylinder` instead of `./control.sh sim`.
 This loads the same Isaac Sim scene, but with the moving cylinder obstacle enabled.
 
-Open in container: `IsaacSim DevContainer`.
 
 In the Isaac container terminal:
 
@@ -183,12 +197,16 @@ Available path presets:
 Set the path first with `./control.sh cylinder set <number>`, then run `./control.sh cylinder start`.
 The selected path is reused until you change it with another `set` command.
 
-## Run Humanoid Obstacle
+
+
+### Run Humanoid Obstacle
+
+[![SIMLAN demo](https://img.youtube.com/vi/47wNTquTGOw/0.jpg)](https://www.youtube.com/watch?v=47wNTquTGOw)
+
+
 
 To run the humanoid obstacle, run `./control.sh sim_humanoid` instead of `./control.sh sim`.
 This loads the Isaac Sim scene with the humanoid obstacle enabled.
-
-Open in container: `IsaacSim DevContainer`.
 
 In the Isaac container terminal:
 
