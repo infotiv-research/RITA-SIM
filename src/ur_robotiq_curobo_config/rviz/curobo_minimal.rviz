@@ -406,6 +406,18 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /curobo_world_collision_markers
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Humanoid Collision
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /curobo_human_collision_markers
+      Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: false
       Name: Obstacles

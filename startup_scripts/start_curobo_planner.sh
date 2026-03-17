@@ -19,7 +19,9 @@ log "ROS_DISTRO=${ROS_DISTRO} USER_WS=${USER_WS}"
 # Clear the curobo-specific stack so a fresh launch does not double-allocate GPU memory.
 for pattern in \
   "ur_robotiq_curobo.launch.py" \
+  "ur_robotiq_curobo_human.launch.py" \
   "curobo_trajectory_planner" \
+  "curobo_human_skeleton_collision_publisher.py" \
   "curobo_live_collision_spheres.py" \
   "curobo_world_bridge.py" \
   "curobo_minimal.rviz" \
@@ -69,7 +71,7 @@ if [[ "${CUROBO_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
 fi
 
 launch_cmd=(
-  ros2 launch ur_robotiq_curobo_config ur_robotiq_curobo.launch.py
+  ros2 launch ur_robotiq_curobo_config ur_robotiq_curobo_human.launch.py
   "$@"
 )
 

@@ -198,8 +198,11 @@ Then in Isaac Sim click `Start the simulation`.
 In the same container, open a new terminal to control the humanoid animation:
 
 ```bash
-# Start the humanoid animation
-./control.sh humanoid start
+# Play the dab animation
+./control.sh humanoid play dab
+
+# Play the pick animation
+./control.sh humanoid play pick
 
 # Stop the humanoid animation
 ./control.sh humanoid stop
