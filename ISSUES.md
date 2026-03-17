@@ -105,3 +105,19 @@ Loading user config located at: '/root/.local/share/ov/data/Kit/Isaac-Sim Full/4
 2026-03-05 16:32:32 [3,008ms] [Fatal] [carb.crashreporter-breakpad.plugin] 023: kit!_start+0x29 (??:?)
 ./control.sh: line 187:  1219 Segmentation fault      (core dumped) ./startup_scripts/post_install_ros2_isaac_start.sh
 ```
+### Out of vram
+
+When running `./control.sh curobo` you might get the following error. Try to change it to `./control.sh cumotion`
+
+```
+[ERROR] [curobo_preview_joint_states.py-3]: process has died [pid 21330, exit code 1, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_preview_joint_states.py --ros-args --params-file /tmp/launch_params_pwboze99'].
+[ERROR] [curobo_human_skeleton_collision_publisher.py-10]: process has died [pid 21344, exit code 1, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_human_skeleton_collision_publisher.py --ros-args -r __node:=curobo_human_skeleton_collision_publisher --params-file /tmp/launch_params_0fft98r8'].
+[ERROR] [rviz2-9]: process has died [pid 21342, exit code -11, cmd '/opt/ros/humble/lib/rviz2/rviz2 -d /ros2_ws/install/ur_robotiq_curobo_config/share/ur_robotiq_curobo_config/rviz/curobo_minimal.rviz --ros-args --params-file /tmp/launch_params_u6j0nb4v'].
+[ERROR] [curobo_world_bridge.py-8]: process has died [pid 21340, exit code 1, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_world_bridge.py --ros-args --params-file /tmp/launch_params_qxpa_a1j'].
+[ERROR] [curobo_live_collision_spheres.py-7]: process has died [pid 21338, exit code -2, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_live_collision_spheres.py --ros-args --params-file /tmp/launch_params_slpn0k2l'].
+```
+
+
+### curobo_human_skeleton_collision_publisher.py not executed
+
+`chmod +x ./install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_human_skeleton_collision_publisher.py`
