@@ -11,6 +11,9 @@
     convergence_threshold: 0.02
     mpc_position_convergence_threshold: 0.01
     mpc_rotation_convergence_threshold: 0.05
+    mpc_step_dt: 0.03
+    mpc_horizon_steps: 40
+    mpc_command_speed_scale: 0.6
     max_mpc_iterations: 1000
     mpc_step_max_attempts: 2
     mpc_execution_interface: stream_position
@@ -18,4 +21,4 @@
     mpc_stream_controller_topic: /forward_position_controller/commands
     mpc_deactivate_controller_name: joint_trajectory_controller
     controller_manager_switch_service: /controller_manager/switch_controller
-    mpc_infeasible_abort_steps: 10
+    mpc_infeasible_abort_steps: 50

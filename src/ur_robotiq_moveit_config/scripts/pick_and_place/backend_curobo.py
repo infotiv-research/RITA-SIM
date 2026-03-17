@@ -3,6 +3,13 @@
 import math
 import time
 
+try:
+    from controller_manager_msgs.srv import ListControllers, SwitchController
+except ImportError:
+    ListControllers = None
+    SwitchController = None
+
+from rclpy.action import ActionClient
 from geometry_msgs.msg import Pose
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
@@ -13,8 +20,10 @@ except ImportError:
     AsyncParameterClient = None
 
 try:
+    from curobo_msgs.action import SendTrajectory
     from curobo_msgs.srv import GetPlanners, SetPlanner, TrajectoryGeneration
 except ImportError:
+    SendTrajectory = None
     GetPlanners = None
     SetPlanner = None
     TrajectoryGeneration = None
@@ -26,6 +35,8 @@ from .controller_execution import execute_arm_joint_trajectory
 
 class CuroboMotionBackend(MotionBackendInterface):
     name = "curobo_ros"
+    _trajectory_controller_name = "joint_trajectory_controller"
+    _mpc_stream_controller_name = "forward_position_controller"
     _continuous_joint_limits = {
         "shoulder_pan_joint": (-2.0 * math.pi, 2.0 * math.pi),
         "wrist_1_joint": (-2.0 * math.pi, 2.0 * math.pi),
@@ -48,13 +59,18 @@ class CuroboMotionBackend(MotionBackendInterface):
 
     def __init__(self, node):
         super().__init__(node)
-        if TrajectoryGeneration is None or SetPlanner is None:
+        if TrajectoryGeneration is None or SetPlanner is None or SendTrajectory is None:
             raise RuntimeError("curobo_msgs is not available in this environment.")
 
         self.trajectory_client = node.create_client(
             TrajectoryGeneration, "/unified_planner/generate_trajectory"
         )
         self.set_planner_client = node.create_client(SetPlanner, "/unified_planner/set_planner")
+        self.execute_client = ActionClient(
+            node,
+            SendTrajectory,
+            "/unified_planner/execute_trajectory",
+        )
         self.get_planners_client = (
             node.create_client(GetPlanners, "/unified_planner/get_planners")
             if GetPlanners is not None
@@ -63,6 +79,16 @@ class CuroboMotionBackend(MotionBackendInterface):
         self.parameter_client = (
             AsyncParameterClient(node, "/unified_planner")
             if AsyncParameterClient is not None
+            else None
+        )
+        self.controller_switch_client = (
+            node.create_client(SwitchController, "/controller_manager/switch_controller")
+            if SwitchController is not None
+            else None
+        )
+        self.controller_list_client = (
+            node.create_client(ListControllers, "/controller_manager/list_controllers")
+            if ListControllers is not None
             else None
         )
         self._active_planner_type = None
@@ -96,6 +122,11 @@ class CuroboMotionBackend(MotionBackendInterface):
         if not self.set_planner_client.wait_for_service(timeout_sec=30.0):
             self.node.get_logger().error(
                 "curobo set_planner service unavailable after 30s: /unified_planner/set_planner"
+            )
+            return False
+        if not self.execute_client.wait_for_server(timeout_sec=30.0):
+            self.node.get_logger().error(
+                "curobo execute action unavailable after 30s: /unified_planner/execute_trajectory"
             )
             return False
         if not self.node.arm_traj_client.wait_for_server(timeout_sec=30.0):
@@ -217,6 +248,103 @@ class CuroboMotionBackend(MotionBackendInterface):
         future = self.parameter_client.set_parameters(parameters)
         response = self._wait_future_result(future, timeout_sec=5.0)
         return response is not None and all(result.successful for result in response)
+
+    def _get_controller_states(self, wait_timeout_sec=2.0):
+        if self.controller_list_client is None:
+            return None
+        if not self.controller_list_client.wait_for_service(timeout_sec=float(wait_timeout_sec)):
+            self.node.get_logger().warn("Controller list service unavailable.")
+            return None
+
+        future = self.controller_list_client.call_async(ListControllers.Request())
+        response = self._wait_future_result(future, timeout_sec=5.0)
+        if response is None:
+            self.node.get_logger().warn("Controller list request returned no response.")
+            return None
+
+        return {
+            controller.name: controller.state
+            for controller in response.controller
+        }
+
+    def _activate_trajectory_execution_controller(self, wait_timeout_sec=2.0):
+        if self.controller_switch_client is None or SwitchController is None:
+            return True
+
+        activate_controllers = [self._trajectory_controller_name]
+        deactivate_controllers = [self._mpc_stream_controller_name]
+
+        controller_states = self._get_controller_states(wait_timeout_sec=wait_timeout_sec)
+        if controller_states is not None:
+            activate_controllers = [
+                name
+                for name in activate_controllers
+                if controller_states.get(name) != "active"
+            ]
+            deactivate_controllers = [
+                name
+                for name in deactivate_controllers
+                if controller_states.get(name) == "active"
+            ]
+
+        if not activate_controllers and not deactivate_controllers:
+            return True
+
+        if not self.controller_switch_client.wait_for_service(timeout_sec=float(wait_timeout_sec)):
+            self.node.get_logger().error("Controller switch service unavailable.")
+            return False
+
+        request = SwitchController.Request(
+            activate_controllers=activate_controllers,
+            deactivate_controllers=deactivate_controllers,
+            strictness=SwitchController.Request.BEST_EFFORT,
+        )
+        future = self.controller_switch_client.call_async(request)
+        response = self._wait_future_result(future, timeout_sec=5.0)
+        if response is None:
+            self.node.get_logger().error("Controller switch request returned no response.")
+            return False
+        if not response.ok:
+            self.node.get_logger().error(
+                "Failed to switch controllers for classic trajectory execution. "
+                f"activate={activate_controllers}, deactivate={deactivate_controllers}"
+            )
+            return False
+        return True
+
+    def _execute_active_planner(self, timeout_sec=180.0):
+        if not self.execute_client.wait_for_server(timeout_sec=5.0):
+            self.node.get_logger().error(
+                "curobo execute action server not available: /unified_planner/execute_trajectory"
+            )
+            return False
+
+        goal = SendTrajectory.Goal()
+        future = self.execute_client.send_goal_async(goal)
+        goal_handle = self._wait_future_result(future, timeout_sec=5.0)
+        if goal_handle is None or not goal_handle.accepted:
+            self.node.get_logger().error("curobo execute action goal was rejected.")
+            return False
+
+        result = self._wait_future_result(
+            goal_handle.get_result_async(),
+            timeout_sec=timeout_sec,
+        )
+        if result is None:
+            self.node.get_logger().error("curobo execute action returned no result.")
+            return False
+
+        action_result = getattr(result, "result", None)
+        if action_result is None:
+            self.node.get_logger().error("curobo execute action returned an empty result.")
+            return False
+        if bool(action_result.success):
+            return True
+
+        self.node.get_logger().error(
+            f"curobo execute action failed: {action_result.message}"
+        )
+        return False
 
     @staticmethod
     def _nearest_equivalent_angle(target_rad, current_rad):
@@ -386,9 +514,17 @@ class CuroboMotionBackend(MotionBackendInterface):
         if response is None:
             self.node.get_logger().error("Timed out waiting for curobo trajectory response.")
             return None
-        if not response.success or not response.trajectory:
+        active_planner = str(self._active_planner_type or planner_type or "").strip().lower()
+        if not response.success:
             self.node.get_logger().warn(
                 f"curobo trajectory request failed: {response.message}"
+            )
+            return None
+        if active_planner == "mpc":
+            return response
+        if not response.trajectory:
+            self.node.get_logger().warn(
+                "curobo trajectory request succeeded but returned no waypoints."
             )
             return None
         return response
@@ -427,6 +563,13 @@ class CuroboMotionBackend(MotionBackendInterface):
         return response
 
     def _execute_response(self, response):
+        if response is None or not getattr(response, "trajectory", None):
+            self.node.get_logger().error(
+                "curobo trajectory execution requested without trajectory waypoints."
+            )
+            return False
+        if not self._activate_trajectory_execution_controller():
+            return False
         return execute_arm_joint_trajectory(
             self.node,
             self.node.arm_traj_client,
@@ -434,7 +577,19 @@ class CuroboMotionBackend(MotionBackendInterface):
             response.dt if response.dt > 0.0 else 0.03,
         )
 
-    def move_to_pose(self, x, y, z, qx, qy, qz, qw, planning_time=None, num_attempts=None):
+    def move_to_pose(
+        self,
+        x,
+        y,
+        z,
+        qx,
+        qy,
+        qz,
+        qw,
+        planning_time=None,
+        num_attempts=None,
+        planner_type=None,
+    ):
         orientation_attempts = [("configured", (qx, qy, qz, qw))]
         current_orientation = self.node._lookup_end_effector_orientation()
         if current_orientation is not None:
@@ -456,10 +611,15 @@ class CuroboMotionBackend(MotionBackendInterface):
                 aqw,
                 planning_time=planning_time,
                 num_attempts=num_attempts,
+                planner_type=planner_type,
             )
             if response is None:
                 continue
-            if self._execute_response(response):
+            active_planner = str(self._active_planner_type or "").strip().lower()
+            if active_planner == "mpc":
+                if self._execute_active_planner():
+                    return True
+            elif self._execute_response(response):
                 return True
             self.node.get_logger().warn(
                 f"curobo execution failed for orientation attempt '{label}'."
@@ -512,7 +672,7 @@ class CuroboMotionBackend(MotionBackendInterface):
 
         for orientation in attempt_orientations[: max(1, int(self.node.dropoff_max_pose_retries))]:
             oqx, oqy, oqz, oqw = orientation
-            response = self._plan_pose(
+            if self.move_to_pose(
                 float(self.node.release_pose_x),
                 float(self.node.release_pose_y),
                 float(self.node.release_pose_z),
@@ -522,9 +682,6 @@ class CuroboMotionBackend(MotionBackendInterface):
                 oqw,
                 planning_time=float(self.node.dropoff_planning_time_s),
                 num_attempts=int(self.node.dropoff_num_planning_attempts),
-            )
-            if response is None:
-                continue
-            if self._execute_response(response):
+            ):
                 return True
         return False

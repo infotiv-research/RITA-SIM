@@ -185,14 +185,15 @@ class ConfigWrapperMotion(ConfigWrapper):
         # Get authoritative world_cfg from ObstacleManager
         world_cfg = self.obstacle_manager.get_world_cfg()
 
-        node.update_all_solvers_world(world_cfg)
+        version, applied_now = node.request_world_update(world_cfg, log_summary=log_summary)
 
         num_cuboids = len(world_cfg.cuboid)
         num_meshes = len(world_cfg.mesh)
 
         if log_summary:
+            action = "Updated" if applied_now else "Queued"
             self.node.get_logger().info(
-                f"Updated world: {num_cuboids} cuboids, {num_meshes} meshes "
+                f"{action} world v{version}: {num_cuboids} cuboids, {num_meshes} meshes "
                 f"(checker: {self.collision_checker_type})"
             )
 

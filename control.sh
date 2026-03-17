@@ -98,6 +98,7 @@ UR10 cuMotion container commands:
                     ./control.sh pick_and_place _03_cracker_box _03_cracker_box
                     ./control.sh pick_and_place _03_cracker_box _03_cracker_box planning_pipeline:=ompl
                     ./control.sh pick_and_place motion_backend:=curobo_ros
+                    ./control.sh pick_and_place motion_backend:=curobo_ros curobo_planner_type:=mpc
 
 Misc:
   cmd <...>       Run any command directly (passthrough)

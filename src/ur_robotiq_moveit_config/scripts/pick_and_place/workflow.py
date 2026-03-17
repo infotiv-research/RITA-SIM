@@ -96,6 +96,8 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("release_pose_qy", 0.0)
         self.declare_parameter("release_pose_qz", 0.0)
         self.declare_parameter("release_pose_qw", 1.0)
+        self.declare_parameter("predrop_offset_z", 0.45)
+        self.declare_parameter("post_release_retreat_z", 0.25)
         self.declare_parameter("dropoff_planning_time_s", 8.0)
         self.declare_parameter("dropoff_num_planning_attempts", 8)
         self.declare_parameter("dropoff_position_tolerance_m", 0.015)
@@ -195,6 +197,10 @@ class PickAndPlaceTargetObject(
         self.release_pose_qy = self.get_parameter("release_pose_qy").value
         self.release_pose_qz = self.get_parameter("release_pose_qz").value
         self.release_pose_qw = self.get_parameter("release_pose_qw").value
+        self.predrop_offset_z = float(self.get_parameter("predrop_offset_z").value)
+        self.post_release_retreat_z = float(
+            self.get_parameter("post_release_retreat_z").value
+        )
         self.dropoff_planning_time_s = float(
             self.get_parameter("dropoff_planning_time_s").value
         )
@@ -369,6 +375,8 @@ class PickAndPlaceTargetObject(
             "Dropoff tuning: "
             f"planning_time={float(self.dropoff_planning_time_s):.2f}s, "
             f"num_planning_attempts={int(self.dropoff_num_planning_attempts)}, "
+            f"predrop_offset_z={float(self.predrop_offset_z):.3f}m, "
+            f"post_release_retreat_z={float(self.post_release_retreat_z):.3f}m, "
             f"position_tolerance={float(self.dropoff_position_tolerance_m):.3f}m, "
             f"orientation_tolerance_xy={float(self.dropoff_orientation_tolerance_rad):.3f}rad, "
             f"orientation_tolerance_z={float(self.dropoff_orientation_z_tolerance_rad):.3f}rad, "
@@ -463,6 +471,16 @@ class PickAndPlaceTargetObject(
             grasp_retry_count = max(1, int(self.grasp_retry_count))
             grasp_retry_step = float(self.grasp_retry_step_z)
             used_grasp_offset_z = float(self.grasp_offset_z)
+            grasp_planner_override = None
+            if (
+                str(self.motion_backend).lower() == "curobo_ros"
+                and str(self.curobo_planner_type).strip().lower() == "mpc"
+            ):
+                grasp_planner_override = "classic"
+                self.get_logger().info(
+                    "Using curobo classic planner for final grasp descent while "
+                    "keeping MPC for the surrounding pick-and-place phases."
+                )
             for grasp_try in range(grasp_retry_count):
                 offset_z = float(self.grasp_offset_z) + grasp_try * grasp_retry_step
                 used_grasp_offset_z = offset_z
@@ -482,6 +500,7 @@ class PickAndPlaceTargetObject(
                     oqw,
                     planning_time=20.0,
                     num_attempts=20,
+                    planner_type=grasp_planner_override,
                 )
                 if success:
                     break
@@ -663,6 +682,39 @@ class PickAndPlaceTargetObject(
                     self._restore_suppressed_object_collision()
                     return
 
+            release_orientation = self._resolve_release_orientation()
+            if release_orientation is None:
+                self.get_logger().error("Configured release orientation is invalid.")
+                self._detach_dynamic_collision_representations(best_effort=True)
+                self._restore_suppressed_object_collision()
+                return
+            release_qx, release_qy, release_qz, release_qw = release_orientation
+
+            predrop_z = float(self.release_pose_z) + max(0.0, float(self.predrop_offset_z))
+            self.get_logger().info(
+                "Moving to pre-drop pose: "
+                f"x={float(self.release_pose_x):.3f}, "
+                f"y={float(self.release_pose_y):.3f}, "
+                f"z={predrop_z:.3f}"
+            )
+            success = self._motion_backend_adapter.move_to_pose(
+                float(self.release_pose_x),
+                float(self.release_pose_y),
+                predrop_z,
+                release_qx,
+                release_qy,
+                release_qz,
+                release_qw,
+                planning_time=float(self.dropoff_planning_time_s),
+                num_attempts=int(self.dropoff_num_planning_attempts),
+            )
+            if not success:
+                self.get_logger().error("Failed to move to pre-drop pose. Aborting.")
+                self._detach_dynamic_collision_representations(best_effort=True)
+                self._restore_suppressed_object_collision()
+                return
+            self.get_logger().info("Reached pre-drop pose.")
+
             # 8. Move directly to release pose while carrying attached collision geometry.
             success = self._motion_backend_adapter.move_to_release_pose_with_retries()
             if not success:
@@ -714,6 +766,32 @@ class PickAndPlaceTargetObject(
                     )
                     self._restore_suppressed_object_collision()
                     return
+
+            retreat_z = float(self.release_pose_z) + max(
+                0.0, float(self.post_release_retreat_z)
+            )
+            self.get_logger().info(
+                "Retreating upward after release: "
+                f"x={float(self.release_pose_x):.3f}, "
+                f"y={float(self.release_pose_y):.3f}, "
+                f"z={retreat_z:.3f}"
+            )
+            success = self._motion_backend_adapter.move_to_pose(
+                float(self.release_pose_x),
+                float(self.release_pose_y),
+                retreat_z,
+                release_qx,
+                release_qy,
+                release_qz,
+                release_qw,
+                planning_time=float(self.dropoff_planning_time_s),
+                num_attempts=int(self.dropoff_num_planning_attempts),
+            )
+            if not success:
+                self.get_logger().error("Failed to retreat upward after release. Aborting.")
+                self._restore_suppressed_object_collision()
+                return
+            self.get_logger().info("Post-release retreat completed.")
 
             # 11. Unsuppress object so environment publisher resumes world ownership
             self.get_logger().info(

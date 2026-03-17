@@ -85,6 +85,7 @@ class MPCPlanner(TrajectoryPlanner):
             'convergence_threshold',
             'position_convergence_threshold',
             'rotation_convergence_threshold',
+            'command_speed_scale',
             'max_mpc_iterations',
         ]
 
@@ -189,6 +190,7 @@ class MPCPlanner(TrajectoryPlanner):
             self.node.get_logger().info(
                 f"MPC goal setup: pos_convergence={self.position_convergence_threshold}m, "
                 f"rot_convergence={self.rotation_convergence_threshold}rad, "
+                f"speed_scale={self._get_command_speed_scale():.3f}, "
                 f"max_iter={self.max_iterations}"
             )
 
@@ -282,6 +284,63 @@ class MPCPlanner(TrajectoryPlanner):
             return "[]"
         return "[" + ", ".join(f"{float(value):.{precision}f}" for value in values) + "]"
 
+    def _get_command_speed_scale(self):
+        """Return the configured MPC command scaling clamped to [0, 1]."""
+        raw_value = float(self.node.get_parameter('mpc_command_speed_scale').value)
+        if raw_value < 0.0:
+            self.node.get_logger().warn(
+                f"mpc_command_speed_scale={raw_value:.3f} is invalid; clamping to 0.0"
+            )
+            return 0.0
+        if raw_value > 1.0:
+            self.node.get_logger().warn(
+                f"mpc_command_speed_scale={raw_value:.3f} is invalid; clamping to 1.0"
+            )
+            return 1.0
+        return raw_value
+
+    def _scale_stream_command(
+        self,
+        current_positions,
+        current_joint_names,
+        target_positions,
+        target_velocities,
+        target_accelerations,
+        target_joint_names,
+    ):
+        """
+        Reduce the per-cycle MPC position delta before publishing to the controller.
+        """
+        speed_scale = self._get_command_speed_scale()
+        if speed_scale >= 1.0:
+            return target_positions, target_velocities, target_accelerations
+
+        current_by_name = {
+            joint_name: float(position)
+            for joint_name, position in zip(current_joint_names, current_positions)
+        }
+        if any(joint_name not in current_by_name for joint_name in target_joint_names):
+            return target_positions, target_velocities, target_accelerations
+
+        scaled_positions = []
+        for row in target_positions:
+            scaled_positions.append([
+                current_by_name[joint_name] + speed_scale * (
+                    float(row[index]) - current_by_name[joint_name]
+                )
+                for index, joint_name in enumerate(target_joint_names)
+            ])
+
+        scaled_velocities = [
+            [speed_scale * float(value) for value in row]
+            for row in target_velocities
+        ]
+        scaled_accelerations = [
+            [speed_scale * float(value) for value in row]
+            for row in target_accelerations
+        ]
+        return scaled_positions, scaled_velocities, scaled_accelerations
+
     def execute(self, robot_context, goal_handle=None) -> bool:
         """
         Execute MPC closed-loop control.
@@ -341,15 +400,18 @@ class MPCPlanner(TrajectoryPlanner):
                     "config",
                     f"execution_interface={execution_interface}",
                     f"controller_dt={controller_dt:.3f}",
+                    f"speed_scale={self._get_command_speed_scale():.3f}",
                     f"step_max_attempts={step_max_attempts}",
                     f"position_threshold={self.position_convergence_threshold:.4f}",
                     f"rotation_threshold={self.rotation_convergence_threshold:.4f}",
                     f"max_iterations={self.max_iterations}",
                 ])
             )
+            self.node.sync_mpc_world()
 
             while not converged and self.is_goal_active:
                 loop_started_at = time.monotonic()
+                self.node.sync_mpc_world()
                 # Check for cancellation
                 if goal_handle is not None and not goal_handle.is_active:
                     self.node.get_logger().warn("MPC execution cancelled")
@@ -476,6 +538,14 @@ class MPCPlanner(TrajectoryPlanner):
                     self.node.get_logger().error("Failed to extract MPC stream command.")
                     return False
                 joint_names = self.node.get_controller_joint_names()
+                immediate_positions, immediate_velocities, immediate_accelerations = self._scale_stream_command(
+                    actual_joint_state['position'],
+                    actual_joint_state.get('joint_names', []),
+                    immediate_positions,
+                    immediate_velocities,
+                    immediate_accelerations,
+                    joint_names,
+                )
                 robot_context.set_command(
                     joint_names,
                     immediate_velocities,

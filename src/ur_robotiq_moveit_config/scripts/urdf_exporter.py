@@ -42,34 +42,33 @@ class UrdfExporter(BehaviorScript):
                 print(f"[REMOVED] {folder_name} folder deleted (prim no longer in stage).")
                 removed_count += 1
 
-        added_count = 0
+        exported_count = 0
         for name, child in current_usd_prims.items():
             model_dir = os.path.join(OUT, name)
             out_urdf = os.path.join(model_dir, f"{name}.urdf")
-            
-            if not os.path.exists(out_urdf):
-                print(f"[ADDING] New object detected: {name}. Starting export...")
-                os.makedirs(model_dir, exist_ok=True)
-                
-                run_id = str(int(time.time() * 1000))
-                tmp_usd = os.path.join(model_dir, f"__tmp_{name}_{run_id}.usda")
+            os.makedirs(model_dir, exist_ok=True)
 
-                s = Usd.Stage.CreateNew(tmp_usd)
-                p = s.DefinePrim(f"/{name}", "Xform")
-                p.GetReferences().AddReference(USD_PATH, str(child.GetPath()))
-                s.GetRootLayer().Save()
+            run_id = str(int(time.time() * 1000))
+            tmp_usd = os.path.join(model_dir, f"__tmp_{name}_{run_id}.usda")
 
-                try:
-                    Conv.init_from_file(tmp_usd).save_to_file(out_urdf)
-                    print(f"[OK] Exported {name}")
-                    added_count += 1
-                except Exception as e:
-                    print(f"[ERROR] Failed to export {name}: {e}")
-                finally:
-                    if os.path.exists(tmp_usd):
-                        os.remove(tmp_usd)
+            print(f"[EXPORT] Refreshing {name}")
 
-        if added_count == 0 and removed_count == 0:
+            s = Usd.Stage.CreateNew(tmp_usd)
+            p = s.DefinePrim(f"/{name}", "Xform")
+            p.GetReferences().AddReference(USD_PATH, str(child.GetPath()))
+            s.GetRootLayer().Save()
+
+            try:
+                Conv.init_from_file(tmp_usd).save_to_file(out_urdf)
+                print(f"[OK] Exported {name}")
+                exported_count += 1
+            except Exception as e:
+                print(f"[ERROR] Failed to export {name}: {e}")
+            finally:
+                if os.path.exists(tmp_usd):
+                    os.remove(tmp_usd)
+
+        if exported_count == 0 and removed_count == 0:
             print("[IDLE] No changes detected in /World. URDF library is up to date.")
         else:
-            print(f"[COMPLETE] Sync finished. Added: {added_count}, Removed: {removed_count}.")
+            print(f"[COMPLETE] Sync finished. Exported: {exported_count}, Removed: {removed_count}.")

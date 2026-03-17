@@ -30,7 +30,20 @@ class MoveItMotionBackend(MotionBackendInterface):
                 return False
         return True
 
-    def move_to_pose(self, x, y, z, qx, qy, qz, qw, planning_time=None, num_attempts=None):
+    def move_to_pose(
+        self,
+        x,
+        y,
+        z,
+        qx,
+        qy,
+        qz,
+        qw,
+        planning_time=None,
+        num_attempts=None,
+        planner_type=None,
+    ):
+        del planner_type
         return self.node._move_to_pose(
             x,
             y,

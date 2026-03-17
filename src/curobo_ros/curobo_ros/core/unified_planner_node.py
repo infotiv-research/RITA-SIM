@@ -9,6 +9,7 @@ and allows dynamic switching between them.
 import torch
 import rclpy
 import inspect
+import threading
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
@@ -91,6 +92,7 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_rotation_convergence_threshold', 0.35)
         self.declare_parameter('mpc_step_dt', 0.03)
         self.declare_parameter('mpc_horizon_steps', 30)
+        self.declare_parameter('mpc_command_speed_scale', 1.0)
         self.declare_parameter('mpc_step_max_attempts', 2)
         self.declare_parameter('mpc_execution_interface', 'trajectory_action')
         self.declare_parameter('mpc_stream_controller_name', 'forward_position_controller')
@@ -103,6 +105,14 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_debug_publish_topic', True)
         self.declare_parameter('mpc_goal_update_position_epsilon', 0.001)
         self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.001)
+        self.declare_parameter('mpc_dynamic_world_updates_enabled', True)
+
+        self._world_update_lock = threading.Lock()
+        self._world_state_version = 0
+        self._pending_world_version = 0
+        self._motion_gen_world_version = 0
+        self._mpc_world_version = 0
+        self._mpc_execution_active = False
 
         # Initialize ONLY the base config wrapper
         # Other wrappers will be created on-demand (lazy loading)
@@ -249,6 +259,7 @@ class UnifiedPlannerNode(Node):
             # Share MotionGen instance with all SinglePlanner children
             # This allows switching between SinglePlanner-based planners without re-warmup
             SinglePlanner.set_motion_gen(self.motion_gen)
+            self._record_solver_world_sync('motion_gen', self._get_world_state_version())
             self.get_logger().info("  → MotionGen ready and shared with SinglePlanner hierarchy")
         else:
             self.get_logger().info("  → MotionGen already initialized (using cache)")
@@ -271,6 +282,7 @@ class UnifiedPlannerNode(Node):
                     color=[0.5, 0.5, 0.5, 1.0]
                 )
                 self.shared_world_cfg.add_obstacle(ground_plane)
+                self._record_world_dirty()
                 self.get_logger().info("  → Added ground plane to shared world_cfg")
 
             # Create MPC config, sharing world_coll_checker with MotionGen if available.
@@ -306,26 +318,137 @@ class UnifiedPlannerNode(Node):
             )
 
             self.mpc = MpcSolver(mpc_config)
+            self._record_solver_world_sync('mpc', self._get_world_state_version())
             self.get_logger().info("  → MPC solver ready")
         else:
             self.get_logger().info("  → MPC solver already initialized (using cache)")
 
-    def update_all_solvers_world(self, world_cfg):
+    def _solvers_share_world_checker(self):
+        """Return whether MotionGen and MPC are backed by the same collision checker."""
+        return (
+            self.motion_gen is not None
+            and self.mpc is not None
+            and self.motion_gen.world_coll_checker is self.mpc.world_coll_checker
+        )
+
+    def _get_world_state_version(self):
+        with self._world_update_lock:
+            return self._world_state_version
+
+    def _record_world_dirty(self):
+        with self._world_update_lock:
+            self._world_state_version += 1
+            self._pending_world_version = self._world_state_version
+            return self._world_state_version
+
+    def _record_solver_world_sync(self, solver_name: str, target_version: int):
+        with self._world_update_lock:
+            if solver_name == 'motion_gen':
+                self._motion_gen_world_version = max(self._motion_gen_world_version, target_version)
+                if self._solvers_share_world_checker():
+                    self._mpc_world_version = max(self._mpc_world_version, target_version)
+            elif solver_name == 'mpc':
+                self._mpc_world_version = max(self._mpc_world_version, target_version)
+                if self._solvers_share_world_checker():
+                    self._motion_gen_world_version = max(self._motion_gen_world_version, target_version)
+
+            if self._pending_world_version <= self._mpc_world_version:
+                self._pending_world_version = 0
+
+    def is_mpc_execution_active(self):
+        with self._world_update_lock:
+            return self._mpc_execution_active
+
+    def set_mpc_execution_active(self, is_active: bool):
+        with self._world_update_lock:
+            self._mpc_execution_active = bool(is_active)
+
+    def _sync_motion_gen_world_to_version(self, world_cfg, target_version: int):
+        if self.motion_gen is None:
+            return False
+
+        with self._world_update_lock:
+            if self._motion_gen_world_version >= target_version:
+                return False
+
+        self.motion_gen.world_coll_checker.clear_cache()
+        self.motion_gen.update_world(world_cfg)
+        self._record_solver_world_sync('motion_gen', target_version)
+        return True
+
+    def _sync_mpc_world_to_version(self, world_cfg, target_version: int):
+        if self.mpc is None:
+            return False
+
+        with self._world_update_lock:
+            if self._mpc_world_version >= target_version:
+                return False
+
+        self.mpc.world_coll_checker.clear_cache()
+        self.mpc.update_world(world_cfg)
+        self._record_solver_world_sync('mpc', target_version)
+        return True
+
+    def request_world_update(self, world_cfg, log_summary=True):
+        """
+        Mark the authoritative world dirty and apply it immediately when safe.
+
+        During active MPC execution, world updates are only staged here. The MPC
+        thread consumes the newest version between solve steps to avoid racing
+        against CUDA graph capture.
+        """
+        target_version = self._record_world_dirty()
+        dynamic_updates_enabled = bool(self.get_parameter('mpc_dynamic_world_updates_enabled').value)
+        should_queue = dynamic_updates_enabled and self.is_mpc_execution_active()
+
+        if should_queue:
+            return target_version, False
+
+        self.update_all_solvers_world(world_cfg, target_version=target_version)
+        return target_version, True
+
+    def sync_motion_gen_world(self):
+        """Synchronize MotionGen to the latest authoritative world state."""
+        if self.motion_gen is None:
+            return False
+
+        with self._world_update_lock:
+            target_version = self._world_state_version
+            current_version = self._motion_gen_world_version
+
+        if current_version >= target_version:
+            return False
+
+        world_cfg = self.config_wrapper_motion.obstacle_manager.get_world_cfg()
+        return self._sync_motion_gen_world_to_version(world_cfg, target_version)
+
+    def sync_mpc_world(self):
+        """Synchronize MPC to the latest staged world update."""
+        if self.mpc is None:
+            return False
+
+        with self._world_update_lock:
+            target_version = max(self._pending_world_version, self._world_state_version)
+            current_version = self._mpc_world_version
+
+        if current_version >= target_version:
+            return False
+
+        world_cfg = self.config_wrapper_motion.obstacle_manager.get_world_cfg()
+        return self._sync_mpc_world_to_version(world_cfg, target_version)
+
+    def update_all_solvers_world(self, world_cfg, target_version=None):
         """
         Propagate a world configuration update to all initialized solvers.
 
         Solvers that share the same world_coll_checker instance (VRAM sharing) only
         need one update — the identity check avoids the redundant call.
         """
-        if self.motion_gen is not None:
-            self.motion_gen.world_coll_checker.clear_cache()
-            self.motion_gen.update_world(world_cfg)
+        if target_version is None:
+            target_version = self._get_world_state_version()
 
-        if (self.mpc is not None and
-                (self.motion_gen is None or
-                 self.mpc.world_coll_checker is not self.motion_gen.world_coll_checker)):
-            self.mpc.world_coll_checker.clear_cache()
-            self.mpc.update_world(world_cfg)
+        self._sync_motion_gen_world_to_version(world_cfg, target_version)
+        self._sync_mpc_world_to_version(world_cfg, target_version)
 
     def _load_robot_joint_names(self):
         """Load planning joint order from the robot_config_file YAML."""
@@ -795,7 +918,15 @@ class UnifiedPlannerNode(Node):
                     return result_msg
 
             # Execute using the planner's strategy
-            success = planner.execute(self.robot_context, goal_handle)
+            is_mpc = isinstance(planner, MPCPlanner)
+            if is_mpc:
+                self.set_mpc_execution_active(True)
+
+            try:
+                success = planner.execute(self.robot_context, goal_handle)
+            finally:
+                if is_mpc:
+                    self.set_mpc_execution_active(False)
 
             # Build result
             result_msg = SendTrajectory.Result()
@@ -959,6 +1090,7 @@ class UnifiedPlannerNode(Node):
                 self._warmup_classic()
 
             planner.set_motion_gen(self.motion_gen)
+            self.sync_motion_gen_world()
 
         elif isinstance(planner, MPCPlanner):
             # Warmup MPC if not already done
@@ -967,6 +1099,7 @@ class UnifiedPlannerNode(Node):
                 self._warmup_mpc()
 
             planner.set_mpc_solver(self.mpc)
+            self.sync_mpc_world()
 
             # MPC now uses shared world_cfg, no need to update config wrapper
 
@@ -987,6 +1120,9 @@ class UnifiedPlannerNode(Node):
                 ).value,
                 'rotation_convergence_threshold': self.get_parameter(
                     'mpc_rotation_convergence_threshold'
+                ).value,
+                'command_speed_scale': self.get_parameter(
+                    'mpc_command_speed_scale'
                 ).value,
                 'max_iterations': self.get_parameter('max_mpc_iterations').value,
             }

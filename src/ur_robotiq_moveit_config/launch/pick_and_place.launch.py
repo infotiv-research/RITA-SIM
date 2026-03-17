@@ -102,6 +102,16 @@ def generate_launch_description():
             description="Release pose quaternion w component.",
         ),
         DeclareLaunchArgument(
+            "predrop_offset_z",
+            default_value="0.10",
+            description="Vertical offset above the release pose used before lowering to place.",
+        ),
+        DeclareLaunchArgument(
+            "post_release_retreat_z",
+            default_value="0.10",
+            description="Vertical retreat distance after opening the gripper at the release pose.",
+        ),
+        DeclareLaunchArgument(
             "dropoff_planning_time_s",
             default_value="8.0",
             description="Planning time budget per dropoff attempt (seconds).",
@@ -195,6 +205,10 @@ def generate_launch_description():
                 "release_pose_qy": LaunchConfiguration("release_pose_qy"),
                 "release_pose_qz": LaunchConfiguration("release_pose_qz"),
                 "release_pose_qw": LaunchConfiguration("release_pose_qw"),
+                "predrop_offset_z": LaunchConfiguration("predrop_offset_z"),
+                "post_release_retreat_z": LaunchConfiguration(
+                    "post_release_retreat_z"
+                ),
                 "dropoff_planning_time_s": LaunchConfiguration(
                     "dropoff_planning_time_s"
                 ),

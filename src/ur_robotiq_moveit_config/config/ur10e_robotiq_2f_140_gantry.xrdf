@@ -313,67 +313,67 @@ geometry:
 
       left_outer_finger:
           - center: [0.0, -0.01, 0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.015, -0.01]
-            radius: 0.01
+            radius: 0.02
 
       left_inner_finger_pad:
           - center: [0.0, -0.0, 0.005]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.02, 0.005]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, -0.02, 0.005]
-            radius: 0.01
+            radius: 0.02
 
       left_inner_knuckle:
           - center: [0.0, 0.04, -0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.06, -0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.08, -0.0]
-            radius: 0.01
+            radius: 0.02
 
       left_inner_finger:
           - center: [0.0, -0.0, -0.0]
-            radius: 0.01
+            radius: 0.02
 
       left_outer_knuckle:
           - center: [0.0, 0.055, 0.01]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.08, 0.005]
-            radius: 0.01
+            radius: 0.02
 
       right_outer_finger:
           - center: [0.0, -0.01, 0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.015, -0.01]
-            radius: 0.01
+            radius: 0.02
 
       right_inner_finger_pad:
           - center: [0.0, -0.0, 0.005]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.02, 0.005]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, -0.02, 0.005]
-            radius: 0.01
+            radius: 0.02
 
       right_inner_knuckle:
           - center: [0.0, 0.04, -0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.06, -0.0]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.08, -0.0]
-            radius: 0.01
+            radius: 0.02
 
       right_inner_finger:
           - center: [0.0, -0.0, -0.0]
-            radius: 0.01
+            radius: 0.02
 
       right_outer_knuckle:
           - center: [0.0, 0.055, 0.01]
-            radius: 0.01
+            radius: 0.02
           - center: [0.0, 0.08, 0.005]
-            radius: 0.01
+            radius: 0.02
 
       attached_object:
           - center: [0.0, 0.08, 0.005]

@@ -10,7 +10,19 @@ class MotionBackendInterface:
     def wait_until_ready(self):
         raise NotImplementedError
 
-    def move_to_pose(self, x, y, z, qx, qy, qz, qw, planning_time=None, num_attempts=None):
+    def move_to_pose(
+        self,
+        x,
+        y,
+        z,
+        qx,
+        qy,
+        qz,
+        qw,
+        planning_time=None,
+        num_attempts=None,
+        planner_type=None,
+    ):
         raise NotImplementedError
 
     def move_to_home(self):

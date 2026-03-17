@@ -132,11 +132,15 @@ In the same container but new terminal:
 
 # Optional: curobo_ros backend
 ./control.sh pick_and_place motion_backend:=curobo_ros
+
+# Optional: curobo_ros backend with MPC execution
+./control.sh pick_and_place motion_backend:=curobo_ros curobo_planner_type:=mpc
 ```
 
 - The launch command starts `pick_and_place_main.py`.
 - `motion_backend:=moveit` connects to MoveIt at `/move_action`.
 - `motion_backend:=curobo_ros` requests trajectories from `/unified_planner/generate_trajectory` and executes them through the existing arm controller action.
+- `motion_backend:=curobo_ros curobo_planner_type:=mpc` uses curobo MPC for each fixed-goal phase so the arm can react to moving obstacles while tracking the current phase target.
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for the MoveIt backend.
 
