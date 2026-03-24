@@ -129,11 +129,16 @@ def build_joint_trajectory(
     trajectory.joint_names = list(joint_names)
 
     safe_dt = max(float(dt), 1e-3)
+    final_index = len(positions) - 1
     for index, position_row in enumerate(positions):
         point = JointTrajectoryPoint()
         point.positions = [float(value) for value in position_row]
-        point.velocities = [float(value) for value in velocities[index]]
-        point.accelerations = [float(value) for value in accelerations[index]]
+        if index == final_index:
+            point.velocities = [0.0] * len(position_row)
+            point.accelerations = [0.0] * len(position_row)
+        else:
+            point.velocities = [float(value) for value in velocities[index]]
+            point.accelerations = [float(value) for value in accelerations[index]]
         time_from_start = safe_dt * float(index + 1)
         point.time_from_start.sec = int(time_from_start)
         point.time_from_start.nanosec = int((time_from_start % 1.0) * 1e9)

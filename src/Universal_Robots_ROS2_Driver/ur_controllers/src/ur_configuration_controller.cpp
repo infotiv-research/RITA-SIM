@@ -39,7 +39,6 @@
 //----------------------------------------------------------------------
 
 #include <ur_controllers/ur_configuration_controller.hpp>
-#include <realtime_tools/realtime_box.hpp>
 namespace ur_controllers
 {
 
@@ -94,12 +93,16 @@ controller_interface::return_type URConfigurationController::update(const rclcpp
 controller_interface::CallbackReturn
 URConfigurationController::on_activate(const rclcpp_lifecycle::State& /* previous_state */)
 {
-  robot_software_version_.set([this](const std::shared_ptr<VersionInformation> ptr) {
-    ptr->major = state_interfaces_[StateInterfaces::ROBOT_VERSION_MAJOR].get_value();
-    ptr->minor = state_interfaces_[StateInterfaces::ROBOT_VERSION_MINOR].get_value();
-    ptr->build = state_interfaces_[StateInterfaces::ROBOT_VERSION_BUILD].get_value();
-    ptr->bugfix = state_interfaces_[StateInterfaces::ROBOT_VERSION_BUGFIX].get_value();
-  });
+  VersionInformation version;
+  version.major = static_cast<uint32_t>(
+      state_interfaces_[StateInterfaces::ROBOT_VERSION_MAJOR].get_optional().value_or(0.0));
+  version.minor = static_cast<uint32_t>(
+      state_interfaces_[StateInterfaces::ROBOT_VERSION_MINOR].get_optional().value_or(0.0));
+  version.build = static_cast<uint32_t>(
+      state_interfaces_[StateInterfaces::ROBOT_VERSION_BUILD].get_optional().value_or(0.0));
+  version.bugfix = static_cast<uint32_t>(
+      state_interfaces_[StateInterfaces::ROBOT_VERSION_BUGFIX].get_optional().value_or(0.0));
+  robot_software_version_.writeFromNonRT(version);
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -113,13 +116,12 @@ bool URConfigurationController::getRobotSoftwareVersion(
     ur_msgs::srv::GetRobotSoftwareVersion::Request::SharedPtr /*req*/,
     ur_msgs::srv::GetRobotSoftwareVersion::Response::SharedPtr resp)
 {
-  std::shared_ptr<VersionInformation> temp;
-  return robot_software_version_.tryGet([resp](const std::shared_ptr<VersionInformation> ptr) {
-    resp->major = ptr->major;
-    resp->minor = ptr->minor;
-    resp->build = ptr->build;
-    resp->bugfix = ptr->bugfix;
-  });
+  const auto version = robot_software_version_.readFromRT();
+  resp->major = version->major;
+  resp->minor = version->minor;
+  resp->build = version->build;
+  resp->bugfix = version->bugfix;
+  return true;
 }
 }  // namespace ur_controllers
 

@@ -28,6 +28,7 @@
 
 #include <gmock/gmock.h>
 #include "controller_manager/controller_manager.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/executor.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/utilities.hpp"
@@ -36,10 +37,13 @@
 TEST(TestLoadForceModeController, load_controller)
 {
   std::shared_ptr<rclcpp::Executor> executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+  auto logger = rclcpp::get_logger("test_resource_manager");
 
   controller_manager::ControllerManager cm(
-      std::make_unique<hardware_interface::ResourceManager>(ros2_control_test_assets::minimal_robot_urdf), executor,
-      "test_controller_manager");
+      std::make_unique<hardware_interface::ResourceManager>(ros2_control_test_assets::minimal_robot_urdf, clock,
+                                                            logger, false, 100),
+      executor, "test_controller_manager");
 
   const std::string test_file_path = std::string{ TEST_FILES_DIRECTORY } + "/force_mode_controller_params.yaml";
   cm.set_parameter({ "test_force_mode_controller.params_file", test_file_path });

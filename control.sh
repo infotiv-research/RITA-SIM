@@ -12,7 +12,7 @@
 #          SOURCING AND SETTING ENVIRONMENT VARIABLES           #
 #################################################################
 #region environment variables
-source "/opt/ros/${ROS_DISTRO:-humble}/setup.bash" 2>/dev/null
+source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
 source install/setup.bash 2>/dev/null
 export RCUTILS_LOGGING_SEVERITY_THRESHOLD="${RCUTILS_LOGGING_SEVERITY_THRESHOLD:-WARN}"
 unset ROS_LOCALHOST_ONLY
@@ -107,7 +107,7 @@ EOF
 }
 
 source_ws() {
-    source "/opt/ros/${ROS_DISTRO:-humble}/setup.bash" 2>/dev/null
+    source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
     source install/setup.bash 2>/dev/null
 }
 
@@ -197,7 +197,9 @@ robot_control() {
 ompl() {
     echo "---[ launching ur_robotiq_isaac_moveit ]---"
     source_ws
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
+        planning_pipeline:=ompl \
+        launch_cumotion_planner:=false
 }
 
 isaac_sim() {
@@ -235,13 +237,13 @@ cylinder_action() {
         fi
         
         PATH_NUM=$(cat "$CYLINDER_PATH_VALUE_FILE")
-        ros2 topic pub --once /move_cylinder_loop std_msgs/msg/Int32 "{data: $PATH_NUM}"
-        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: true}"
+        ros2 topic pub --once /move_cylinder_loop std_msgs/msg/Int32 "{data: $PATH_NUM}" || return 1
+        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: true}" || return 1
         echo "true" > "$CYLINDER_TOGGLE_STATE_FILE"
         echo "---[ Cylinder started with path value: $PATH_NUM ]---"
 
     elif [ "$1" == "stop" ]; then
-        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: false}"
+        ros2 topic pub --once /move_cylinder std_msgs/msg/Bool "{data: false}" || return 1
         echo "false" > "$CYLINDER_TOGGLE_STATE_FILE"
         echo "---[ Cylinder stopped ]---"
 
@@ -255,7 +257,7 @@ humanoid_action() {
     source_ws
 
     if [ "$1" == "stop" ]; then
-        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: false}"
+        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: false}" || return 1
         echo "---[ Humanoid animation stopped ]---"
 
     elif [ "$1" == "play" ]; then
@@ -266,7 +268,7 @@ humanoid_action() {
 
         case "$2" in
             dab|pick)
-                ros2 topic pub --once /humanoid/select_anim std_msgs/msg/String "{data: '$2'}"
+                ros2 topic pub --once /humanoid/select_anim std_msgs/msg/String "{data: '$2'}" || return 1
                 echo "---[ Humanoid animation selected: $2 ]---"
                 ;;
             *)

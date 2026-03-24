@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from curobo.types.math import Pose
 from isaac_ros_cumotion.cumotion_planner import CumotionActionServer
 from moveit_msgs.msg import CollisionObject
+from moveit_msgs.msg import MoveItErrorCodes
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 import tf2_ros
@@ -24,6 +25,22 @@ class _CuroboWarpCacheWarningFilter(logging.Filter):
         return "Object already in warp cache, using existing instance for:" not in (
             record.getMessage()
         )
+
+
+class _DeferredGoalHandle:
+    """Proxy goal handle that defers terminal result publication to the wrapper."""
+
+    def __init__(self, goal_handle):
+        self._goal_handle = goal_handle
+
+    def __getattr__(self, name):
+        return getattr(self._goal_handle, name)
+
+    def succeed(self, response=None):
+        del response
+
+    def abort(self, response=None):
+        del response
 
 
 class UpstreamFrameFixCumotionActionServer(CumotionActionServer):
@@ -201,6 +218,27 @@ class UpstreamFrameFixCumotionActionServer(CumotionActionServer):
             self._transform_collision_object_to_base_frame(obj) for obj in moveit_objects
         ]
         return super().update_world_objects(transformed_objects)
+
+    @staticmethod
+    def _trajectory_point_count(result) -> int:
+        return len(result.planned_trajectory.joint_trajectory.points)
+
+    def _finalize_goal(self, goal_handle, result):
+        trajectory_points = self._trajectory_point_count(result)
+        if result.error_code.val == MoveItErrorCodes.SUCCESS and trajectory_points > 0:
+            goal_handle.succeed(result)
+        else:
+            self.get_logger().warn(
+                "Aborting goal because cuMotion result is incomplete: "
+                f"error_code={result.error_code.val}, points={trajectory_points}"
+            )
+            goal_handle.abort(result)
+        return result
+
+    def execute_callback(self, goal_handle):
+        deferred_goal_handle = _DeferredGoalHandle(goal_handle)
+        result = super().execute_callback(deferred_goal_handle)
+        return self._finalize_goal(goal_handle, result)
 
 
 def main(args=None) -> None:

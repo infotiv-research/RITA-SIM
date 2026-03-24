@@ -1,13 +1,13 @@
 # Production Dockerfile - Optimized for using curobo_ros
 # This image is smaller and meant for users who want to use curobo_ros without modifying it
 
-FROM nvcr.io/nvidia/pytorch:23.08-py3 AS torch_cuda_base
+FROM nvcr.io/nvidia/pytorch:25.03-py3 AS torch_cuda_base
 
 LABEL maintainer="Lucas Carpentier, Guillaume Dupoiron"
 LABEL description="Optimized curobo_ros image for production use"
 
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-ARG ROS_DISTRO=humble
+ARG ROS_DISTRO=jazzy
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Add GL libraries
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install --reinstall -y \
 ENV PATH="${PATH}:/opt/hpcx/ompi/bin"
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/hpcx/ompi/lib"
 
-ARG TORCH_CUDA_ARCH_LIST="8.0 8.6"
+ARG TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 12.0"
 ENV TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
@@ -91,7 +91,7 @@ RUN python -m pip install \
     transforms3d \
     open3d
 
-# Install ROS 2 Humble (minimal)
+# Install ROS 2 Jazzy (minimal)
 RUN apt-get update && apt-get install -y \
     gnupg2 \
     lsb-release \
@@ -108,14 +108,14 @@ RUN apt-get update && apt-get install -y \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
-    ros-humble-nav2-msgs\
-    ros-humble-ros-base \
-    ros-humble-rviz2 \
-    ros-humble-joint-state-publisher \
-    ros-humble-robot-state-publisher \
-    ros-humble-tf-transformations \
-    ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-cyclonedds \
+    ros-${ROS_DISTRO}-nav2-msgs\
+    ros-${ROS_DISTRO}-ros-base \
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-joint-state-publisher \
+    ros-${ROS_DISTRO}-robot-state-publisher \
+    ros-${ROS_DISTRO}-tf-transformations \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-cyclonedds \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep
@@ -130,11 +130,11 @@ RUN git clone https://github.com/Lab-CORO/curobo_ros.git --recurse-submodules &&
 
 # Build the packages
 WORKDIR /home/curobo_ws
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # Setup environment - auto-source on every terminal/container startup
-RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
     echo "source /home/curobo_ws/install/setup.bash" >> ~/.bashrc
 
 # Set Cyclone DDS as RMW

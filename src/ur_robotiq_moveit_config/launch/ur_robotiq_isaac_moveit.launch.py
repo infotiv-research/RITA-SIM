@@ -243,43 +243,28 @@ def launch_setup(context, *args, **kwargs):
     }
 
     # Planning pipeline
-    ompl_planning_pipeline_config = {
-        "move_group": {
-            "planning_plugin": "ompl_interface/OMPLPlanner",
-            "request_adapters": """default_planner_request_adapters/AddTimeOptimalParameterization default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
-            "start_state_max_bounds_error": 0.1,
-        }
-    }
-    ompl_planning_yaml = load_yaml(moveit_config_package, "config/ompl_planning.yaml")
-    ompl_planning_pipeline_config["move_group"].update(ompl_planning_yaml)
+    ompl_pipeline_config = load_yaml(moveit_config_package, "config/ompl_planning.yaml")
+    if ompl_pipeline_config is None:
+        raise RuntimeError("Failed to load config/ompl_planning.yaml")
     cumotion_planning_config = load_yaml(
         moveit_config_package, "config/isaac_ros_cumotion_planning.yaml"
     )
     if cumotion_planning_config is None:
-        cumotion_planning_config = {
-            "planning_plugin": "isaac_ros_cumotion_moveit/CumotionPlanner",
-            "request_adapters": """default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints""",
-            "start_state_max_bounds_error": 0.1,
-        }
+        raise RuntimeError("Failed to load config/isaac_ros_cumotion_planning.yaml")
     selected_planning_pipeline = planning_pipeline.perform(context)
     if selected_planning_pipeline == "cumotion":
         planning_pipelines = ["ompl", "isaac_ros_cumotion"]
         default_planning_pipeline = "isaac_ros_cumotion"
-        planning_pipeline_plugins = {
-            "ompl": ompl_planning_pipeline_config["move_group"],
-            "isaac_ros_cumotion": cumotion_planning_config,
-        }
     else:
         planning_pipelines = ["ompl"]
         default_planning_pipeline = "ompl"
-    planning_pipelines_config = {
+    planning_pipeline_parameters = {
         "planning_pipelines": planning_pipelines,
         "default_planning_pipeline": default_planning_pipeline,
+        "ompl": ompl_pipeline_config,
     }
-    if selected_planning_pipeline != "cumotion":
-        planning_pipeline_plugins = {
-            "ompl": ompl_planning_pipeline_config["move_group"],
-        }
+    if selected_planning_pipeline == "cumotion":
+        planning_pipeline_parameters["isaac_ros_cumotion"] = cumotion_planning_config
 
     # Controllers config (for planning execution; not used by Isaac teleop)
     controllers_yaml = load_yaml(moveit_config_package, moveit_controllers_file)
@@ -347,7 +332,9 @@ def launch_setup(context, *args, **kwargs):
                 "source_list": ["raw_joint_states"],
                 "rate": 100.0,
                 "publish_default_positions": False,
-                "publish_default_velocities": False,
+                # cuMotion rejects empty velocity arrays when it falls back to the
+                # current JointState on /moveit_joint_states.
+                "publish_default_velocities": True,
                 "publish_default_efforts": False,
                 "use_mimic_tags": True,
             },
@@ -365,93 +352,21 @@ def launch_setup(context, *args, **kwargs):
         executable="move_group",
         condition=IfCondition(launch_move_group),
         output="screen",
-        remappings=[("/joint_states", moveit_joint_states_topic)],
+        remappings=[
+            ("joint_states", moveit_joint_states_topic),
+            ("/joint_states", moveit_joint_states_topic),
+        ],
         parameters=[
             robot_description,
             robot_description_semantic,
             robot_description_kinematics,
             robot_description_planning,
-            planning_pipelines_config,
-            planning_pipeline_plugins,
+            planning_pipeline_parameters,
             trajectory_execution,
             moveit_controllers,
             planning_scene_monitor_parameters,
             {"use_sim_time": use_sim_time},
             warehouse_ros_config,
-        ],
-    )
-
-    cumotion_common_parameters = [
-        robot_description,
-        robot_description_semantic,
-        robot_description_kinematics,
-        {
-            "robot": selected_cumotion_robot_xrdf,
-            "urdf_path": runtime_urdf_path,
-            "collision_cache_cuboid": collision_cache_cuboid,
-            "collision_cache_mesh": collision_cache_mesh,
-            "joint_states_topic": moveit_joint_states_topic,
-            "tool_frame": "TCP_point",
-            "time_dilation_factor": cumotion_time_dilation_factor,
-            "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
-            "max_attempts": cumotion_max_attempts,
-            "num_graph_seeds": cumotion_num_graph_seeds,
-            "num_trajopt_seeds": cumotion_num_trajopt_seeds,
-            "num_trajopt_time_steps": cumotion_num_trajopt_time_steps,
-            "trajopt_finetune_iters": cumotion_trajopt_finetune_iters,
-            "interpolation_dt": cumotion_interpolation_dt,
-            "voxel_size": cumotion_voxel_size,
-            "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
-            "publish_voxel_size": cumotion_publish_voxel_size,
-        },
-        {"use_sim_time": use_sim_time},
-    ]
-
-    cumotion_planner_node_upstream = Node(
-        package="isaac_ros_cumotion",
-        executable="cumotion_planner_node",
-        output="screen",
-        arguments=[
-            "--ros-args",
-            "--log-level",
-            "curobo:=error",
-        ],
-        parameters=cumotion_common_parameters,
-    )
-
-    cumotion_planner_node_patched = Node(
-        package=moveit_config_package,
-        executable="cumotion_planner_upstream_framefix.py",
-        output="screen",
-        arguments=[
-            "--ros-args",
-            "--log-level",
-            "curobo:=error",
-        ],
-        parameters=[
-            robot_description,
-            robot_description_semantic,
-            robot_description_kinematics,
-            {
-                "robot": selected_cumotion_robot_xrdf,
-                "urdf_path": runtime_urdf_path,
-                "collision_cache_cuboid": collision_cache_cuboid,
-                "collision_cache_mesh": collision_cache_mesh,
-                "joint_states_topic": moveit_joint_states_topic,
-                "tool_frame": "TCP_point",
-                "time_dilation_factor": cumotion_time_dilation_factor,
-                "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
-                "max_attempts": cumotion_max_attempts,
-                "num_graph_seeds": cumotion_num_graph_seeds,
-                "num_trajopt_seeds": cumotion_num_trajopt_seeds,
-                "num_trajopt_time_steps": cumotion_num_trajopt_time_steps,
-                "trajopt_finetune_iters": cumotion_trajopt_finetune_iters,
-                "interpolation_dt": cumotion_interpolation_dt,
-                "voxel_size": cumotion_voxel_size,
-                "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
-                "publish_voxel_size": cumotion_publish_voxel_size,
-            },
-            {"use_sim_time": use_sim_time},
         ],
     )
 
@@ -464,12 +379,14 @@ def launch_setup(context, *args, **kwargs):
         name="rviz2_moveit",
         output="log",
         arguments=["-d", rviz_config_file, "--ros-args", "--log-level", "error"],
-        remappings=[("/joint_states", moveit_joint_states_topic)],
+        remappings=[
+            ("joint_states", moveit_joint_states_topic),
+            ("/joint_states", moveit_joint_states_topic),
+        ],
         parameters=[
             robot_description,
             robot_description_semantic,
-            planning_pipelines_config,
-            planning_pipeline_plugins,
+            planning_pipeline_parameters,
             robot_description_kinematics,
             robot_description_planning,
             warehouse_ros_config,
@@ -504,6 +421,62 @@ def launch_setup(context, *args, **kwargs):
     launch_cumotion_enabled = launch_cumotion_planner.perform(context).lower() == "true"
     use_patched_cumotion = cumotion_use_patched_node.perform(context).lower() == "true"
     if selected_planning_pipeline == "cumotion" and launch_cumotion_enabled:
+        cumotion_common_parameters = [
+            robot_description,
+            robot_description_semantic,
+            robot_description_kinematics,
+            {
+                "robot": selected_cumotion_robot_xrdf,
+                "urdf_path": runtime_urdf_path,
+                "collision_cache_cuboid": collision_cache_cuboid,
+                "collision_cache_mesh": collision_cache_mesh,
+                "joint_states_topic": moveit_joint_states_topic,
+                "tool_frame": "TCP_point",
+                "time_dilation_factor": cumotion_time_dilation_factor,
+                "override_moveit_scaling_factors": cumotion_override_moveit_scaling_factors,
+                "max_attempts": cumotion_max_attempts,
+                "num_graph_seeds": cumotion_num_graph_seeds,
+                "num_trajopt_seeds": cumotion_num_trajopt_seeds,
+                "num_trajopt_time_steps": cumotion_num_trajopt_time_steps,
+                "trajopt_finetune_iters": cumotion_trajopt_finetune_iters,
+                "interpolation_dt": cumotion_interpolation_dt,
+                "voxel_size": cumotion_voxel_size,
+                "publish_curobo_world_as_voxels": cumotion_publish_curobo_world_as_voxels,
+                "publish_voxel_size": cumotion_publish_voxel_size,
+            },
+            {"use_sim_time": use_sim_time},
+        ]
+        static_planning_scene_node = Node(
+            package="isaac_ros_cumotion",
+            executable="static_planning_scene",
+            output="screen",
+            parameters=[
+                {"use_sim_time": use_sim_time},
+            ],
+        )
+        cumotion_planner_node_upstream = Node(
+            package="isaac_ros_cumotion",
+            executable="cumotion_planner_node",
+            output="screen",
+            arguments=[
+                "--ros-args",
+                "--log-level",
+                "curobo:=error",
+            ],
+            parameters=cumotion_common_parameters,
+        )
+        cumotion_planner_node_patched = Node(
+            package=moveit_config_package,
+            executable="cumotion_planner_upstream_framefix.py",
+            output="screen",
+            arguments=[
+                "--ros-args",
+                "--log-level",
+                "curobo:=error",
+            ],
+            parameters=cumotion_common_parameters,
+        )
+        nodes.append(static_planning_scene_node)
         if use_patched_cumotion:
             nodes.append(cumotion_planner_node_patched)
         else:
@@ -572,7 +545,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "collision_cache_cuboid",
-            default_value="200",
+            default_value="100",
             description="cuMotion cuboid obstacle cache size. Increase if OBB cache errors appear.",
         ),
         DeclareLaunchArgument(
@@ -592,32 +565,32 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "cumotion_max_attempts",
-            default_value="64",
+            default_value="28",
             description="Maximum cuMotion planning attempts per query.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_graph_seeds",
-            default_value="24",
+            default_value="14",
             description="Number of graph seeds for cuMotion planning.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_trajopt_seeds",
-            default_value="24",
+            default_value="10",
             description="Number of trajopt seeds for cuMotion planning.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_trajopt_time_steps",
-            default_value="128",
+            default_value="48",
             description="Number of trajectory optimization time steps for cuMotion.",
         ),
         DeclareLaunchArgument(
             "cumotion_trajopt_finetune_iters",
-            default_value="1200",
+            default_value="360",
             description="Finetuning iterations for cuMotion trajectory optimization.",
         ),
         DeclareLaunchArgument(
             "cumotion_interpolation_dt",
-            default_value="0.01",
+            default_value="0.02",
             description="Interpolation dt for generated trajectories.",
         ),
         DeclareLaunchArgument(

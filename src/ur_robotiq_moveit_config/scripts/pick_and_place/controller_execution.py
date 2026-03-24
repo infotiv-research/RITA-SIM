@@ -30,6 +30,7 @@ def build_arm_joint_trajectory(waypoints, dt, controller_joint_names=None):
     controller_joint_names = list(controller_joint_names or ARM_CONTROLLER_JOINT_NAMES)
     trajectory = JointTrajectory()
     trajectory.joint_names = controller_joint_names
+    final_index = len(waypoints) - 1
 
     for index, waypoint in enumerate(waypoints):
         point = JointTrajectoryPoint()
@@ -48,16 +49,19 @@ def build_arm_joint_trajectory(waypoints, dt, controller_joint_names=None):
             float(waypoint.position[name_to_index[joint_name]])
             for joint_name in controller_joint_names
         ]
-        if waypoint.velocity:
+        velocity_values = getattr(waypoint, "velocity", None)
+        if index == final_index:
+            point.velocities = [0.0] * len(controller_joint_names)
+            point.accelerations = [0.0] * len(controller_joint_names)
+        elif velocity_values and len(velocity_values) >= len(current_names):
             point.velocities = [
-                float(waypoint.velocity[name_to_index[joint_name]])
+                float(velocity_values[name_to_index[joint_name]])
                 for joint_name in controller_joint_names
             ]
-        if waypoint.effort:
-            point.effort = [
-                float(waypoint.effort[name_to_index[joint_name]])
-                for joint_name in controller_joint_names
-            ]
+            point.accelerations = [0.0] * len(controller_joint_names)
+        else:
+            point.velocities = [0.0] * len(controller_joint_names)
+            point.accelerations = [0.0] * len(controller_joint_names)
         time_from_start = max(float(dt), 1e-3) * float(index + 1)
         point.time_from_start.sec = int(time_from_start)
         point.time_from_start.nanosec = int((time_from_start % 1.0) * 1e9)

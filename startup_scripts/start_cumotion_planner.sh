@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROS_DISTRO="${ROS_DISTRO:-humble}"
+ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 USER_WS="${USER_WS:-/ros2_ws}"
 TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-${USER_WS}/.cache/torch_extensions}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +36,8 @@ select_cumotion_profile() {
   local total_mb="$1"
   if [ "${total_mb}" -le 8192 ]; then
     echo "low"
+  elif [ "${total_mb}" -le 16384 ]; then
+    echo "medium"
   else
     echo "high"
   fi
@@ -54,6 +56,18 @@ set_profile_params() {
       cumotion_trajopt_finetune_iters_value=360
       cumotion_interpolation_dt_value=0.02
       cumotion_time_dilation_factor_value=0.30
+      ;;
+
+    medium)
+      collision_cache_cuboid_value=160
+      collision_cache_mesh_value=100
+      cumotion_max_attempts_value=40
+      cumotion_num_graph_seeds_value=18
+      cumotion_num_trajopt_seeds_value=14
+      cumotion_num_trajopt_time_steps_value=56
+      cumotion_trajopt_finetune_iters_value=420
+      cumotion_interpolation_dt_value=0.02
+      cumotion_time_dilation_factor_value=0.28
       ;;
 
     high)
@@ -105,6 +119,8 @@ if [ -n "${detected_total_vram_mb}" ] && [ -n "${detected_free_vram_mb}" ] && [ 
   free_pct=$((100 * detected_free_vram_mb / detected_total_vram_mb))
   # Downshift when most VRAM is already in use (common when Isaac Sim is loaded).
   if [ "${free_pct}" -lt 20 ] && [ "${selected_profile}" = "high" ]; then
+    selected_profile="medium"
+  elif [ "${free_pct}" -lt 20 ] && [ "${selected_profile}" = "medium" ]; then
     selected_profile="low"
   fi
 fi

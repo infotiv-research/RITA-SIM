@@ -179,7 +179,7 @@ rclcpp_action::GoalResponse ToolContactController::goal_received_callback(
 {
   RCLCPP_INFO(get_node()->get_logger(), "New goal received.");
 
-  if (get_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+  if (get_node()->get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
     RCLCPP_ERROR(get_node()->get_logger(), "Tool contact controller is not in active state, can not accept action "
                                            "goals.");
     return rclcpp_action::GoalResponse::REJECT;

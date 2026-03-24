@@ -4,7 +4,7 @@ set -euo pipefail
 # --- Paths ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ISAAC_SIM_PATH="${ISAAC_SIM_PATH:-/isaac-sim}"
-ROS_DISTRO="${ROS_DISTRO:-humble}"
+ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 USER_WS="${USER_WS:-/ros2_ws}"
 DEFAULT_USD_SCENE="${DEFAULT_USD_SCENE:-assets/ur10e_robotiq2f-140/main_scene.usd}"
 ISAAC_STARTUP_OPEN_SCRIPT="${ISAAC_STARTUP_OPEN_SCRIPT:-${SCRIPT_DIR}/isaac_open_stage_startup.py}"
@@ -46,18 +46,17 @@ if [ -n "$SCENE_PATH" ] && [ ! -f "$ISAAC_STARTUP_OPEN_SCRIPT" ]; then
   SCENE_PATH=""
 fi
  
-# --- Source ROS 2 (system + workspace) ---
-if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
-  set +u
-  # silence ament setup chatter & guard python var for some setups
-  export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES:-}"
-  export AMENT_PYTHON_EXECUTABLE="${AMENT_PYTHON_EXECUTABLE:-$(command -v python3 || echo /usr/bin/python3)}"
- 
-  source "/opt/ros/${ROS_DISTRO}/setup.bash"
-  [ -f "${USER_WS}/install/setup.bash" ] && source "${USER_WS}/install/setup.bash"
-  set -u
-else
-  echo "Warning: /opt/ros/${ROS_DISTRO}/setup.bash not found"
+  if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+    set +u
+    # silence ament setup chatter & guard python var for some setups
+    export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES:-}"
+    export AMENT_PYTHON_EXECUTABLE="${AMENT_PYTHON_EXECUTABLE:-$(command -v python3 || echo /usr/bin/python3)}"
+
+    source "/opt/ros/${ROS_DISTRO}/setup.bash"
+    [ -f "${USER_WS}/install/setup.bash" ] && source "${USER_WS}/install/setup.bash"
+    set -u
+  else
+    echo "Warning: /opt/ros/${ROS_DISTRO}/setup.bash not found"
 fi
  
 # --- Core env ---

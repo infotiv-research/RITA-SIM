@@ -478,6 +478,7 @@ namespace curobo_rviz
       trajectory.joint_names = controller_joint_names_;
 
       const double dt = std::max(last_generated_dt_, 1e-3);
+      const size_t final_index = last_generated_trajectory_.empty() ? 0 : last_generated_trajectory_.size() - 1;
       for (size_t index = 0; index < last_generated_trajectory_.size(); ++index) {
         const auto& waypoint = last_generated_trajectory_[index];
         std::vector<std::string> current_names = waypoint.name.empty() ? controller_joint_names_ : waypoint.name;
@@ -494,7 +495,9 @@ namespace curobo_rviz
           }
           point.positions.push_back(static_cast<double>(waypoint.position[it->second]));
           if (!waypoint.velocity.empty()) {
-            point.velocities.push_back(static_cast<double>(waypoint.velocity[it->second]));
+            const double velocity =
+              index == final_index ? 0.0 : static_cast<double>(waypoint.velocity[it->second]);
+            point.velocities.push_back(velocity);
           }
           if (!waypoint.effort.empty()) {
             point.effort.push_back(static_cast<double>(waypoint.effort[it->second]));

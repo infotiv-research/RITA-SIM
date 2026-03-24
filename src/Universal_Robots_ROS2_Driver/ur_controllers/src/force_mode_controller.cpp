@@ -233,7 +233,7 @@ bool ForceModeController::setForceMode(const ur_msgs::srv::SetForceMode::Request
                                        ur_msgs::srv::SetForceMode::Response::SharedPtr resp)
 {
   // Reject if controller is not active
-  if (get_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+  if (get_node()->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
     RCLCPP_ERROR(get_node()->get_logger(), "Can't accept new requests. Controller is not running.");
     resp->success = false;
     return false;

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROS_DISTRO="${ROS_DISTRO:-humble}"
+ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 USER_WS="${USER_WS:-/ros2_ws}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

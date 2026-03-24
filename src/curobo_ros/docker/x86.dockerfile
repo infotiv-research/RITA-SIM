@@ -1,9 +1,9 @@
-FROM nvcr.io/nvidia/pytorch:24.01-py3 AS torch_cuda_base
+FROM nvcr.io/nvidia/pytorch:25.03-py3 AS torch_cuda_base
 
 LABEL maintainer="Lucas Carpentier, Guillaume Dupoiron"
 
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-ARG ROS_DISTRO=humble
+ARG ROS_DISTRO=jazzy
 # add GL:
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libegl1-mesa-dev \
@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install --reinstall -y \
 ENV PATH="${PATH}:/opt/hpcx/ompi/bin"
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/hpcx/ompi/lib"
 
-ARG TORCH_CUDA_ARCH_LIST="6.1 7.0+PTX"
+ARG TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 12.0"
 ENV TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
@@ -132,7 +132,7 @@ ADD http://archive.ubuntu.com/ubuntu/pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.
 RUN dpkg -i /tmp/libusb-1.0-0_1.0.25-1ubuntu2_amd64.deb
 
 
-##### Installing ROS Humble ######
+##### Installing ROS Jazzy ######
 
 # Définir des arguments pour désactiver les invites interactives pendant l'installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -148,15 +148,15 @@ RUN apt-get update && apt-get install -y \
 # Installer des dépendances générales
 RUN apt-get update && apt-get install -y \
     python3-rosdep \
-    ros-humble-joint-state-publisher \
-    ros-humble-joint-state-publisher-gui \
-    ros-humble-nav2-msgs \
-    ros-humble-moveit \
-    ros-humble-realsense2-* \
-    ros-humble-librealsense2* \
+    ros-${ROS_DISTRO}-joint-state-publisher \
+    ros-${ROS_DISTRO}-joint-state-publisher-gui \
+    ros-${ROS_DISTRO}-nav2-msgs \
+    ros-${ROS_DISTRO}-moveit \
+    ros-${ROS_DISTRO}-realsense2-* \
+    ros-${ROS_DISTRO}-librealsense2* \
     && rm -rf /var/lib/apt/lists/*
 
-# Ajouter les sources de ROS 2 Humble
+# Ajouter les sources de ROS 2 Jazzy
 RUN apt-get update && apt-get install -y software-properties-common && rm -rf /var/lib/apt/lists/*
 RUN add-apt-repository universe
 
@@ -168,13 +168,13 @@ RUN sudo apt update && sudo apt install curl -y && \
 # RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
 # RUN sh -c 'echo "deb http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros2-latest.list'
 
-# Mettre à jour et installer ROS 2 Humble
+# Mettre à jour et installer ROS 2 Jazzy
 RUN apt-get update && apt-get install -y \
     python3-argcomplete \
     python3-colcon-common-extensions \
-    ros-humble-desktop \
-    ros-humble-pcl-ros \
-    ros-humble-rviz2 \
+    ros-${ROS_DISTRO}-desktop \
+    ros-${ROS_DISTRO}-pcl-ros \
+    ros-${ROS_DISTRO}-rviz2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/ros2_ws/src
@@ -201,7 +201,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     libgl1 \
     libgomp1 \
     python3-pip \
-    ros-humble-tf-transformations\
+    ros-${ROS_DISTRO}-tf-transformations\
     && rm -rf /var/lib/apt/lists/*
 
 # Install Open3D from the PyPI repositories
@@ -213,12 +213,12 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
 WORKDIR /home/ros2_ws/src
 
 # # # Clone the repository directly into the src directory
-RUN git clone -b humble https://github.com/Box-Robotics/ros2_numpy.git
+RUN git clone https://github.com/Box-Robotics/ros2_numpy.git
 
 
 # Build workspace
 WORKDIR /home/ros2_ws
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     colcon build"
 
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash && \
@@ -227,7 +227,7 @@ RUN source /opt/ros/"$ROS_DISTRO"/setup.bash && \
 
 WORKDIR /home/ros2_ws
 
-RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
     echo "source /home/ros2_ws/install/setup.bash" >> ~/.bashrc
 
 # Fix error: "AttributeError: module 'cv2.dnn' has no attribute 'DictValue'"
@@ -237,9 +237,7 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
 ENV LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:$LD_LIBRARY_PATH
 COPY branch_switch_entrypoint.sh /home/
 
-RUN  apt-get update && apt-get install -y ros-humble-rmw-cyclonedds-cpp ros-humble-cyclonedds
+RUN  apt-get update && apt-get install -y ros-${ROS_DISTRO}-rmw-cyclonedds-cpp ros-${ROS_DISTRO}-cyclonedds
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 # Not needed anymore ENTRYPOINT [ "/home/branch_switch_entrypoint.sh" ]
-
-

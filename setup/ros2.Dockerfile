@@ -5,7 +5,7 @@
 ###########################################
 # Base image
 ###########################################
-FROM ubuntu:22.04 AS base
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -43,16 +43,16 @@ RUN sudo add-apt-repository universe \
   && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null \
   && apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-ros-base \
+    ros-jazzy-ros-base \
     python3-argcomplete \
   && rm -rf /var/lib/apt/lists/*
 
-ENV ROS_DISTRO=humble
-ENV AMENT_PREFIX_PATH=/opt/ros/humble
-ENV COLCON_PREFIX_PATH=/opt/ros/humble
-ENV LD_LIBRARY_PATH=/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib
-ENV PATH=/opt/ros/humble/bin:$PATH
-ENV PYTHONPATH=/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages
+ENV ROS_DISTRO=jazzy
+ENV AMENT_PREFIX_PATH=/opt/ros/jazzy
+ENV COLCON_PREFIX_PATH=/opt/ros/jazzy
+ENV LD_LIBRARY_PATH=/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/lib
+ENV PATH=/opt/ros/jazzy/bin:$PATH
+ENV PYTHONPATH=/opt/ros/jazzy/local/lib/python3.12/dist-packages:/opt/ros/jazzy/lib/python3.12/site-packages
 ENV ROS_PYTHON_VERSION=3
 ENV ROS_VERSION=2
 ENV ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   python3-pip \
   qtbase5-dev \
   ros-dev-tools \
-  ros-humble-ament-* \
+  ros-jazzy-ament-* \
   vim \
   && rm -rf /var/lib/apt/lists/*
 
@@ -116,30 +116,29 @@ FROM dev AS full
 ENV DEBIAN_FRONTEND=noninteractive
 # Install the full release
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  ros-humble-desktop \
-  ros-humble-moveit \
-  ros-humble-moveit-ros-move-group \
-  ros-humble-moveit-ros-visualization \
-  ros-humble-moveit-ros-warehouse \
-  ros-humble-moveit-setup-assistant \
-  ros-humble-moveit-simple-controller-manager \
-  ros-humble-ros2-control \
-  ros-humble-controller-manager \
-  ros-humble-topic-based-ros2-control \
-  ros-humble-joint-state-publisher \
-  ros-humble-tf2-ros \
-  ros-humble-robot-state-publisher \
-  ros-humble-xacro \
-  ros-humble-rviz2 \
-  ros-humble-rviz-default-plugins \
-  ros-humble-ur-msgs \
-  ros-humble-ur-client-library \
-  ros-humble-joint-trajectory-controller \
-  ros-humble-ros2-controllers \
+  ros-${ROS_DISTRO}-desktop \
+  ros-${ROS_DISTRO}-moveit \
+  ros-${ROS_DISTRO}-moveit-ros-move-group \
+  ros-${ROS_DISTRO}-moveit-ros-visualization \
+  ros-${ROS_DISTRO}-moveit-ros-warehouse \
+  ros-${ROS_DISTRO}-moveit-setup-assistant \
+  ros-${ROS_DISTRO}-moveit-simple-controller-manager \
+  ros-${ROS_DISTRO}-ros2-control \
+  ros-${ROS_DISTRO}-controller-manager \
+  ros-${ROS_DISTRO}-joint-state-publisher \
+  ros-${ROS_DISTRO}-tf2-ros \
+  ros-${ROS_DISTRO}-robot-state-publisher \
+  ros-${ROS_DISTRO}-xacro \
+  ros-${ROS_DISTRO}-rviz2 \
+  ros-${ROS_DISTRO}-rviz-default-plugins \
+  ros-${ROS_DISTRO}-ur-msgs \
+  ros-${ROS_DISTRO}-ur-client-library \
+  ros-${ROS_DISTRO}-joint-trajectory-controller \
+  ros-${ROS_DISTRO}-ros2-controllers \
   && rm -rf /var/lib/apt/lists/*
 
 ENV DEBIAN_FRONTEND=
-ENV LD_LIBRARY_PATH=/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib
+ENV LD_LIBRARY_PATH=/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/lib
 
 ###########################################
 #  Full + deps image
@@ -147,20 +146,20 @@ ENV LD_LIBRARY_PATH=/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib
 FROM full AS full-with-deps
 
 ENV DEBIAN_FRONTEND=noninteractive
-ARG ISAAC_ROS_APT_CHANNEL=release-3
-ARG ISAAC_ROS_APT_COMPONENT=release-3.0
+ARG ISAAC_ROS_APT_CHANNEL=release-4
+ARG ISAAC_ROS_APT_COMPONENT=main
 
 # Paquets ROS supplémentaires (hardware interface, joy, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  ros-humble-joy \
-  ros-humble-teleop-twist-joy \
-  ros-humble-hardware-interface \
-  ros-humble-controller-interface \
-  ros-humble-cv-bridge \
-  ros-humble-nav2-msgs \
-  ros-humble-pluginlib \
-  ros-humble-rosidl-default-generators \
-  ros-humble-xacro \
+  ros-${ROS_DISTRO}-joy \
+  ros-${ROS_DISTRO}-teleop-twist-joy \
+  ros-${ROS_DISTRO}-hardware-interface \
+  ros-${ROS_DISTRO}-controller-interface \
+  ros-${ROS_DISTRO}-cv-bridge \
+  ros-${ROS_DISTRO}-nav2-msgs \
+  ros-${ROS_DISTRO}-pluginlib \
+  ros-${ROS_DISTRO}-rosidl-default-generators \
+  ros-${ROS_DISTRO}-xacro \
   python3-colcon-common-extensions \
   python3-pip \
   && rm -rf /var/lib/apt/lists/*
@@ -172,11 +171,11 @@ RUN apt-get update \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=${keyring}] https://isaac.download.nvidia.com/isaac-ros/${ISAAC_ROS_APT_CHANNEL} $(. /etc/os-release && echo ${UBUNTU_CODENAME}) ${ISAAC_ROS_APT_COMPONENT}" \
        > /etc/apt/sources.list.d/nvidia-isaac-ros.list \
     && apt-get update \
-    && if apt-cache show ros-humble-isaac-ros-cumotion-interfaces >/dev/null 2>&1; then \
-         apt-get install -y --no-install-recommends ros-humble-isaac-ros-cumotion-interfaces; \
-       else \
-         echo "WARNING: ros-humble-isaac-ros-cumotion-interfaces not found in configured apt sources."; \
-       fi \
+    && if apt-cache show ros-${ROS_DISTRO}-isaac-ros-cumotion-interfaces >/dev/null 2>&1; then \
+         apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-isaac-ros-cumotion-interfaces; \
+        else \
+         echo "WARNING: ros-${ROS_DISTRO}-isaac-ros-cumotion-interfaces not found in configured apt sources."; \
+        fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Prépare l'espace de travail
@@ -185,31 +184,32 @@ COPY requirements.txt .
 
 RUN apt-get update && apt-get install -y --no-install-recommends python3-vcstool
 
-COPY UR_Robotiq.humble.repos /ros2_ws/UR_Robotiq.humble.repos
+COPY UR_Robotiq.jazzy.repos /ros2_ws/UR_Robotiq.jazzy.repos
 COPY patches/robotiq_activation_controller.cpp /tmp/robotiq_activation_controller.cpp
 COPY patches/robotiq_driver/include/robotiq_driver/hardware_interface.hpp /tmp/robotiq_driver_hardware_interface.hpp
 COPY patches/robotiq_driver/src/hardware_interface.cpp /tmp/robotiq_driver_hardware_interface.cpp
 
 RUN mkdir -p /ros2_ws/src && \
-    vcs import /ros2_ws/src < /ros2_ws/UR_Robotiq.humble.repos && \
+    vcs import /ros2_ws/src < /ros2_ws/UR_Robotiq.jazzy.repos && \
     cp /tmp/robotiq_activation_controller.cpp \
       /ros2_ws/src/ros2_robotiq_gripper/robotiq_controllers/src/robotiq_activation_controller.cpp && \
     cp /tmp/robotiq_driver_hardware_interface.hpp \
       /ros2_ws/src/ros2_robotiq_gripper/robotiq_driver/include/robotiq_driver/hardware_interface.hpp && \
     cp /tmp/robotiq_driver_hardware_interface.cpp \
       /ros2_ws/src/ros2_robotiq_gripper/robotiq_driver/src/hardware_interface.cpp && \
-    rm -rf /ros2_ws/UR_Robotiq.humble.repos
+    python3 -c "from pathlib import Path; p=Path('/ros2_ws/src/cartesian_controllers/cartesian_controller_base/CMakeLists.txt'); text=p.read_text(); text=text.replace('if($ENV{ROS_DISTRO} STREQUAL \"iron\")\n        set(CARTESIAN_CONTROLLERS_IRON TRUE)\nelseif($ENV{ROS_DISTRO} STREQUAL \"humble\")', 'if($ENV{ROS_DISTRO} STREQUAL \"iron\")\n        set(CARTESIAN_CONTROLLERS_IRON TRUE)\nelseif($ENV{ROS_DISTRO} STREQUAL \"jazzy\")\n        set(CARTESIAN_CONTROLLERS_IRON TRUE)\nelseif($ENV{ROS_DISTRO} STREQUAL \"humble\")'); text=text.replace('else()\n        message(WARNING \"ROS2 version must be {iron|humble|galactic|foxy}\")\nendif()', 'else()\n        message(WARNING \"ROS2 version must be {jazzy|iron|humble|galactic|foxy}; defaulting to Jazzy/Iron API compatibility\")\n        set(CARTESIAN_CONTROLLERS_IRON TRUE)\nendif()'); text=text.replace('else()\n        message(WARNING \"ROS2 version must be {jazzy|iron|humble|galactic|foxy}\")\nendif()', 'else()\n        message(WARNING \"ROS2 version must be {jazzy|iron|humble|galactic|foxy}; defaulting to Jazzy/Iron API compatibility\")\n        set(CARTESIAN_CONTROLLERS_IRON TRUE)\nendif()'); p.write_text(text)" && \
+    rm -rf /ros2_ws/UR_Robotiq.jazzy.repos
 
 # Dépendances Python
-RUN pip3 install --no-cache-dir -r requirements.txt && \
-    pip3 install --no-cache-dir keyboard
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed -r requirements.txt && \
+    pip3 install --no-cache-dir --break-system-packages --ignore-installed keyboard
 
 
 # Compilation
-RUN bash -c "source /opt/ros/humble/setup.bash && colcon build"
+RUN bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && colcon build"
 
 # Source automatique dans .bashrc de l’utilisateur ros
-RUN echo "source /opt/ros/humble/setup.bash" >> /home/ros/.bashrc && \
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/ros/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /home/ros/.bashrc && \
     chown ros:ros /home/ros/.bashrc
 
@@ -228,6 +228,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN wget https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null \
   && apt-get update && apt-get install -q -y --no-install-recommends \
-    ros-humble-ros-gz \
+    ros-${ROS_DISTRO}-ros-gz \
   && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
