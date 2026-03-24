@@ -49,7 +49,7 @@ from launch_ros.substitutions import FindPackageShare
 import os
 
 distro = os.environ["ROS_DISTRO"]
-if distro in ["galactic", "humble", "iron"]:
+if distro in ["galactic", "humble", "iron", "jazzy"]:
     spawner = "spawner"
 else:  # foxy
     spawner = "spawner.py"
@@ -137,7 +137,7 @@ def generate_launch_description():
         "invalid_cartesian_compliance_controller",
         "invalid_cartesian_force_controller",
     ]
-    state = "--inactive" if distro in ["humble", "iron"] else "--stopped"
+    state = "--inactive" if distro in ["humble", "iron", "jazzy"] else "--stopped"
     inactive_spawners = [
         controller_spawner(controller, state) for controller in inactive_list
     ]

@@ -15,6 +15,7 @@ services:
       - DISPLAY=${DISPLAY}
       - QT_GRAPHICSSYSTEM=native
       - XAUTHORITY=/tmp/.docker.xauth
+      - ISAAC_ROS_WS=/ros2_ws
       - USER_UID=${USER_UID:-1000}
       - USER_GID=${USER_GID:-1000}
       - NVIDIA_VISIBLE_DEVICES=all
@@ -32,7 +33,7 @@ services:
     entrypoint: ["/bin/bash","-lc"]
     command: ["sleep infinity"]
     healthcheck:
-      test: ["CMD-SHELL", "bash -lc 'source /opt/ros/humble/setup.bash && ros2 pkg list | grep -q \"^isaac_ros_cumotion$\"'"]
+      test: ["CMD-SHELL", "bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 pkg list | grep -q \"^isaac_ros_cumotion$\"'"]
       interval: 30s
       timeout: 10s
       retries: 3

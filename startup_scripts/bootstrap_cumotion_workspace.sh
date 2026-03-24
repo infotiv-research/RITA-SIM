@@ -7,11 +7,13 @@
 
 set -euo pipefail
 
-ROS_DISTRO="${ROS_DISTRO:-humble}"
+ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 USER_WS="${USER_WS:-/ros2_ws}"
 FORCE_REBUILD="${CUMOTION_FORCE_REBUILD:-false}"
+export ISAAC_ROS_WS="${ISAAC_ROS_WS:-${USER_WS}}"
 
 required_system_packages=(
+  isaac_manipulator_ros_python_utils
   isaac_ros_cumotion
   isaac_ros_cumotion_moveit
   moveit_ros_move_group
@@ -53,13 +55,13 @@ done
 if [ "${#missing_system_packages[@]}" -gt 0 ]; then
   echo "ERROR: Missing ROS packages in cumotion image:"
   printf '  - %s\n' "${missing_system_packages[@]}"
-  echo "Rebuild the cumotion image: docker compose -f setup/docker-compose.ros2.yaml build cumotion"
+  echo "Rebuild the cumotion image: docker compose -f setup/docker-compose.cumotion.yaml build cumotion"
   exit 1
 fi
 
 if ! python3 -c "import torch; import warp; import curobo; import curobo_ros; from curobo_msgs.srv import TrajectoryGeneration; from isaac_ros_cumotion.cumotion_planner import CumotionActionServer" >/dev/null 2>&1; then
   echo "ERROR: cuMotion Python runtime import check failed (torch/warp/curobo/curobo_ros/curobo_msgs/isaac_ros_cumotion)."
-  echo "Rebuild the cumotion image: docker compose -f setup/docker-compose.ros2.yaml build cumotion"
+  echo "Rebuild the cumotion image: docker compose -f setup/docker-compose.cumotion.yaml build cumotion"
   exit 1
 fi
 

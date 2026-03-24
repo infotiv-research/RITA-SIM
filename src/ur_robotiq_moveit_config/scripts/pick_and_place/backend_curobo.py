@@ -112,6 +112,22 @@ class CuroboMotionBackend(MotionBackendInterface):
         except Exception:
             return None
 
+    def _wait_for_parameter_services(self, timeout_sec=2.0):
+        if self.parameter_client is None:
+            return False
+
+        # AsyncParameterClient exposes wait_for_services() on newer ROS distros,
+        # while older code may still use wait_for_service().
+        wait_for_services = getattr(self.parameter_client, "wait_for_services", None)
+        if callable(wait_for_services):
+            return bool(wait_for_services(timeout_sec=float(timeout_sec)))
+
+        wait_for_service = getattr(self.parameter_client, "wait_for_service", None)
+        if callable(wait_for_service):
+            return bool(wait_for_service(timeout_sec=float(timeout_sec)))
+
+        return False
+
     def wait_until_ready(self):
         self.node.get_logger().info("Waiting for curobo trajectory service...")
         if not self.trajectory_client.wait_for_service(timeout_sec=30.0):
@@ -236,7 +252,7 @@ class CuroboMotionBackend(MotionBackendInterface):
     def _apply_runtime_parameters(self, planning_time=None, num_attempts=None):
         if self.parameter_client is None:
             return False
-        if not self.parameter_client.wait_for_service(timeout_sec=2.0):
+        if not self._wait_for_parameter_services(timeout_sec=2.0):
             return False
         parameters = []
         if planning_time is not None:
@@ -247,7 +263,11 @@ class CuroboMotionBackend(MotionBackendInterface):
             return True
         future = self.parameter_client.set_parameters(parameters)
         response = self._wait_future_result(future, timeout_sec=5.0)
-        return response is not None and all(result.successful for result in response)
+        return (
+            response is not None
+            and response.results
+            and all(result.successful for result in response.results)
+        )
 
     def _get_controller_states(self, wait_timeout_sec=2.0):
         if self.controller_list_client is None:
@@ -310,7 +330,21 @@ class CuroboMotionBackend(MotionBackendInterface):
                 f"activate={activate_controllers}, deactivate={deactivate_controllers}"
             )
             return False
-        return True
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            states = self._get_controller_states(wait_timeout_sec=0.2)
+            if states and (
+                states.get(self._trajectory_controller_name) == "active"
+                and states.get(self._mpc_stream_controller_name) != "active"
+            ):
+                return True
+            time.sleep(0.1)
+
+        self.node.get_logger().error(
+            "Trajectory controller did not become active after switch request."
+        )
+        return False
 
     def _execute_active_planner(self, timeout_sec=180.0):
         if not self.execute_client.wait_for_server(timeout_sec=5.0):

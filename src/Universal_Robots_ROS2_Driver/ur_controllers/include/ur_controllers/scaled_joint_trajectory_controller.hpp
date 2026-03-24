@@ -37,8 +37,9 @@
 #ifndef UR_CONTROLLERS__SCALED_JOINT_TRAJECTORY_CONTROLLER_HPP_
 #define UR_CONTROLLERS__SCALED_JOINT_TRAJECTORY_CONTROLLER_HPP_
 
-#include <optional>
+#include <atomic>
 #include <memory>
+#include <optional>
 #include "angles/angles.h"
 #include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 #include "joint_trajectory_controller/trajectory.hpp"
@@ -64,19 +65,10 @@ public:
   CallbackReturn on_init() override;
 
 protected:
-  struct TimeData
-  {
-    TimeData() : time(0.0), period(rclcpp::Duration::from_nanoseconds(0.0)), uptime(0.0)
-    {
-    }
-    rclcpp::Time time;
-    rclcpp::Duration period;
-    rclcpp::Time uptime;
-  };
-
 private:
-  double scaling_factor_{ 1.0 };
-  realtime_tools::RealtimeBuffer<TimeData> time_data_;
+  void update_pids();
+
+  std::atomic<double> scaling_factor_{ 1.0 };
 
   std::optional<std::reference_wrapper<hardware_interface::LoanedStateInterface>> scaling_state_interface_ =
       std::nullopt;

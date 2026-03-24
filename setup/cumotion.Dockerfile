@@ -1,12 +1,12 @@
-ARG BASE_IMAGE=nvidia/cuda:12.2.2-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:12.8.1-devel-ubuntu24.04
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG ROS_DISTRO=humble
-ARG ISAAC_ROS_APT_CHANNEL=release-3
-ARG ISAAC_ROS_APT_COMPONENT=release-3.0
-ARG TORCH_WHL_CHANNEL=cu121
-ARG TORCH_VERSION=2.2.2
+ARG ROS_DISTRO=jazzy
+ARG ISAAC_ROS_APT_CHANNEL=release-4
+ARG ISAAC_ROS_APT_COMPONENT=main
+ARG TORCH_WHL_CHANNEL=cu128
+ARG TORCH_VERSION=2.7.0
 ARG USERNAME=ros
 ARG USER_UID=1000
 ARG USER_GID=1000
@@ -17,6 +17,7 @@ ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV PIP_DEFAULT_TIMEOUT=300
 ENV PIP_RETRIES=10
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 SHELL ["/bin/bash", "-lc"]
 
@@ -46,47 +47,55 @@ RUN add-apt-repository universe \
     python3-rosdep \
     python3-vcstool \
     python3-colcon-common-extensions \
-    ros-humble-ament-lint-auto \
-    ros-humble-ament-lint-common \
-    ros-humble-controller-manager \
-    ros-humble-joint-state-publisher \
-    ros-humble-joint-trajectory-controller \
-    ros-humble-joy \
-    ros-humble-moveit \
-    ros-humble-moveit-servo \
-    ros-humble-moveit-ros-move-group \
-    ros-humble-moveit-ros-visualization \
-    ros-humble-moveit-simple-controller-manager \
-    ros-humble-nav2-msgs \
-    ros-humble-pluginlib \
-    ros-humble-robot-state-publisher \
-    ros-humble-cv-bridge \
-    ros-humble-rosidl-default-generators \
-    ros-humble-rviz2 \
-    ros-humble-rviz-common \
-    ros-humble-rviz-default-plugins \
-    ros-humble-rviz-rendering \
-    ros-humble-ros2-control \
-    ros-humble-ros2-controllers \
-    ros-humble-teleop-twist-joy \
-    ros-humble-tf2-ros \
-    ros-humble-topic-based-ros2-control \
-    ros-humble-xacro \
+    ros-${ROS_DISTRO}-ament-lint-auto \
+    ros-${ROS_DISTRO}-ament-lint-common \
+    ros-${ROS_DISTRO}-controller-manager \
+    ros-${ROS_DISTRO}-joint-state-publisher \
+    ros-${ROS_DISTRO}-joint-trajectory-controller \
+    ros-${ROS_DISTRO}-joy \
+    ros-${ROS_DISTRO}-moveit \
+    ros-${ROS_DISTRO}-moveit-servo \
+    ros-${ROS_DISTRO}-moveit-ros-move-group \
+    ros-${ROS_DISTRO}-moveit-ros-visualization \
+    ros-${ROS_DISTRO}-moveit-simple-controller-manager \
+    ros-${ROS_DISTRO}-nav2-msgs \
+    ros-${ROS_DISTRO}-pluginlib \
+    ros-${ROS_DISTRO}-robot-state-publisher \
+    ros-${ROS_DISTRO}-cv-bridge \
+    ros-${ROS_DISTRO}-rosidl-default-generators \
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-rviz-common \
+    ros-${ROS_DISTRO}-rviz-default-plugins \
+    ros-${ROS_DISTRO}-rviz-rendering \
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-teleop-twist-joy \
+    ros-${ROS_DISTRO}-tf2-ros \
+    ros-${ROS_DISTRO}-tf-transformations \
+    ros-${ROS_DISTRO}-xacro \
     && rm -rf /var/lib/apt/lists/*
 
 
 RUN apt-get update \
+    && vpi_keyring=/usr/share/keyrings/nvidia-jetson.gpg \
+    && curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+       | gpg --dearmor -o ${vpi_keyring} \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=${vpi_keyring}] https://repo.download.nvidia.com/jetson/x86_64/$(. /etc/os-release && echo ${UBUNTU_CODENAME}) r38.4 main" \
+       > /etc/apt/sources.list.d/nvidia-jetson.list \
     && keyring=/usr/share/keyrings/nvidia-isaac-ros.gpg \
     && curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
        | gpg --dearmor -o ${keyring} \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=${keyring}] https://isaac.download.nvidia.com/isaac-ros/${ISAAC_ROS_APT_CHANNEL} $(. /etc/os-release && echo ${UBUNTU_CODENAME}) ${ISAAC_ROS_APT_COMPONENT}" \
        > /etc/apt/sources.list.d/nvidia-isaac-ros.list \
     && apt-get update \
+    && apt-get install -y --no-install-recommends isaac-ros-cli \
+    && isaac-ros init baremetal --yes \
     && install_pkgs="" \
     && for pkg in \
-         ros-humble-isaac-ros-cumotion \
-         ros-humble-isaac-ros-cumotion-moveit \
-         ros-humble-isaac-ros-cumotion-interfaces; do \
+         ros-${ROS_DISTRO}-isaac-manipulator-ros-python-utils \
+         ros-${ROS_DISTRO}-isaac-ros-cumotion \
+         ros-${ROS_DISTRO}-isaac-ros-cumotion-moveit \
+         ros-${ROS_DISTRO}-isaac-ros-cumotion-interfaces; do \
          if apt-cache show "$pkg" >/dev/null 2>&1; then \
            install_pkgs="${install_pkgs} ${pkg}"; \
          fi; \
@@ -111,6 +120,7 @@ RUN pip3 install --no-cache-dir \
     warp-lang
 
 RUN pip3 install --no-cache-dir \
+    --ignore-installed \
     --timeout ${PIP_DEFAULT_TIMEOUT} \
     --retries ${PIP_RETRIES} \
     open3d
@@ -118,7 +128,15 @@ RUN pip3 install --no-cache-dir \
 RUN pip3 install --no-cache-dir \
     --timeout ${PIP_DEFAULT_TIMEOUT} \
     --retries ${PIP_RETRIES} \
-    ros2-numpy \
+    "setuptools<80"
+
+RUN git clone --depth 1 --branch jazzy https://github.com/Box-Robotics/ros2_numpy.git /tmp/ros2_numpy \
+    && python3 -c "import shutil, sysconfig; shutil.copytree('/tmp/ros2_numpy/ros2_numpy', sysconfig.get_paths()['purelib'] + '/ros2_numpy')" \
+    && rm -rf /tmp/ros2_numpy
+
+RUN pip3 install --no-cache-dir \
+    --timeout ${PIP_DEFAULT_TIMEOUT} \
+    --retries ${PIP_RETRIES} \
     transforms3d \
     pandas \
     scikit-learn \
@@ -128,10 +146,16 @@ RUN pip3 install --no-cache-dir \
     --timeout ${PIP_DEFAULT_TIMEOUT} \
     --retries ${PIP_RETRIES} \
     trimesh \
-    scipy \
+    scipy==1.13.1 \
     yourdfpy \
     tqdm \
     "numpy<2"
+
+RUN python3 -c "import glob, os, shutil, sysconfig; purelib = sysconfig.get_paths()['purelib']; paths = glob.glob(os.path.join(purelib, 'numpy')) + glob.glob(os.path.join(purelib, 'numpy-*.dist-info')) + glob.glob(os.path.join(purelib, 'numpy.libs')); [shutil.rmtree(path) if os.path.isdir(path) else os.remove(path) for path in paths if os.path.exists(path)]" \
+    && pip3 install --no-cache-dir \
+       --timeout ${PIP_DEFAULT_TIMEOUT} \
+       --retries ${PIP_RETRIES} \
+       numpy==1.26.4
 
 RUN pip3 install --no-cache-dir \
     --timeout ${PIP_DEFAULT_TIMEOUT} \

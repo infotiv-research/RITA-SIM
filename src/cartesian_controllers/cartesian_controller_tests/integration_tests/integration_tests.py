@@ -118,7 +118,7 @@ class IntegrationTest(unittest.TestCase):
         controller manager contains our controllers and if they have the
         expected state.
         """
-        if os.environ["ROS_DISTRO"] == "humble" or os.environ["ROS_DISTRO"] == "iron":
+        if os.environ["ROS_DISTRO"] in ["humble", "iron", "jazzy"]:
             expected_state = "unconfigured"
         else:  # galactic, foxy
             expected_state = "finalized"
@@ -214,7 +214,7 @@ class IntegrationTest(unittest.TestCase):
     def start_controller(self, controller):
         """Start the given controller"""
         req = SwitchController.Request()
-        if distro in ["humble", "iron"]:
+        if distro in ["humble", "iron", "jazzy"]:
             req.activate_controllers = [controller]
         else:
             req.start_controllers = [controller]
@@ -223,7 +223,7 @@ class IntegrationTest(unittest.TestCase):
     def stop_controller(self, controller):
         """Stop the given controller"""
         req = SwitchController.Request()
-        if distro in ["humble", "iron"]:
+        if distro in ["humble", "iron", "jazzy"]:
             req.deactivate_controllers = [controller]
         else:
             req.stop_controllers = [controller]
