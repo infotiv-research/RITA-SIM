@@ -178,6 +178,17 @@ RUN apt-get update \
         fi \
     && rm -rf /var/lib/apt/lists/*
 
+# Install topic_based_ros2_control into an image-owned underlay when the distro
+# package is unavailable. This survives the /ros2_ws bind mount at runtime.
+WORKDIR /opt/vendor_ws
+RUN mkdir -p /opt/vendor_ws/src && \
+    if apt-cache show ros-${ROS_DISTRO}-topic-based-ros2-control >/dev/null 2>&1; then \
+      apt-get update && apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-topic-based-ros2-control && rm -rf /var/lib/apt/lists/*; \
+    else \
+      git clone --depth 1 https://github.com/PickNikRobotics/topic_based_ros2_control.git /opt/vendor_ws/src/topic_based_ros2_control && \
+      bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && cd /opt/vendor_ws && colcon build --cmake-args -DBUILD_TESTING=OFF"; \
+    fi
+
 # Prépare l'espace de travail
 WORKDIR /ros2_ws
 COPY requirements.txt .
@@ -206,10 +217,11 @@ RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed -r re
 
 
 # Compilation
-RUN bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && colcon build"
+RUN bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && colcon build --cmake-args -DBUILD_TESTING=OFF"
 
 # Source automatique dans .bashrc de l’utilisateur ros
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/ros/.bashrc && \
+    echo "if [ -f /opt/vendor_ws/install/setup.bash ]; then source /opt/vendor_ws/install/setup.bash; fi" >> /home/ros/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /home/ros/.bashrc && \
     chown ros:ros /home/ros/.bashrc
 

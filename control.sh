@@ -13,6 +13,7 @@
 #################################################################
 #region environment variables
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
+source /opt/vendor_ws/install/setup.bash 2>/dev/null
 source install/setup.bash 2>/dev/null
 export RCUTILS_LOGGING_SEVERITY_THRESHOLD="${RCUTILS_LOGGING_SEVERITY_THRESHOLD:-WARN}"
 unset ROS_LOCALHOST_ONLY
@@ -108,6 +109,7 @@ EOF
 
 source_ws() {
     source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
+    source /opt/vendor_ws/install/setup.bash 2>/dev/null
     source install/setup.bash 2>/dev/null
 }
 
@@ -171,7 +173,7 @@ build() {
         return 1
     fi
 
-    if ! colcon build --symlink-install; then
+    if ! colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF; then
         echo "---[ Error: colcon build failed ]---"
         return 1
     fi
