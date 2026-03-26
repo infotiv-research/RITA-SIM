@@ -8,13 +8,14 @@ and allows dynamic switching between them.
 
 import torch
 import rclpy
-import inspect
+import time
 import threading
 from rclpy.node import Node
-from rclpy.action import ActionServer
+from rclpy.action import ActionClient, ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
+from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import ListControllers, SwitchController
 from sensor_msgs.msg import JointState as JointStateMsg
 from std_msgs.msg import Float64MultiArray, String
@@ -30,8 +31,15 @@ from curobo.geom.sdf.world import CollisionQueryBuffer
 from curobo.util_file import load_yaml
 
 from curobo_ros.robot.robot_context import RobotContext
-from curobo_ros.core.controller_trajectory import wait_future_result
+from curobo_ros.core.controller_trajectory import (
+    build_joint_trajectory,
+    extract_ordered_waypoints,
+    wait_future_result,
+)
 from curobo_ros.core.config_wrapper_motion import ConfigWrapperMotion, ConfigWrapperMPC
+from curobo_ros.core.mpc_solver_config_utils import (
+    build_mpc_load_from_robot_config_kwargs,
+)
 from curobo_ros.planners import (
     PlannerFactory,
     PlannerManager,
@@ -98,8 +106,14 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_stream_controller_name', 'forward_position_controller')
         self.declare_parameter('mpc_stream_controller_topic', '/forward_position_controller/commands')
         self.declare_parameter('mpc_deactivate_controller_name', 'joint_trajectory_controller')
+        self.declare_parameter(
+            'controller_action_name',
+            '/joint_trajectory_controller/follow_joint_trajectory',
+        )
         self.declare_parameter('controller_manager_switch_service', '/controller_manager/switch_controller')
         self.declare_parameter('mpc_infeasible_abort_steps', 10)
+        self.declare_parameter('mpc_classic_handoff_enabled', True)
+        self.declare_parameter('mpc_classic_handoff_distance', 0.015)
         self.declare_parameter('mpc_debug_logging', False)
         self.declare_parameter('mpc_debug_log_every_n_steps', 10)
         self.declare_parameter('mpc_debug_publish_topic', True)
@@ -113,6 +127,7 @@ class UnifiedPlannerNode(Node):
         self._motion_gen_world_version = 0
         self._mpc_world_version = 0
         self._mpc_execution_active = False
+        self._mpc_robot_geometry_dirty = False
 
         # Initialize ONLY the base config wrapper
         # Other wrappers will be created on-demand (lazy loading)
@@ -126,6 +141,16 @@ class UnifiedPlannerNode(Node):
             self.get_parameter('controller_joint_names').get_parameter_value().string_array_value
         )
         self.controller_joint_names = configured_controller_names or list(self._robot_joint_names)
+        self.controller_action_name = (
+            self.get_parameter('controller_action_name').get_parameter_value().string_value
+        )
+        self.controller_action_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            self.controller_action_name,
+        )
+        self._controller_goal_lock = threading.Lock()
+        self._active_controller_goal_handle = None
         self.controller_switch_client = self.create_client(
             SwitchController,
             self.get_parameter('controller_manager_switch_service').get_parameter_value().string_value,
@@ -292,34 +317,23 @@ class UnifiedPlannerNode(Node):
             if shared_checker is not None:
                 self.get_logger().info("  → Sharing world_coll_checker with MotionGen (no extra VRAM)")
 
-            load_from_robot_config_parameters = inspect.signature(
-                MpcSolverConfig.load_from_robot_config
-            ).parameters
-            mpc_config_kwargs = {
-                'store_rollouts': True,
-                'step_dt': float(self.get_parameter('mpc_step_dt').value),
-                'world_coll_checker': shared_checker,
-            }
-            if 'horizon' in load_from_robot_config_parameters:
-                mpc_config_kwargs['horizon'] = int(
-                    self.get_parameter('mpc_horizon_steps').value
+            with build_mpc_load_from_robot_config_kwargs(
+                self,
+                world_coll_checker=shared_checker,
+            ) as mpc_config_kwargs:
+                mpc_config = MpcSolverConfig.load_from_robot_config(
+                    robot_cfg,
+                    self.shared_world_cfg,
+                    **mpc_config_kwargs,
                 )
-            else:
-                self.get_logger().warn(
-                    'Installed cuRobo does not support configuring MPC horizon '
-                    'through MpcSolverConfig.load_from_robot_config(); '
-                    'using the library default horizon.'
-                )
-
-            mpc_config = MpcSolverConfig.load_from_robot_config(
-                robot_cfg,
-                self.shared_world_cfg,
-                **mpc_config_kwargs,
-            )
 
             self.mpc = MpcSolver(mpc_config)
             self._record_solver_world_sync('mpc', self._get_world_state_version())
-            self.get_logger().info("  → MPC solver ready")
+            self.get_logger().info(
+                "  → MPC solver ready "
+                f"(collision_activation_distance={float(self.get_parameter('collision_activation_distance').value):.3f}m, "
+                f"horizon={int(self.get_parameter('mpc_horizon_steps').value)} steps)"
+            )
         else:
             self.get_logger().info("  → MPC solver already initialized (using cache)")
 
@@ -330,6 +344,157 @@ class UnifiedPlannerNode(Node):
             and self.mpc is not None
             and self.motion_gen.world_coll_checker is self.mpc.world_coll_checker
         )
+
+    def _get_shared_robot_kinematics_target(self):
+        """Return the base robot-kinematics config used for future solver warmups."""
+        return getattr(getattr(self.config_wrapper_motion, 'robot_cfg', None), 'kinematics', None)
+
+    def _iter_solver_robot_models(self):
+        """Yield unique active CudaRobotModel instances that need config refresh."""
+        targets = []
+
+        robot_model_manager = getattr(self.config_wrapper_motion, 'robot_model_manager', None)
+        if robot_model_manager is not None and getattr(robot_model_manager, 'kin_model', None) is not None:
+            targets.append(('robot_model_manager', robot_model_manager.kin_model))
+
+        if self.motion_gen is not None:
+            motion_gen_targets = []
+            get_all_kinematics_instances = getattr(self.motion_gen, 'get_all_kinematics_instances', None)
+            if callable(get_all_kinematics_instances):
+                motion_gen_targets.extend(list(get_all_kinematics_instances() or []))
+            else:
+                motion_gen_kinematics = getattr(self.motion_gen, 'kinematics', None)
+                if motion_gen_kinematics is not None:
+                    motion_gen_targets.append(motion_gen_kinematics)
+
+            for index, target in enumerate(motion_gen_targets):
+                if target is not None:
+                    targets.append((f'motion_gen[{index}]', target))
+
+        if self.mpc is not None:
+            rollout_targets = []
+            rollout_fn = getattr(self.mpc, 'rollout_fn', None)
+            if rollout_fn is not None:
+                rollout_targets.append(('mpc_aux', rollout_fn))
+
+            solver = getattr(self.mpc, 'solver', None)
+            if solver is not None:
+                safety_rollout = getattr(solver, 'safety_rollout', None)
+                if safety_rollout is not None:
+                    rollout_targets.append(('mpc_safety', safety_rollout))
+
+                for index, optimizer in enumerate(list(getattr(solver, 'optimizers', []) or [])):
+                    optimizer_rollout = getattr(optimizer, 'rollout_fn', None)
+                    if optimizer_rollout is not None:
+                        rollout_targets.append((f'mpc_optimizer[{index}]', optimizer_rollout))
+
+            for label, rollout in rollout_targets:
+                dynamics_model = getattr(rollout, 'dynamics_model', None)
+                robot_model = getattr(dynamics_model, 'robot_model', None)
+                if robot_model is not None:
+                    targets.append((label, robot_model))
+
+        unique_targets = []
+        seen = set()
+        for label, target in targets:
+            object_id = id(target)
+            if object_id in seen:
+                continue
+            seen.add(object_id)
+            unique_targets.append((label, target))
+        return unique_targets
+
+    def _refresh_solver_robot_models_from_shared_config(self):
+        """Push the shared robot kinematics config into every active robot model."""
+        shared_target = self._get_shared_robot_kinematics_target()
+        shared_config = getattr(shared_target, 'kinematics_config', None)
+        if shared_config is None:
+            return False, [], 'Shared robot kinematics config is unavailable.'
+
+        refreshed_labels = []
+        failures = []
+        for label, robot_model in self._iter_solver_robot_models():
+            update_kinematics_config = getattr(robot_model, 'update_kinematics_config', None)
+            if not callable(update_kinematics_config):
+                failures.append(f'{label}: missing update_kinematics_config')
+                continue
+            try:
+                update_kinematics_config(shared_config)
+                refreshed_labels.append(label)
+            except Exception as exc:
+                failures.append(f'{label}: {exc}')
+
+        if failures:
+            return False, refreshed_labels, '; '.join(failures)
+        return True, refreshed_labels, 'ok'
+
+    def _mark_mpc_robot_geometry_dirty(self, reason: str):
+        """
+        Force the cached MPC solver to be rebuilt on next use after robot-geometry changes.
+
+        MPC reuses warm-start buffers and rollout state across phases. When attached-object
+        spheres or link-collision masks change, rebuilding is safer than relying on all
+        internal rollout state to pick up the new robot geometry in-place.
+        """
+        if self.mpc is None:
+            self._mpc_robot_geometry_dirty = False
+            return
+        self._mpc_robot_geometry_dirty = True
+        self.get_logger().info(
+            f'Marked cached MPC solver for rebuild on next use ({reason}).'
+        )
+
+    def propagate_link_collision_state(self, link_names, enabled):
+        """Mirror link-collision toggles into robot_cfg and refresh active solver models."""
+        manager = self.config_wrapper_motion.robot_model_manager
+        link_names = list(link_names or [])
+        shared_target = self._get_shared_robot_kinematics_target()
+
+        applied, unknown = manager.set_link_collision_on_target(shared_target, link_names, enabled)
+        if unknown:
+            return False, f'shared_robot_cfg: unknown links {unknown}'
+
+        refresh_ok, refreshed_labels, refresh_message = self._refresh_solver_robot_models_from_shared_config()
+        if not refresh_ok:
+            return False, refresh_message
+
+        if applied or refreshed_labels:
+            state = 'enabled' if enabled else 'disabled'
+            self.get_logger().info(
+                f'Propagated link collision {state} to solver kinematics: '
+                f'{["shared_robot_cfg", *refreshed_labels]}'
+            )
+            self._mark_mpc_robot_geometry_dirty(
+                f'link collision {state} for {applied or link_names}'
+            )
+        return True, 'ok'
+
+    def propagate_attached_object_state(self, link_name, sphere_data, attach=True):
+        """Mirror attach/detach updates into robot_cfg and refresh active solver models."""
+        manager = self.config_wrapper_motion.robot_model_manager
+        shared_target = self._get_shared_robot_kinematics_target()
+
+        if attach:
+            success, message, _ = manager.attach_object_to_target(shared_target, link_name, sphere_data)
+        else:
+            success, message = manager.detach_object_from_target(shared_target, link_name)
+        if not success:
+            return False, f'shared_robot_cfg: {message}'
+
+        refresh_ok, refreshed_labels, refresh_message = self._refresh_solver_robot_models_from_shared_config()
+        if not refresh_ok:
+            return False, refresh_message
+
+        if refreshed_labels:
+            action = 'attach' if attach else 'detach'
+            self.get_logger().info(
+                f'Propagated attached-object {action} to solver kinematics: '
+                f'{["shared_robot_cfg", *refreshed_labels]}'
+            )
+            self._mark_mpc_robot_geometry_dirty(
+                f'attached-object {action} on {link_name}'
+            )
+        return True, 'ok'
 
     def _get_world_state_version(self):
         with self._world_update_lock:
@@ -544,6 +709,38 @@ class UnifiedPlannerNode(Node):
             'jerk': [0.0] * len(fallback_positions),
         }
 
+    def _joint_state_dict_to_curobo_state(self, joint_state_dict):
+        """Convert an ordered joint-state dict into a cuRobo JointState."""
+        joint_names = list(joint_state_dict.get('joint_names', [])) or list(self._robot_joint_names) or None
+        positions = list(joint_state_dict.get('position', []))
+        velocities = list(joint_state_dict.get('velocity', [0.0] * len(positions)))
+        accelerations = list(joint_state_dict.get('acceleration', [0.0] * len(positions)))
+        jerks = list(joint_state_dict.get('jerk', [0.0] * len(positions)))
+
+        return JointState(
+            position=torch.tensor(
+                [positions],
+                device=self.tensor_args.device,
+                dtype=self.tensor_args.dtype,
+            ),
+            velocity=torch.tensor(
+                [velocities],
+                device=self.tensor_args.device,
+                dtype=self.tensor_args.dtype,
+            ),
+            acceleration=torch.tensor(
+                [accelerations],
+                device=self.tensor_args.device,
+                dtype=self.tensor_args.dtype,
+            ),
+            jerk=torch.tensor(
+                [jerks],
+                device=self.tensor_args.device,
+                dtype=self.tensor_args.dtype,
+            ),
+            joint_names=joint_names,
+        )
+
     def get_live_joint_state(self):
         """Return ordered live joint position/velocity data or None."""
         return self._get_live_joint_state_dict()
@@ -584,10 +781,16 @@ class UnifiedPlannerNode(Node):
         active world collision checker. Negative values indicate penetration.
         """
         checker = None
-        if self.motion_gen is not None:
-            checker = self.motion_gen.world_coll_checker
-        elif self.mpc is not None:
+        robot_model = None
+        if self.mpc is not None:
             checker = self.mpc.world_coll_checker
+            robot_model = getattr(self.mpc, 'kinematics', None)
+        if self.motion_gen is not None:
+            checker = self.motion_gen.world_coll_checker if checker is None else checker
+            robot_model = getattr(self.motion_gen, 'kinematics', None) if robot_model is None else robot_model
+
+        if robot_model is None:
+            robot_model = self.config_wrapper_motion.kin_model
 
         if checker is None or joint_positions is None:
             return None
@@ -598,7 +801,7 @@ class UnifiedPlannerNode(Node):
                 dtype=self.config_wrapper_motion._ops_dtype,
                 device=self.config_wrapper_motion._device,
             )
-            kinematics_state = self.config_wrapper_motion.kin_model.get_state(joint_tensor)
+            kinematics_state = robot_model.get_state(joint_tensor)
             robot_spheres = kinematics_state.link_spheres_tensor.view(1, 1, -1, 4)
             query_buffer = CollisionQueryBuffer.initialize_from_shape(
                 robot_spheres.shape,
@@ -652,6 +855,116 @@ class UnifiedPlannerNode(Node):
             deactivate_controllers=[self.mpc_stream_controller_name],
             wait_timeout_sec=wait_timeout_sec,
         )
+
+    def _set_active_controller_goal_handle(self, controller_goal_handle):
+        """Track the currently executing FollowJointTrajectory goal, if any."""
+        with self._controller_goal_lock:
+            self._active_controller_goal_handle = controller_goal_handle
+
+    def cancel_active_controller_goal(self, wait_timeout_sec=2.0):
+        """Cancel the active FollowJointTrajectory goal, if one is still running."""
+        with self._controller_goal_lock:
+            controller_goal_handle = self._active_controller_goal_handle
+
+        if controller_goal_handle is None:
+            return True
+
+        try:
+            cancel_future = controller_goal_handle.cancel_goal_async()
+        except Exception as exc:
+            self.get_logger().warn(f'Failed to cancel active controller goal: {exc}')
+            return False
+
+        response = wait_future_result(cancel_future, timeout_sec=float(wait_timeout_sec))
+        if response is None:
+            self.get_logger().warn('Controller goal cancel request returned no response.')
+            return False
+        return True
+
+    def execute_planned_trajectory_via_controller(
+        self,
+        planned_trajectory,
+        dt,
+        goal_handle=None,
+        planner_name='Trajectory',
+    ):
+        """Execute a planned cuRobo trajectory through FollowJointTrajectory."""
+        if planned_trajectory is None:
+            self.get_logger().error(f'{planner_name}: No trajectory available for controller execution.')
+            return False
+
+        if not self.controller_action_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().warn(
+                f'{planner_name}: Controller action server unavailable at '
+                f'{self.controller_action_name}; falling back to robot_context execution.'
+            )
+            return None
+
+        ordered_joint_names = self.get_controller_joint_names()
+        try:
+            positions, velocities, accelerations = extract_ordered_waypoints(
+                planned_trajectory,
+                ordered_joint_names,
+            )
+            joint_trajectory = build_joint_trajectory(
+                ordered_joint_names,
+                positions,
+                velocities,
+                accelerations,
+                dt,
+            )
+        except Exception as exc:
+            self.get_logger().error(f'{planner_name}: Failed to build controller trajectory: {exc}')
+            return False
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = joint_trajectory
+        send_future = self.controller_action_client.send_goal_async(goal)
+        controller_goal_handle = wait_future_result(send_future, timeout_sec=5.0)
+        if controller_goal_handle is None or not controller_goal_handle.accepted:
+            self.get_logger().error(f'{planner_name}: Controller trajectory goal was rejected.')
+            return False
+
+        self._set_active_controller_goal_handle(controller_goal_handle)
+        self.get_logger().info(f'{planner_name}: Trajectory execution started')
+        result_future = controller_goal_handle.get_result_async()
+
+        try:
+            while not result_future.done():
+                if goal_handle is not None and not goal_handle.is_active:
+                    self.get_logger().warn(
+                        f'{planner_name}: Execution goal cancelled while controller action was active.'
+                    )
+                    self.cancel_active_controller_goal()
+                    return False
+                time.sleep(0.05)
+
+            result = wait_future_result(result_future, timeout_sec=0.1)
+        finally:
+            self._set_active_controller_goal_handle(None)
+
+        if result is None:
+            self.get_logger().error(f'{planner_name}: Controller action returned no result.')
+            return False
+
+        raw_error_code = result.result.error_code
+        error_code = raw_error_code.val if hasattr(raw_error_code, 'val') else int(raw_error_code)
+        if error_code != FollowJointTrajectory.Result.SUCCESSFUL:
+            self.get_logger().error(
+                f'{planner_name}: Controller trajectory execution failed with error code '
+                f'{error_code}: {result.result.error_string}'
+            )
+            return False
+
+        final_joint_state = self.get_live_joint_state() or self.get_current_joint_state()
+        if final_joint_state is not None:
+            self.get_logger().info(
+                f'{planner_name}: Trajectory execution completed. '
+                f'Final position: {final_joint_state["position"]}'
+            )
+        else:
+            self.get_logger().info(f'{planner_name}: Trajectory execution completed.')
+        return True
 
     def _get_controller_states(self, wait_timeout_sec=2.0):
         """Return a mapping of controller name -> lifecycle state."""
@@ -741,6 +1054,54 @@ class UnifiedPlannerNode(Node):
         self.mpc_stream_publisher.publish(message)
         return True
 
+    def _execute_mpc_classic_handoff(self, mpc_planner, handoff_metadata, goal_handle):
+        """Finish a near-converged MPC move with one final classic MotionGen plan."""
+        request = mpc_planner.build_classic_handoff_request()
+        if request is None:
+            self.get_logger().error(
+                "MPC requested a classic finisher handoff but did not expose a valid goal request."
+            )
+            return False
+
+        current_joint_state = self.get_live_joint_state() or self.get_current_joint_state()
+        if current_joint_state is None:
+            self.get_logger().error(
+                "Classic finisher handoff requires a current joint state, but none is available."
+            )
+            return False
+
+        if goal_handle is not None and not goal_handle.is_active:
+            self.get_logger().warn("Skipping classic finisher handoff because the goal is no longer active.")
+            return False
+
+        classic_planner = self.planner_manager.get_planner('classic')
+        self._setup_planner(classic_planner)
+
+        start_state = self._joint_state_dict_to_curobo_state(current_joint_state)
+        config = self._get_planner_config(classic_planner)
+
+        self.get_logger().info(
+            "Handing off near-goal MPC motion to Classic Motion Generation "
+            f"(step={handoff_metadata['step_index']}, "
+            f"position_error={handoff_metadata['position_error']:.4f}m, "
+            f"rotation_error={handoff_metadata['rotation_error']:.4f}rad)"
+        )
+
+        result = classic_planner.plan(start_state, request, config, self.robot_context)
+        if not result.success:
+            self.get_logger().error(
+                f"Classic finisher planning failed after MPC handoff: {result.message}"
+            )
+            return False
+
+        if not self.activate_trajectory_execution_controller():
+            self.get_logger().error(
+                f"Failed to activate {self.mpc_deactivate_controller_name} for classic finisher execution."
+            )
+            return False
+
+        return classic_planner.execute(self.robot_context, goal_handle)
+
     def generate_trajectory_callback(self, request: TrajectoryGeneration, response):
         """
         Generate a trajectory using the current planner.
@@ -785,29 +1146,7 @@ class UnifiedPlannerNode(Node):
                     'joint_names': joint_names or [],
                 }
 
-            start_state = JointState(
-                position=torch.tensor(
-                    [start_joint_state['position']],
-                    device=self.tensor_args.device,
-                    dtype=self.tensor_args.dtype,
-                ),
-                velocity=torch.tensor(
-                    [start_joint_state['velocity']],
-                    device=self.tensor_args.device,
-                    dtype=self.tensor_args.dtype,
-                ),
-                acceleration=torch.tensor(
-                    [start_joint_state.get('acceleration', [0.0] * len(start_joint_state['position']))],
-                    device=self.tensor_args.device,
-                    dtype=self.tensor_args.dtype,
-                ),
-                jerk=torch.tensor(
-                    [start_joint_state.get('jerk', [0.0] * len(start_joint_state['position']))],
-                    device=self.tensor_args.device,
-                    dtype=self.tensor_args.dtype,
-                ),
-                joint_names=joint_names,
-            )
+            start_state = self._joint_state_dict_to_curobo_state(start_joint_state)
 
             # Build config from parameters
             config = self._get_planner_config(planner)
@@ -928,10 +1267,25 @@ class UnifiedPlannerNode(Node):
                 if is_mpc:
                     self.set_mpc_execution_active(False)
 
+            handoff_metadata = None
+            if is_mpc:
+                handoff_metadata = planner.consume_classic_handoff_request()
+                if not success and handoff_metadata is not None:
+                    success = self._execute_mpc_classic_handoff(
+                        planner,
+                        handoff_metadata,
+                        goal_handle,
+                    )
+
             # Build result
             result_msg = SendTrajectory.Result()
             result_msg.success = success
-            result_msg.message = "Execution completed" if success else "Execution failed"
+            if success and handoff_metadata is not None:
+                result_msg.message = "Execution completed via MPC -> Classic finisher handoff"
+            elif not success and handoff_metadata is not None:
+                result_msg.message = "Execution failed after MPC -> Classic finisher handoff"
+            else:
+                result_msg.message = "Execution completed" if success else "Execution failed"
 
             if success:
                 goal_handle.succeed()
@@ -1094,9 +1448,16 @@ class UnifiedPlannerNode(Node):
 
         elif isinstance(planner, MPCPlanner):
             # Warmup MPC if not already done
-            if self.mpc is None:
-                self.get_logger().info("On-demand warmup: MPC planner")
+            if self.mpc is None or self._mpc_robot_geometry_dirty:
+                if self._mpc_robot_geometry_dirty and self.mpc is not None:
+                    self.get_logger().info(
+                        "On-demand MPC rebuild: robot geometry changed since the last MPC phase."
+                    )
+                    self.mpc = None
+                else:
+                    self.get_logger().info("On-demand warmup: MPC planner")
                 self._warmup_mpc()
+                self._mpc_robot_geometry_dirty = False
 
             planner.set_mpc_solver(self.mpc)
             self.sync_mpc_world()
@@ -1142,6 +1503,7 @@ class UnifiedPlannerNode(Node):
         planner = self.planner_manager.get_current_planner()
         if hasattr(planner, 'cancel'):
             planner.cancel()
+        self.cancel_active_controller_goal()
 
         self.get_logger().info("Goal cancelled")
         return rclpy.action.CancelResponse.ACCEPT

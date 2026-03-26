@@ -5,7 +5,7 @@
     timeout: 20.0
     time_dilation_factor: 0.5
     voxel_size: 0.05
-    collision_activation_distance: 0.005
+    collision_activation_distance: 0.04
     trajopt_tsteps: 16
     use_cuda_graph: false
     num_trajopt_seeds: 4
@@ -41,9 +41,12 @@
     environment_pose_orientation_tolerance_rad: 0.02
     environment_dimensions_tolerance_m: 0.001
 
+    # MPC tuning
     convergence_threshold: 0.02
     mpc_position_convergence_threshold: 0.01
-    mpc_rotation_convergence_threshold: 0.05
+    mpc_rotation_convergence_threshold: 0.1
+    mpc_classic_handoff_enabled: true
+    mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
     mpc_horizon_steps: 40
     mpc_command_speed_scale: 0.6

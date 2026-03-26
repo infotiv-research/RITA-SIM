@@ -188,7 +188,7 @@ RUN if getent passwd ubuntu > /dev/null 2>&1; then \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/${USERNAME}/.bashrc \
-    && echo "if [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc \
+    && echo "if [ -f /ros2_ws/install/local_setup.bash ]; then source /ros2_ws/install/local_setup.bash; fi" >> /home/${USERNAME}/.bashrc \
     && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
 
 ENV DEBIAN_FRONTEND=

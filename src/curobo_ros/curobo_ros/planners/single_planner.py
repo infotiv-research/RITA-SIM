@@ -340,6 +340,22 @@ class SinglePlanner(TrajectoryPlanner):
             # Reset cancellation flag at the start of execution
             self._cancelled = False
 
+            # Prefer the same FollowJointTrajectory path used by RViz when available.
+            controller_executor = getattr(self.node, 'execute_planned_trajectory_via_controller', None)
+            if callable(controller_executor):
+                controller_dt = 0.03
+                if self.motion_gen is not None and hasattr(self.motion_gen, 'interpolation_dt'):
+                    controller_dt = float(self.motion_gen.interpolation_dt)
+
+                controller_result = controller_executor(
+                    self.planned_trajectory,
+                    controller_dt,
+                    goal_handle=goal_handle,
+                    planner_name=self.get_planner_name(),
+                )
+                if controller_result is not None:
+                    return bool(controller_result)
+
             # Start trajectory execution
             robot_context.send_trajectrory()
 

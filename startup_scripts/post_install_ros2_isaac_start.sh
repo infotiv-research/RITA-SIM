@@ -53,7 +53,7 @@ fi
     export AMENT_PYTHON_EXECUTABLE="${AMENT_PYTHON_EXECUTABLE:-$(command -v python3 || echo /usr/bin/python3)}"
 
     source "/opt/ros/${ROS_DISTRO}/setup.bash"
-    [ -f "${USER_WS}/install/setup.bash" ] && source "${USER_WS}/install/setup.bash"
+    [ -f "${USER_WS}/install/local_setup.bash" ] && source "${USER_WS}/install/local_setup.bash"
     set -u
   else
     echo "Warning: /opt/ros/${ROS_DISTRO}/setup.bash not found"

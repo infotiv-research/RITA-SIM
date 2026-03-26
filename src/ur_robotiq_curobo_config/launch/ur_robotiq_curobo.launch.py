@@ -326,6 +326,7 @@ def launch_setup(context, *args, **kwargs):
                 "cameras_config_file": "",
                 "base_link": "gantry_base_link",
                 "world_file": "",
+                "controller_action_name": "/joint_trajectory_controller/follow_joint_trajectory",
                 "controller_joint_names": list(arm_joint_names),
             }
         ],

@@ -115,8 +115,8 @@ fi
 
 set +u
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
-if [ -f "${USER_WS}/install/setup.bash" ]; then
-  source "${USER_WS}/install/setup.bash"
+if [ -f "${USER_WS}/install/local_setup.bash" ]; then
+  source "${USER_WS}/install/local_setup.bash"
 fi
 set -u
 
