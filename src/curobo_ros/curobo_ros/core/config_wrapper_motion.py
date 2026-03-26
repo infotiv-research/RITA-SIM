@@ -5,7 +5,6 @@ import torch
 from functools import partial
 import threading
 import time
-import inspect
 
 # cuRobo
 from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
@@ -25,6 +24,10 @@ from std_msgs.msg import Float32
 
 # Camera management
 from curobo_ros.cameras import CameraContext, PointCloudCameraStrategy
+from .mpc_solver_config_utils import (
+    build_mpc_load_from_robot_config_kwargs,
+    get_or_declare_parameter_value,
+)
 
 class ConfigWrapperMPC(ConfigWrapper):
     def __init__(self, node, robot):
@@ -44,30 +47,24 @@ class ConfigWrapperMPC(ConfigWrapper):
         node.declare_parameter('mpc_step_dt', 0.03)  # Time step for MPC (seconds)
         node.declare_parameter('mpc_horizon_steps', 30)  # Number of steps in MPC horizon
 
-        mpc_step_dt = node.get_parameter('mpc_step_dt').get_parameter_value().double_value
-        mpc_horizon_steps = node.get_parameter('mpc_horizon_steps').get_parameter_value().integer_value
-
-        mpc_config_kwargs = {
-            'store_rollouts': True,
-            'step_dt': mpc_step_dt,
-        }
-        if 'horizon' in inspect.signature(MpcSolverConfig.load_from_robot_config).parameters:
-            mpc_config_kwargs['horizon'] = mpc_horizon_steps
-        else:
-            node.get_logger().warn(
-                'Installed cuRobo does not support MPC horizon override in '
-                'load_from_robot_config(); using the library default horizon.'
-            )
-
-        self.mpc_config = MpcSolverConfig.load_from_robot_config(
-            self.robot_cfg,
-            self.world_cfg,
-            **mpc_config_kwargs,
+        mpc_step_dt = float(get_or_declare_parameter_value(node, 'mpc_step_dt', 0.03))
+        mpc_horizon_steps = int(get_or_declare_parameter_value(node, 'mpc_horizon_steps', 30))
+        collision_activation_distance = float(
+            get_or_declare_parameter_value(node, 'collision_activation_distance', 0.025)
         )
+
+        with build_mpc_load_from_robot_config_kwargs(node) as mpc_config_kwargs:
+            self.mpc_config = MpcSolverConfig.load_from_robot_config(
+                self.robot_cfg,
+                self.world_cfg,
+                **mpc_config_kwargs,
+            )
         node.mpc = MpcSolver(self.mpc_config)
 
         node.get_logger().info(
-            f"MPC configured: step_dt={mpc_step_dt}s, horizon={mpc_horizon_steps} steps"
+            "MPC configured: "
+            f"step_dt={mpc_step_dt}s, horizon={mpc_horizon_steps} steps, "
+            f"collision_activation_distance={collision_activation_distance:.3f}m"
         )
 
 

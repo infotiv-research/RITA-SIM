@@ -14,7 +14,7 @@
 #region environment variables
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
 source /opt/vendor_ws/install/setup.bash 2>/dev/null
-source install/setup.bash 2>/dev/null
+source install/local_setup.bash 2>/dev/null
 export RCUTILS_LOGGING_SEVERITY_THRESHOLD="${RCUTILS_LOGGING_SEVERITY_THRESHOLD:-WARN}"
 unset ROS_LOCALHOST_ONLY
 export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] [{name}] [{time}]: {message}"
@@ -64,7 +64,7 @@ Usage: ./control.sh <command>
 Core commands:
   clean           Remove workspace build artifacts
   build           Clean and rebuild workspace with colcon
-  source_ws       Source /opt/ros + install/setup.bash in this script context
+  source_ws       Source /opt/ros + install/local_setup.bash in this script context
   kill            Stop ROS 2 launch processes started by this repo
 
 UR10 ROS2 container commands:
@@ -110,7 +110,7 @@ EOF
 source_ws() {
     source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
     source /opt/vendor_ws/install/setup.bash 2>/dev/null
-    source install/setup.bash 2>/dev/null
+    source install/local_setup.bash 2>/dev/null
 }
 
 reset_workspace_prefix_env() {
@@ -178,7 +178,7 @@ build() {
         return 1
     fi
 
-    source install/setup.bash 2>/dev/null
+    source install/local_setup.bash 2>/dev/null
     echo "---[ build complete ]---"
 }
 

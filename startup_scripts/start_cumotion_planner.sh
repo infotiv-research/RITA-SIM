@@ -157,11 +157,11 @@ if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
 else
   log "WARNING: /opt/ros/${ROS_DISTRO}/setup.bash not found"
 fi
-if [ -f "${USER_WS}/install/setup.bash" ]; then
-  source "${USER_WS}/install/setup.bash"
-  log "Sourced ${USER_WS}/install/setup.bash"
+if [ -f "${USER_WS}/install/local_setup.bash" ]; then
+  source "${USER_WS}/install/local_setup.bash"
+  log "Sourced ${USER_WS}/install/local_setup.bash"
 else
-  log "Workspace overlay not found at ${USER_WS}/install/setup.bash (this can be normal on first run)"
+  log "Workspace overlay not found at ${USER_WS}/install/local_setup.bash (this can be normal on first run)"
 fi
 set -u
 

@@ -38,6 +38,13 @@ class RobotModelManager:
         self._ops_dtype = torch.float32
         self._device = torch.device('cuda')
 
+    @staticmethod
+    def _resolve_kinematics_config(target):
+        """Return a KinematicsTensorConfig from a robot model or config-like object."""
+        if target is None:
+            return None
+        return getattr(target, "kinematics_config", target)
+
     def get_kinematics_state(self, joint_positions):
         """
         Compute the kinematics state from joint positions.
@@ -80,13 +87,19 @@ class RobotModelManager:
         """
         Enable or disable collision spheres for a list of links.
 
-        Modifies link_spheres in-place on the shared KinematicsTensorConfig,
-        so the change is immediately visible to all solvers (MotionGen, MPC).
-
         Returns:
             Tuple[List[str], List[str]]: (applied_links, unknown_links)
         """
-        kc = self.kin_model.kinematics_config
+        return self.set_link_collision_on_target(self.kin_model, link_names, enabled)
+
+    def set_link_collision_on_target(
+        self, target, link_names: List[str], enabled: bool
+    ) -> Tuple[List[str], List[str]]:
+        """Apply link collision toggles to any kinematics-bearing target."""
+        kc = self._resolve_kinematics_config(target)
+        if kc is None or not hasattr(kc, "link_name_to_idx_map"):
+            return [], list(link_names)
+
         applied, unknown = [], []
         for link in link_names:
             if link not in kc.link_name_to_idx_map:
@@ -107,9 +120,9 @@ class RobotModelManager:
         """
         ROS service callback — enable or disable collision spheres for a list of links.
 
-        All solvers (MotionGen, MPC) share the same KinematicsTensorConfig, so a
-        single in-place modification affects every active solver simultaneously.
-        The state persists until an explicit call with the opposite value.
+        The service first updates RobotModelManager's kinematics, then asks the
+        unified planner node to mirror the change into robot_cfg and any active
+        solver instances.
         """
         applied, unknown = self.set_link_collision(list(request.link_names), request.enabled)
 
@@ -126,6 +139,20 @@ class RobotModelManager:
 
         if applied:
             state = "enabled" if request.enabled else "disabled"
+            propagation_ok = True
+            propagation_message = ""
+            if self.node and hasattr(self.node, "propagate_link_collision_state"):
+                propagation_ok, propagation_message = self.node.propagate_link_collision_state(
+                    applied,
+                    request.enabled,
+                )
+                if not propagation_ok:
+                    response.success = False
+                    response.message = (
+                        f"Collision {state} for {applied}; "
+                        f"solver propagation failed: {propagation_message}"
+                    )
+                    return response
             if self.node:
                 self.node.get_logger().info(f"Collision spheres {state} for: {applied}")
             response.success = True
@@ -162,7 +189,13 @@ class RobotModelManager:
         Returns:
             (success: bool, message: str, sphere_count: int)
         """
-        kc = self.kin_model.kinematics_config
+        return self.attach_object_to_target(self.kin_model, link_name, sphere_data)
+
+    def attach_object_to_target(self, target, link_name, sphere_data):
+        """Attach collision spheres to any kinematics-bearing target."""
+        kc = self._resolve_kinematics_config(target)
+        if kc is None or not hasattr(kc, "link_name_to_idx_map"):
+            return False, "Target does not expose a cuRobo kinematics_config", 0
         if link_name not in kc.link_name_to_idx_map:
             return False, f"Unknown link: {link_name}", 0
 
@@ -170,14 +203,14 @@ class RobotModelManager:
         if n_spheres == 0:
             return False, "No sphere data provided", 0
 
-        # Get the current sphere slots for this link
         current = kc.get_link_spheres(link_name)
         max_slots = current.shape[0]
 
-        # Build [N, 4] tensor, padding unused slots with radius=-100
-        import torch
         sphere_tensor = torch.full(
-            (max_slots, 4), -100.0, dtype=self._ops_dtype, device=self._device
+            (max_slots, 4),
+            -100.0,
+            dtype=current.dtype,
+            device=current.device,
         )
         sphere_tensor[:, :3] = 0.0
         actual = min(n_spheres, max_slots)
@@ -206,7 +239,13 @@ class RobotModelManager:
         Returns:
             (success: bool, message: str)
         """
-        kc = self.kin_model.kinematics_config
+        return self.detach_object_from_target(self.kin_model, link_name)
+
+    def detach_object_from_target(self, target, link_name):
+        """Detach collision spheres from any kinematics-bearing target."""
+        kc = self._resolve_kinematics_config(target)
+        if kc is None or not hasattr(kc, "link_name_to_idx_map"):
+            return False, "Target does not expose a cuRobo kinematics_config"
         if link_name not in kc.link_name_to_idx_map:
             return False, f"Unknown link: {link_name}"
 
@@ -225,19 +264,41 @@ class RobotModelManager:
             response.success = success
             response.message = message
             response.sphere_count = sphere_count
+            if success and self.node and hasattr(self.node, "propagate_attached_object_state"):
+                propagation_ok, propagation_message = self.node.propagate_attached_object_state(
+                    link_name,
+                    list(request.sphere_data),
+                    attach=True,
+                )
+                if not propagation_ok:
+                    response.success = False
+                    response.message = (
+                        f"{message}; solver propagation failed: {propagation_message}"
+                    )
             if self.node:
-                if success:
-                    self.node.get_logger().info(message)
+                if response.success:
+                    self.node.get_logger().info(response.message)
                 else:
-                    self.node.get_logger().error(message)
+                    self.node.get_logger().error(response.message)
         else:
             success, message = self.detach_object(link_name)
             response.success = success
             response.message = message
             response.sphere_count = 0
+            if success and self.node and hasattr(self.node, "propagate_attached_object_state"):
+                propagation_ok, propagation_message = self.node.propagate_attached_object_state(
+                    link_name,
+                    [],
+                    attach=False,
+                )
+                if not propagation_ok:
+                    response.success = False
+                    response.message = (
+                        f"{message}; solver propagation failed: {propagation_message}"
+                    )
             if self.node:
-                if success:
-                    self.node.get_logger().info(message)
+                if response.success:
+                    self.node.get_logger().info(response.message)
                 else:
-                    self.node.get_logger().error(message)
+                    self.node.get_logger().error(response.message)
         return response

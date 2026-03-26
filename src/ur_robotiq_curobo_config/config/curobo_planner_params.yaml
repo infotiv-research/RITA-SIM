@@ -3,9 +3,9 @@
     planner_type: classic
     max_attempts: 12
     timeout: 15.0
-    time_dilation_factor: 0.4
+    time_dilation_factor: 0.5
     voxel_size: 0.05
-    collision_activation_distance: 0.005
+    collision_activation_distance: 0.04
     trajopt_tsteps: 32
     use_cuda_graph: true
     num_trajopt_seeds: 12
@@ -44,7 +44,9 @@
     # MPC tuning
     convergence_threshold: 0.02
     mpc_position_convergence_threshold: 0.01
-    mpc_rotation_convergence_threshold: 0.05
+    mpc_rotation_convergence_threshold: 0.1
+    mpc_classic_handoff_enabled: true
+    mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
     mpc_horizon_steps: 40
     mpc_command_speed_scale: 0.6

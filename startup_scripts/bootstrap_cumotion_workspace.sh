@@ -40,8 +40,8 @@ fi
 
 set +u
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
-if [ -f "${USER_WS}/install/setup.bash" ]; then
-  source "${USER_WS}/install/setup.bash"
+if [ -f "${USER_WS}/install/local_setup.bash" ]; then
+  source "${USER_WS}/install/local_setup.bash"
 fi
 set -u
 
@@ -99,9 +99,9 @@ if [ "${#packages_to_build[@]}" -gt 0 ]; then
   )
 fi
 
-if [ -f "${USER_WS}/install/setup.bash" ]; then
+if [ -f "${USER_WS}/install/local_setup.bash" ]; then
   set +u
-  source "${USER_WS}/install/setup.bash"
+  source "${USER_WS}/install/local_setup.bash"
   set -u
 fi
 

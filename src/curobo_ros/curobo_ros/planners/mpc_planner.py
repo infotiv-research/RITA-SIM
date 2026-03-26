@@ -19,6 +19,7 @@ from curobo_ros.core.controller_trajectory import extract_ordered_waypoints
 
 
 from curobo_msgs.action import SendTrajectory
+from curobo_msgs.srv import TrajectoryGeneration
 
 class MPCPlanner(TrajectoryPlanner):
     """
@@ -64,6 +65,9 @@ class MPCPlanner(TrajectoryPlanner):
         self.applied_goal_update_count = 0
         self.ignored_goal_update_count = 0
         self.last_goal_topic_raw = None
+        self.trajectory_constraints = []
+        self._classic_handoff_requested = False
+        self._classic_handoff_metadata = None
 
         # MPC parameters
         self.convergence_threshold = 0.01  # meters
@@ -144,6 +148,11 @@ class MPCPlanner(TrajectoryPlanner):
         self.applied_goal_update_count = 0
         self.ignored_goal_update_count = 0
         self.last_goal_topic_raw = goal_pose.tolist(q_xyzw=True)
+        self.trajectory_constraints = list(
+            getattr(goal_request, 'trajectory_constraints', []) or []
+        )
+        self._classic_handoff_requested = False
+        self._classic_handoff_metadata = None
 
         # Extract config
         self.convergence_threshold = config.get('convergence_threshold', 0.01)
@@ -255,6 +264,52 @@ class MPCPlanner(TrajectoryPlanner):
         except Exception as e:
             self.node.get_logger().error(f"Failed to update MPC goal: {e}")
             return False
+
+    def build_classic_handoff_request(self):
+        """Build a single-pose MotionGen request from the latest MPC goal pose."""
+        if self.goal_pose is None and self.latest_goal_from_topic is None:
+            return None
+
+        request = TrajectoryGeneration.Request()
+        goal_values = (
+            list(self.latest_goal_from_topic)
+            if self.latest_goal_from_topic is not None
+            else self.goal_pose.tolist(q_xyzw=True)
+        )
+
+        request.target_pose.position.x = float(goal_values[0])
+        request.target_pose.position.y = float(goal_values[1])
+        request.target_pose.position.z = float(goal_values[2])
+        request.target_pose.orientation.x = float(goal_values[3])
+        request.target_pose.orientation.y = float(goal_values[4])
+        request.target_pose.orientation.z = float(goal_values[5])
+        request.target_pose.orientation.w = float(goal_values[6])
+
+        if self.trajectory_constraints:
+            request.trajectory_constraints = list(self.trajectory_constraints)
+
+        return request
+
+    def _request_classic_handoff(self, position_error, rotation_error, step_index):
+        """Record a near-goal fallback request for a final classic plan."""
+        self._classic_handoff_requested = True
+        self._classic_handoff_metadata = {
+            'step_index': int(step_index),
+            'position_error': float(position_error),
+            'rotation_error': float(rotation_error),
+        }
+        self.node.get_logger().info(
+            "MPC requested classic finisher handoff at "
+            f"step={step_index}, position_error={float(position_error):.4f}m, "
+            f"rotation_error={float(rotation_error):.4f}rad"
+        )
+
+    def consume_classic_handoff_request(self):
+        """Return and clear any pending MPC -> classic handoff request."""
+        metadata = self._classic_handoff_metadata if self._classic_handoff_requested else None
+        self._classic_handoff_requested = False
+        self._classic_handoff_metadata = None
+        return metadata
 
     @staticmethod
     def _metric_scalar(value):
@@ -368,6 +423,8 @@ class MPCPlanner(TrajectoryPlanner):
             converged = False
             tstep = 0
             self.mpc_time = []
+            self._classic_handoff_requested = False
+            self._classic_handoff_metadata = None
             execution_interface = getattr(
                 self.node,
                 "get_mpc_execution_interface",
@@ -385,6 +442,13 @@ class MPCPlanner(TrajectoryPlanner):
             stream_publish_count = 0
             infeasible_streak = 0
             divergence_warned = False
+            classic_handoff_enabled = bool(
+                self.node.get_parameter('mpc_classic_handoff_enabled').value
+            )
+            classic_handoff_distance = max(
+                float(self.node.get_parameter('mpc_classic_handoff_distance').value),
+                0.0,
+            )
 
             self.node.get_logger().info("Starting MPC execution loop")
             if not stream_mode:
@@ -404,6 +468,8 @@ class MPCPlanner(TrajectoryPlanner):
                     f"step_max_attempts={step_max_attempts}",
                     f"position_threshold={self.position_convergence_threshold:.4f}",
                     f"rotation_threshold={self.rotation_convergence_threshold:.4f}",
+                    f"classic_handoff_enabled={classic_handoff_enabled}",
+                    f"classic_handoff_distance={classic_handoff_distance:.4f}",
                     f"max_iterations={self.max_iterations}",
                 ])
             )
@@ -642,6 +708,19 @@ class MPCPlanner(TrajectoryPlanner):
                         f"{tstep} with position_error={position_error:.4f}m "
                         f"and rotation_error={rotation_error:.4f}rad"
                     )
+                elif (
+                    classic_handoff_enabled
+                    and position_error is not None
+                    and rotation_error is not None
+                    and position_error <= classic_handoff_distance
+                    and rotation_error <= self.rotation_convergence_threshold
+                ):
+                    self._request_classic_handoff(
+                        position_error=position_error,
+                        rotation_error=rotation_error,
+                        step_index=tstep,
+                    )
+                    break
 
                 remaining_time = controller_dt - (time.monotonic() - loop_started_at)
                 if remaining_time > 0.0:
@@ -675,6 +754,7 @@ class MPCPlanner(TrajectoryPlanner):
                     f"final_pose_error={(pose_error if 'pose_error' in locals() else float('nan')):.5f}",
                     f"final_position_error={(position_error if 'position_error' in locals() and position_error is not None else float('nan')):.5f}",
                     f"final_rotation_error={(rotation_error if 'rotation_error' in locals() and rotation_error is not None else float('nan')):.5f}",
+                    f"classic_handoff_requested={self._classic_handoff_requested}",
                     f"stream_publishes={stream_publish_count}",
                     f"goal_updates_rx={self.received_goal_update_count}",
                     f"goal_updates_applied={self.applied_goal_update_count}",
@@ -687,6 +767,10 @@ class MPCPlanner(TrajectoryPlanner):
                     self.node.get_controller_joint_names(),
                     actual_joint_state['position'] if 'actual_joint_state' in locals() else self.start_state.position[0].detach().cpu().tolist(),
                 )
+                if self._classic_handoff_requested:
+                    self.node.get_logger().info(
+                        "MPC stopped streaming and is waiting for the classic finishing plan."
+                    )
             return converged
 
         except Exception as e:
