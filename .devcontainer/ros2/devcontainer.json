@@ -4,6 +4,7 @@
   "service": "ros2",
   "workspaceFolder": "/ros2_ws",
   "overrideCommand": false,
+  "updateRemoteUserUID": false,
   "postCreateCommand": "./.devcontainer/ros2/setup_rosdep.sh",
   "settings": {
     "terminal.integrated.defaultProfile.linux": "bash"
