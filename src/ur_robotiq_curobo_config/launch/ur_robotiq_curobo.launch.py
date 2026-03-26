@@ -258,6 +258,52 @@ def launch_setup(context, *args, **kwargs):
     with open(runtime_urdf_path, "r", encoding="utf-8") as handle:
         runtime_urdf_content = handle.read()
 
+    max_attempts = int(planner_defaults.get("max_attempts", 12))
+    timeout = float(planner_defaults.get("timeout", 15.0))
+    time_dilation_factor = float(planner_defaults.get("time_dilation_factor", 0.4))
+    voxel_size = float(planner_defaults.get("voxel_size", 0.05))
+    collision_activation_distance = float(
+        planner_defaults.get("collision_activation_distance", 0.005)
+    )
+    environment_publish_rate_hz = float(planner_defaults.get("environment_publish_rate_hz", 30.0))
+    environment_startup_delay_sec = float(planner_defaults.get("environment_startup_delay_sec", 3.0))
+    environment_collision_padding = float(planner_defaults.get("environment_collision_padding", 0.0))
+    environment_pose_position_tolerance_m = float(
+        planner_defaults.get("environment_pose_position_tolerance_m", 0.002)
+    )
+    environment_pose_orientation_tolerance_rad = float(
+        planner_defaults.get("environment_pose_orientation_tolerance_rad", 0.02)
+    )
+    environment_dimensions_tolerance_m = float(
+        planner_defaults.get("environment_dimensions_tolerance_m", 0.001)
+    )
+    visualize_collision_world = bool(planner_defaults.get("visualize_collision_world", True))
+    visualize_robot_collision_spheres = bool(
+        planner_defaults.get("visualize_robot_collision_spheres", True)
+    )
+    robot_collision_sphere_alpha = float(planner_defaults.get("robot_collision_sphere_alpha", 0.5))
+    robot_collision_sphere_rate_hz = float(planner_defaults.get("robot_collision_sphere_rate_hz", 10.0))
+    collision_marker_alpha = float(planner_defaults.get("collision_marker_alpha", 0.22))
+    curobo_world_mesh_as_cuboid = bool(planner_defaults.get("curobo_world_mesh_as_cuboid", True))
+    curobo_world_max_mesh_geometries_per_object = int(
+        planner_defaults.get("curobo_world_max_mesh_geometries_per_object", 5)
+    )
+    curobo_world_max_concurrent_adds = int(
+        planner_defaults.get("curobo_world_max_concurrent_adds", 8)
+    )
+    curobo_world_use_move_updates = bool(
+        planner_defaults.get("curobo_world_use_move_updates", True)
+    )
+    curobo_world_max_move_batch_size = int(
+        planner_defaults.get("curobo_world_max_move_batch_size", 128)
+    )
+    curobo_configure_collision_cache = bool(
+        planner_defaults.get("curobo_configure_collision_cache", False)
+    )
+    curobo_collision_cache_obb = int(planner_defaults.get("curobo_collision_cache_obb", 100))
+    curobo_collision_cache_mesh = int(planner_defaults.get("curobo_collision_cache_mesh", 10))
+    curobo_collision_cache_blox = int(planner_defaults.get("curobo_collision_cache_blox", 10))
+
     live_robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -339,15 +385,11 @@ def launch_setup(context, *args, **kwargs):
         arguments=["-d", rviz_config],
         parameters=[
             {
-                "max_attempts": int(planner_defaults.get("max_attempts", 12)),
-                "timeout": float(planner_defaults.get("timeout", 15.0)),
-                "time_dilation_factor": float(
-                    planner_defaults.get("time_dilation_factor", 0.4)
-                ),
-                "voxel_size": float(planner_defaults.get("voxel_size", 0.05)),
-                "collision_activation_distance": float(
-                    planner_defaults.get("collision_activation_distance", 0.005)
-                ),
+                "max_attempts": max_attempts,
+                "timeout": timeout,
+                "time_dilation_factor": time_dilation_factor,
+                "voxel_size": voxel_size,
+                "collision_activation_distance": collision_activation_distance,
                 "base_link": "gantry_base_link",
                 "tool_frame": "TCP_point",
                 "controller_action_name": "/joint_trajectory_controller/follow_joint_trajectory",
@@ -368,35 +410,21 @@ def launch_setup(context, *args, **kwargs):
             {
                 "assets_root": LaunchConfiguration("assets_root"),
                 "world_frame": LaunchConfiguration("world_frame"),
-                "publish_rate_hz": LaunchConfiguration("environment_publish_rate_hz"),
-                "startup_delay_sec": LaunchConfiguration("environment_startup_delay_sec"),
-                "environment_collision_padding": LaunchConfiguration("environment_collision_padding"),
+                "publish_rate_hz": environment_publish_rate_hz,
+                "startup_delay_sec": environment_startup_delay_sec,
+                "environment_collision_padding": environment_collision_padding,
                 "exclude_collision_objects": LaunchConfiguration("exclude_collision_objects"),
-                "mesh_as_cuboid": LaunchConfiguration("curobo_world_mesh_as_cuboid"),
-                "max_mesh_geometries_per_object": LaunchConfiguration(
-                    "curobo_world_max_mesh_geometries_per_object"
-                ),
-                "max_concurrent_adds": LaunchConfiguration(
-                    "curobo_world_max_concurrent_adds"
-                ),
-                "use_move_updates": LaunchConfiguration("curobo_world_use_move_updates"),
-                "max_move_batch_size": LaunchConfiguration(
-                    "curobo_world_max_move_batch_size"
-                ),
-                "publish_collision_markers": LaunchConfiguration(
-                    "visualize_collision_world"
-                ),
+                "mesh_as_cuboid": curobo_world_mesh_as_cuboid,
+                "max_mesh_geometries_per_object": curobo_world_max_mesh_geometries_per_object,
+                "max_concurrent_adds": curobo_world_max_concurrent_adds,
+                "use_move_updates": curobo_world_use_move_updates,
+                "max_move_batch_size": curobo_world_max_move_batch_size,
+                "publish_collision_markers": visualize_collision_world,
                 "collision_marker_topic": LaunchConfiguration("collision_marker_topic"),
-                "collision_marker_alpha": LaunchConfiguration("collision_marker_alpha"),
-                "pose_position_tolerance_m": LaunchConfiguration(
-                    "environment_pose_position_tolerance_m"
-                ),
-                "pose_orientation_tolerance_rad": LaunchConfiguration(
-                    "environment_pose_orientation_tolerance_rad"
-                ),
-                "dimensions_tolerance_m": LaunchConfiguration(
-                    "environment_dimensions_tolerance_m"
-                ),
+                "collision_marker_alpha": collision_marker_alpha,
+                "pose_position_tolerance_m": environment_pose_position_tolerance_m,
+                "pose_orientation_tolerance_rad": environment_pose_orientation_tolerance_rad,
+                "dimensions_tolerance_m": environment_dimensions_tolerance_m,
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
@@ -408,12 +436,12 @@ def launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[
             {
-                "obb_cache": LaunchConfiguration("curobo_collision_cache_obb"),
-                "mesh_cache": LaunchConfiguration("curobo_collision_cache_mesh"),
-                "blox_cache": LaunchConfiguration("curobo_collision_cache_blox"),
+                "obb_cache": curobo_collision_cache_obb,
+                "mesh_cache": curobo_collision_cache_mesh,
+                "blox_cache": curobo_collision_cache_blox,
             }
         ],
-        condition=IfCondition(LaunchConfiguration("curobo_configure_collision_cache")),
+        condition=IfCondition(str(curobo_configure_collision_cache).lower()),
     )
 
     live_collision_spheres = Node(
@@ -427,11 +455,11 @@ def launch_setup(context, *args, **kwargs):
                 "joint_names": arm_joint_names,
                 "base_link": "gantry_base_link",
                 "marker_topic": LaunchConfiguration("robot_collision_sphere_topic"),
-                "marker_alpha": LaunchConfiguration("robot_collision_sphere_alpha"),
-                "publish_rate_hz": LaunchConfiguration("robot_collision_sphere_rate_hz"),
+                "marker_alpha": robot_collision_sphere_alpha,
+                "publish_rate_hz": robot_collision_sphere_rate_hz,
             }
         ],
-        condition=IfCondition(LaunchConfiguration("visualize_robot_collision_spheres")),
+        condition=IfCondition(str(visualize_robot_collision_spheres).lower()),
     )
 
     return [
@@ -487,30 +515,14 @@ def generate_launch_description():
             DeclareLaunchArgument("environment_dimensions_tolerance_m", default_value="0.001"),
             DeclareLaunchArgument("gripper_collision_buffer", default_value="0.0"),
             DeclareLaunchArgument("exclude_collision_objects", default_value="robot_arm_beam"),
-            DeclareLaunchArgument("visualize_collision_world", default_value="true"),
-            DeclareLaunchArgument("visualize_robot_collision_spheres", default_value="true"),
             DeclareLaunchArgument(
                 "robot_collision_sphere_topic",
                 default_value="/curobo_live_collision_spheres",
             ),
-            DeclareLaunchArgument("robot_collision_sphere_alpha", default_value="0.5"),
-            DeclareLaunchArgument("robot_collision_sphere_rate_hz", default_value="10.0"),
             DeclareLaunchArgument(
                 "collision_marker_topic",
                 default_value="/curobo_world_collision_markers",
             ),
-            DeclareLaunchArgument("collision_marker_alpha", default_value="0.22"),
-            DeclareLaunchArgument("curobo_world_mesh_as_cuboid", default_value="true"),
-            DeclareLaunchArgument(
-                "curobo_world_max_mesh_geometries_per_object", default_value="5"
-            ),
-            DeclareLaunchArgument("curobo_world_max_concurrent_adds", default_value="8"),
-            DeclareLaunchArgument("curobo_world_use_move_updates", default_value="true"),
-            DeclareLaunchArgument("curobo_world_max_move_batch_size", default_value="128"),
-            DeclareLaunchArgument("curobo_configure_collision_cache", default_value="false"),
-            DeclareLaunchArgument("curobo_collision_cache_obb", default_value="100"),
-            DeclareLaunchArgument("curobo_collision_cache_mesh", default_value="10"),
-            DeclareLaunchArgument("curobo_collision_cache_blox", default_value="10"),
             OpaqueFunction(function=launch_setup),
         ]
     )

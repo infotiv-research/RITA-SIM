@@ -75,22 +75,36 @@ class ConfigWrapperMotion(ConfigWrapper):
 
     def __init__(self, node, robot):
         super().__init__(node, robot)
-        # TODO Have these values be able to be overwritten in a launch file
         # Motion generation parameters
-        self.trajopt_tsteps = 32
+        node.declare_parameter('trajopt_tsteps', 32)
         # Note: collision_checker_type and collision_cache are now managed by ObstacleManager
         # Default is CollisionCheckerType.BLOX, can be changed via property setter
-        self.use_cuda_graph = True
-        self.num_trajopt_seeds = 12 
-        self.num_graph_seeds = 12
-        self.interpolation_dt = 0.03
-        self.acceleration_scale = 1.0
-        self.self_collision_check = True
-        self.maximum_trajectory_dt = 0.25
-        self.finetune_dt_scale = 1.05
-        self.fixed_iters_trajopt = True
-        self.finetune_trajopt_iters = 300
-        self.minimize_jerk = True
+        node.declare_parameter('use_cuda_graph', True)
+        node.declare_parameter('num_trajopt_seeds', 12)
+        node.declare_parameter('num_graph_seeds', 12)
+        node.declare_parameter('interpolation_steps', 10000)
+        node.declare_parameter('interpolation_dt', 0.03)
+        node.declare_parameter('acceleration_scale', 1.0)
+        node.declare_parameter('self_collision_check', True)
+        node.declare_parameter('maximum_trajectory_dt', 0.25)
+        node.declare_parameter('finetune_dt_scale', 1.05)
+        node.declare_parameter('fixed_iters_trajopt', True)
+        node.declare_parameter('finetune_trajopt_iters', 300)
+        node.declare_parameter('minimize_jerk', True)
+
+        self.trajopt_tsteps = int(node.get_parameter('trajopt_tsteps').value)
+        self.use_cuda_graph = bool(node.get_parameter('use_cuda_graph').value)
+        self.num_trajopt_seeds = int(node.get_parameter('num_trajopt_seeds').value)
+        self.num_graph_seeds = int(node.get_parameter('num_graph_seeds').value)
+        self.interpolation_steps = int(node.get_parameter('interpolation_steps').value)
+        self.interpolation_dt = float(node.get_parameter('interpolation_dt').value)
+        self.acceleration_scale = float(node.get_parameter('acceleration_scale').value)
+        self.self_collision_check = bool(node.get_parameter('self_collision_check').value)
+        self.maximum_trajectory_dt = float(node.get_parameter('maximum_trajectory_dt').value)
+        self.finetune_dt_scale = float(node.get_parameter('finetune_dt_scale').value)
+        self.fixed_iters_trajopt = bool(node.get_parameter('fixed_iters_trajopt').value)
+        self.finetune_trajopt_iters = int(node.get_parameter('finetune_trajopt_iters').value)
+        self.minimize_jerk = bool(node.get_parameter('minimize_jerk').value)
 
 
         # Declare parameters for camera configuration
@@ -120,6 +134,20 @@ class ConfigWrapperMotion(ConfigWrapper):
         # Get world_cfg from ObstacleManager (single source of truth)
         world_cfg = self.obstacle_manager.get_world_cfg()
 
+        self.trajopt_tsteps = int(node.get_parameter('trajopt_tsteps').value)
+        self.use_cuda_graph = bool(node.get_parameter('use_cuda_graph').value)
+        self.num_trajopt_seeds = int(node.get_parameter('num_trajopt_seeds').value)
+        self.num_graph_seeds = int(node.get_parameter('num_graph_seeds').value)
+        self.interpolation_steps = int(node.get_parameter('interpolation_steps').value)
+        self.interpolation_dt = float(node.get_parameter('interpolation_dt').value)
+        self.acceleration_scale = float(node.get_parameter('acceleration_scale').value)
+        self.self_collision_check = bool(node.get_parameter('self_collision_check').value)
+        self.maximum_trajectory_dt = float(node.get_parameter('maximum_trajectory_dt').value)
+        self.finetune_dt_scale = float(node.get_parameter('finetune_dt_scale').value)
+        self.fixed_iters_trajopt = bool(node.get_parameter('fixed_iters_trajopt').value)
+        self.finetune_trajopt_iters = int(node.get_parameter('finetune_trajopt_iters').value)
+        self.minimize_jerk = bool(node.get_parameter('minimize_jerk').value)
+
         # Set the motion generation configuration with the values stored in this wrapper and the node
         motion_gen_config = MotionGenConfig.load_from_robot_config(
             self.robot_cfg,
@@ -132,7 +160,7 @@ class ConfigWrapperMotion(ConfigWrapper):
             use_cuda_graph=self.use_cuda_graph,
             num_trajopt_seeds=self.num_trajopt_seeds,
             num_graph_seeds=self.num_graph_seeds,
-            interpolation_steps = 10000,
+            interpolation_steps=self.interpolation_steps,
             # interpolation_dt=node.get_parameter(
                 # 'time_dilation_factor').get_parameter_value().double_value,
             collision_activation_distance=node.get_parameter(
