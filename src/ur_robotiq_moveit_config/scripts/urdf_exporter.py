@@ -8,7 +8,7 @@ class UrdfExporter(BehaviorScript):
 
     def sync_urdf_exports(self):
         OUT = "/ros2_ws/assets/isaac_urdf_exports"
-        SKIP = {"Looks", "PhysicsScene"}
+        SKIP = {"Looks", "PhysicsScene", "thor_table"}
         
         stage = self.stage
         layer = stage.GetRootLayer()

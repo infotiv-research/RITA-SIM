@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="thor_table">
+  <link name="thor_table">
+    <!-- Single collision box covering the entire table -->
+    <collision>
+      <origin xyz="0.1922 -0.0013 -0.2914" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.7177 0.5859 0.5567"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

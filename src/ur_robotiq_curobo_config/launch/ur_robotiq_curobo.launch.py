@@ -410,6 +410,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[
             {
                 "assets_root": LaunchConfiguration("assets_root"),
+                "static_assets_root": LaunchConfiguration("static_assets_root"),
                 "world_frame": LaunchConfiguration("world_frame"),
                 "publish_rate_hz": environment_publish_rate_hz,
                 "startup_delay_sec": environment_startup_delay_sec,
@@ -489,6 +490,17 @@ def generate_launch_description():
             "isaac_urdf_exports",
         )
     )
+    default_static_assets_root = os.path.abspath(
+        os.path.join(
+            get_package_share_directory("ur_robotiq_moveit_config"),
+            "..",
+            "..",
+            "..",
+            "..",
+            "assets",
+            "static_collisions",
+        )
+    )
     default_planner_params = os.path.join(
         get_package_share_directory("ur_robotiq_curobo_config"),
         "config",
@@ -502,6 +514,7 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_rviz", default_value="true"),
             DeclareLaunchArgument("world_frame", default_value="world"),
             DeclareLaunchArgument("assets_root", default_value=default_assets_root),
+            DeclareLaunchArgument("static_assets_root", default_value=default_static_assets_root),
             DeclareLaunchArgument(
                 "planner_params_file",
                 default_value=default_planner_params,
