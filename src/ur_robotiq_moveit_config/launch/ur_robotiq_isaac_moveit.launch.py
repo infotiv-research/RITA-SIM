@@ -161,6 +161,7 @@ def launch_setup(context, *args, **kwargs):
     environment_collision_padding = LaunchConfiguration("environment_collision_padding")
     exclude_collision_objects = LaunchConfiguration("exclude_collision_objects")
     simlan_assets_root = LaunchConfiguration("simlan_assets_root")
+    static_assets_root = LaunchConfiguration("static_assets_root")
 
     # Packages / files
     ur_description_package = "ur_description"
@@ -408,6 +409,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[
             {
                 "assets_root": simlan_assets_root,
+                "static_assets_root": static_assets_root,
                 "world_frame": environment_collision_world_frame,
                 "publish_rate_hz": environment_collision_publish_rate_hz,
                 "environment_collision_padding": environment_collision_padding,
@@ -494,6 +496,18 @@ def generate_launch_description():
             "..",
             "assets",
             "isaac_urdf_exports",
+        )
+    )
+
+    default_static_assets_root = os.path.abspath(
+        os.path.join(
+            get_package_share_directory("ur_robotiq_moveit_config"),
+            "..",
+            "..",
+            "..",
+            "..",
+            "assets",
+            "static_collisions",
         )
     )
 
@@ -655,6 +669,11 @@ def generate_launch_description():
             "simlan_assets_root",
             default_value=default_simlan_assets_root,
             description="Path to assets/isaac_urdf_exports directory containing exported URDF models.",
+        ),
+        DeclareLaunchArgument(
+            "static_assets_root",
+            default_value=default_static_assets_root,
+            description="Path to assets/static_collisions directory containing hand-maintained URDF collision models.",
         ),
 
         # Xbox / joy

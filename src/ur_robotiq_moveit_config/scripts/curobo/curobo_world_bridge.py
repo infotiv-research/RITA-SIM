@@ -74,6 +74,8 @@ class IsaacCuroboWorldBridge(Node):
         self.assets_root = os.path.abspath(
             str(self.declare_parameter("assets_root", "assets/isaac_urdf_exports").value)
         )
+        static_assets = str(self.declare_parameter("static_assets_root", "").value)
+        self.static_assets_root = os.path.abspath(static_assets) if static_assets else ""
         self.world_frame = str(self.declare_parameter("world_frame", "world").value)
         self.publish_rate_hz = float(self.declare_parameter("publish_rate_hz", 2.0).value)
         self.startup_delay_sec = float(self.declare_parameter("startup_delay_sec", 3.0).value)
@@ -165,9 +167,12 @@ class IsaacCuroboWorldBridge(Node):
         self._published_marker_specs = {}
         self._warned_missing_move_service = False
         self.load_collision_geometry()
+        sources = [self.assets_root]
+        if self.static_assets_root:
+            sources.append(self.static_assets_root)
         self.get_logger().info(
             f"Loaded curobo environment bridge assets: {len(self.objects)} frames, "
-            f"{self._loaded_spec_count} collision geometries from '{self.assets_root}'."
+            f"{self._loaded_spec_count} collision geometries from {sources}."
         )
 
         clamped_rate = max(0.1, self.publish_rate_hz)
@@ -345,17 +350,25 @@ class IsaacCuroboWorldBridge(Node):
         }
 
     def load_collision_geometry(self):
-        if not os.path.isdir(self.assets_root):
-            self.get_logger().warn(
-                f"Assets root does not exist or is not a directory: {self.assets_root}"
-            )
-            return
+        scan_dirs = [self.assets_root]
+        if self.static_assets_root and os.path.isdir(self.static_assets_root):
+            scan_dirs.append(self.static_assets_root)
 
-        for obj_folder in sorted(os.listdir(self.assets_root)):
+        for assets_dir in scan_dirs:
+            if not os.path.isdir(assets_dir):
+                self.get_logger().warn(
+                    f"Assets root does not exist or is not a directory: {assets_dir}"
+                )
+                continue
+            self._load_from_directory(assets_dir)
+
+    def _load_from_directory(self, assets_dir):
+        """Load collision geometry from a single directory of URDF folders."""
+        for obj_folder in sorted(os.listdir(assets_dir)):
             if obj_folder in self.excluded_ids:
                 continue
 
-            folder_path = os.path.join(self.assets_root, obj_folder)
+            folder_path = os.path.join(assets_dir, obj_folder)
             if not os.path.isdir(folder_path):
                 continue
 
