@@ -9,7 +9,7 @@ This repository has three components:
 
 [![SIMLAN demo](https://img.youtube.com/vi/LNKdTfKMO6s/0.jpg)](https://www.youtube.com/watch?v=LNKdTfKMO6s)
 
-## Prerequisites
+## Prerequisites and dependencies
 
 Follow the [instruction](https://github.com/infotiv-research/SIMLAN/blob/main/dependencies.md) to make sure your machine has:
 - Docker installed and working for your user account.
@@ -204,15 +204,6 @@ Team/Tech Lead: Hamid Ebadi
 
 The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted for this project 
 
-```
-License
-This project is licensed under the BSD 3-Clause License 
-Portions of the code are adapted from:
-- Universal Robots ROS 2 repositories (BSD-3-Clause)
-- Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
-- ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
-```
-
 
 This repository vendors the cuRobo ROS packages directly in `src/`:
 
@@ -231,3 +222,23 @@ RITA designs are Inspired by:
 - [Towards an infrastructure for preparation and control of intelligent automation systems](https://research.chalmers.se/publication/528129/file/528129_Fulltext.pdf)
 - [To Collaborate and Coexist with Robots in an Industrial Setting: UX-based design guidelines for cobots in Industry 4.0 and 5.0](https://www.diva-portal.org/smash/get/diva2:1882744/FULLTEXT01.pdf)
 - [Perceived Safety Aspects when Collaborating with Robots in the Manufacturing Industry: Applying an HTO Methodology](https://uu.diva-portal.org/smash/get/diva2:1863125/FULLTEXT01.pdf)
+
+
+This work was carried out within Artwork research projects:
+- The EUREKA ITEA4 [ArtWork](https://www.vinnova.se/p/artwork---the-smart-and-connected-worker/) - The smart and connected worker financed by Vinnova under the grant number 2023-00970.
+
+| INFOTIV AB                            | CHALMERS                               | Volvo Group                    |
+| ------------------------------------- |  -------------------------------------- | ------------------------------ |
+| ![](resources/logos/INFOTIV-logo.png) | ![](resources/logos/CHALMERS-logo.png) | ![](resources/logos/volvo.jpg) |
+
+
+To see a complete list of contributors see the [changelog](CHANGELOG.md).
+
+
+# License
+This project is licensed under the [BSD 3-Clause License](LICENSE.txt) 
+
+Portions of the code are adapted from:
+- Universal Robots ROS 2 repositories (BSD-3-Clause)
+- Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
+- ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
