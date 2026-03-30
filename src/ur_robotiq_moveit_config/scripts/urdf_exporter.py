@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 import io
 import os, re, shutil, time
 from pxr import Usd
@@ -6,7 +7,18 @@ from omni.kit.scripting import BehaviorScript
 
 class UrdfExporter(BehaviorScript):
     def on_init(self):
-        self.sync_urdf_exports()
+        self._export_completed = False
+        self._waiting_for_exporter = False
+        self._retry_after = 0.0
+        self._attempt_sync()
+
+    def on_play(self):
+        self._attempt_sync(force=True)
+
+    def on_update(self, current_time: float, delta_time: float):
+        if self._export_completed or time.monotonic() < self._retry_after:
+            return
+        self._attempt_sync()
 
     @staticmethod
     def _clean_converter_output(text):
@@ -45,7 +57,46 @@ class UrdfExporter(BehaviorScript):
         if verbose and output:
             print(f"[UsdToUrdf] {output}")
 
-    def sync_urdf_exports(self):
+    def _load_converter(self):
+        try:
+            module = importlib.import_module("nvidia.srl.from_usd.to_urdf")
+        except ModuleNotFoundError as exc:
+            if exc.name and exc.name.startswith("nvidia"):
+                return None
+            raise
+
+        for class_name in ("UsdToUrdf", "UsdToURDF"):
+            converter_cls = getattr(module, class_name, None)
+            if converter_cls is not None:
+                return converter_cls
+
+        raise AttributeError("nvidia.srl.from_usd.to_urdf is available, but no supported converter class was found")
+
+    def _attempt_sync(self, force=False):
+        if self._export_completed:
+            return
+        if not force and time.monotonic() < self._retry_after:
+            return
+
+        try:
+            converter_cls = self._load_converter()
+        except Exception as exc:
+            print(f"[ERROR] URDF exporter initialization failed: {exc}")
+            self._export_completed = True
+            return
+
+        if converter_cls is None:
+            if not self._waiting_for_exporter:
+                print("[WAIT] Isaac URDF exporter extension not ready yet. Retrying once it finishes loading.")
+                self._waiting_for_exporter = True
+            self._retry_after = time.monotonic() + 1.0
+            return
+
+        self._waiting_for_exporter = False
+        self.sync_urdf_exports(converter_cls)
+        self._export_completed = True
+
+    def sync_urdf_exports(self, converter_cls):
         OUT = "/ros2_ws/assets/isaac_urdf_exports"
         SKIP = {"Looks", "PhysicsScene", "thor_table"}
         
@@ -58,11 +109,6 @@ class UrdfExporter(BehaviorScript):
         
         USD_PATH = layer.realPath
         os.makedirs(OUT, exist_ok=True)
-
-        try:
-            from nvidia.srl.from_usd.to_urdf import UsdToUrdf as Conv
-        except Exception:
-            from nvidia.srl.from_usd.to_urdf import UsdToURDF as Conv
 
         world = stage.GetPrimAtPath("/World")
         if not world or not world.IsValid():
@@ -98,7 +144,7 @@ class UrdfExporter(BehaviorScript):
             s.GetRootLayer().Save()
 
             try:
-                self._run_converter(Conv, tmp_usd, out_urdf)
+                self._run_converter(converter_cls, tmp_usd, out_urdf)
                 print(f"[OK] Exported {name}")
                 exported_count += 1
             except Exception as e:

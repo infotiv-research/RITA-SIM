@@ -16,8 +16,19 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
       > /etc/apt/sources.list.d/ros2.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-jazzy-ros-base \
+      ros-jazzy-robot-state-publisher \
+      ros-jazzy-joint-state-publisher \
+      ros-jazzy-xacro \
+      python3-colcon-common-extensions \
+      python3-rosdep \
       build-essential git \
     && rm -rf /var/lib/apt/lists/*
+
+RUN rosdep init || true && rosdep update || true
+
+RUN printf '%s\n' '. /opt/ros/jazzy/setup.bash || true' > /etc/profile.d/ros2.sh
+RUN echo '. /opt/ros/jazzy/setup.bash || true' >> /root/.bashrc
 
 WORKDIR /root
 SHELL ["/bin/bash","-lc"]
