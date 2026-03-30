@@ -132,3 +132,11 @@ It is recomended by Isaac sim to have a GPU with 16gb vram. If you want to run i
       cumotion_num_graph_seeds_value=5
       cumotion_num_trajopt_seeds_value=5
 ```
+If you have two GPUs (2*8 gm), both isaac-sim and cumotion use the same GPU and you get this error message as well. You can fix it by specifying which GPU to be used as below:
+```
+CUDA_VISIBLE_DEVICES=1 ./control.sh cumotion
+```
+
+### [Error] [omni.kit.app._impl] [py stderr]
+
+Can be ignored
