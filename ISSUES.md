@@ -121,3 +121,14 @@ When running `./control.sh curobo` you might get the following error. Try to cha
 ### curobo_human_skeleton_collision_publisher.py not executed
 
 `chmod +x ./install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_human_skeleton_collision_publisher.py`
+
+
+
+### [cumotion_planner_upstream_framefix.py-6] torch.OutOfMemoryError: CUDA out of memory.
+
+It is recomended by Isaac sim to have a GPU with 16gb vram. If you want to run it on a 8gb, it may work with the following adjustment:
+
+```
+      cumotion_num_graph_seeds_value=5
+      cumotion_num_trajopt_seeds_value=5
+```

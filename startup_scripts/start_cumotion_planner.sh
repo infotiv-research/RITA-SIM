@@ -50,8 +50,8 @@ set_profile_params() {
       collision_cache_cuboid_value=70
       collision_cache_mesh_value=70
       cumotion_max_attempts_value=28
-      cumotion_num_graph_seeds_value=6
-      cumotion_num_trajopt_seeds_value=6
+      cumotion_num_graph_seeds_value=5
+      cumotion_num_trajopt_seeds_value=5
       cumotion_num_trajopt_time_steps_value=40
       cumotion_trajopt_finetune_iters_value=360
       cumotion_interpolation_dt_value=0.02
