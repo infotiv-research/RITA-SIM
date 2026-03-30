@@ -1,10 +1,49 @@
-import os, shutil, time
+import contextlib
+import io
+import os, re, shutil, time
 from pxr import Usd
 from omni.kit.scripting import BehaviorScript
 
 class UrdfExporter(BehaviorScript):
     def on_init(self):
         self.sync_urdf_exports()
+
+    @staticmethod
+    def _clean_converter_output(text):
+        text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+        return text.strip()
+
+    def _collect_converter_output(self, stdout_buffer, stderr_buffer):
+        return "\n".join(
+            part for part in (
+                self._clean_converter_output(stdout_buffer.getvalue()),
+                self._clean_converter_output(stderr_buffer.getvalue()),
+            ) if part
+        )
+
+    def _run_converter(self, converter_cls, input_path, output_path):
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        verbose = os.environ.get("ISAAC_URDF_EXPORTER_VERBOSE", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        try:
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                converter_cls.init_from_file(input_path).save_to_file(output_path)
+        except Exception as exc:
+            output = self._collect_converter_output(stdout_buffer, stderr_buffer)
+            if output:
+                raise RuntimeError(f"{exc}\n[UsdToUrdf]\n{output}") from exc
+            raise
+
+        output = self._collect_converter_output(stdout_buffer, stderr_buffer)
+
+        if verbose and output:
+            print(f"[UsdToUrdf] {output}")
 
     def sync_urdf_exports(self):
         OUT = "/ros2_ws/assets/isaac_urdf_exports"
@@ -59,7 +98,7 @@ class UrdfExporter(BehaviorScript):
             s.GetRootLayer().Save()
 
             try:
-                Conv.init_from_file(tmp_usd).save_to_file(out_urdf)
+                self._run_converter(Conv, tmp_usd, out_urdf)
                 print(f"[OK] Exported {name}")
                 exported_count += 1
             except Exception as e:
