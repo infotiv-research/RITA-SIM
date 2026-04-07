@@ -12,9 +12,6 @@
 #          SOURCING AND SETTING ENVIRONMENT VARIABLES           #
 #################################################################
 #region environment variables
-source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" 2>/dev/null
-source /opt/vendor_ws/install/setup.bash 2>/dev/null
-source install/local_setup.bash 2>/dev/null
 export RCUTILS_LOGGING_SEVERITY_THRESHOLD="${RCUTILS_LOGGING_SEVERITY_THRESHOLD:-WARN}"
 unset ROS_LOCALHOST_ONLY
 export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] [{name}] [{time}]: {message}"
