@@ -1,0 +1,16 @@
+name: rita-3dgrut
+services:
+  3dgrut:
+    build:
+      context: .
+      dockerfile: 3dgrut.Dockerfile
+    runtime: nvidia
+    shm_size: "8g"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ..:/workspace
+    stdin_open: true
+    tty: true
+    command: ["sleep", "infinity"]
