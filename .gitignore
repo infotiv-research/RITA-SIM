@@ -22,3 +22,4 @@ htmlcov/
 .DS_Store
 isaac.sim.mcp_extension/
 .mcp.json
+assets/gaussian_splats/
