@@ -89,6 +89,7 @@ Isaac container commands:
 UR10 cuMotion container commands:
   cumotion        Start cuMotion with 7dof UR10e gantry config by default.
   curobo          Start curobo_ros with dedicated RViz workflow.
+  hybrid          Start MoveIt Hybrid Planning (cuRobo MotionGen + MPC).
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -127,6 +128,7 @@ kill_processes() {
         "pick_and_place_main.py"
         "start_cumotion_planner.sh"
         "start_curobo_planner.sh"
+        "start_hybrid_planner.sh"
         "bootstrap_cumotion_workspace.sh"
         "cumotion_planner_upstream_framefix.py"
         "cumotion_planner_node"
@@ -292,6 +294,11 @@ curobo() {
     ./startup_scripts/start_curobo_planner.sh "$@"
 }
 
+hybrid() {
+    echo "---[ starting hybrid planner (cuRobo MotionGen + MPC) ]---"
+    ./startup_scripts/start_hybrid_planner.sh "$@"
+}
+
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
@@ -346,6 +353,8 @@ elif [[ "$1" == "cumotion" ]]; then
     cumotion
 elif [[ "$1" == "curobo" ]]; then
     curobo
+elif [[ "$1" == "hybrid" ]]; then
+    hybrid
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

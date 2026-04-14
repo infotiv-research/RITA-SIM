@@ -6,6 +6,7 @@ This node supports multiple planning strategies (Classic, MPC, etc.)
 and allows dynamic switching between them.
 """
 
+import math
 import torch
 import rclpy
 import time
@@ -19,16 +20,28 @@ from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import ListControllers, SwitchController
 from sensor_msgs.msg import JointState as JointStateMsg
 from std_msgs.msg import Float64MultiArray, String
-from curobo_msgs.srv import TrajectoryGeneration, SetPlanner, GetPlanners
+from curobo_msgs.srv import (
+    TrajectoryGeneration,
+    SetPlanner,
+    GetPlanners,
+    MpcStep,
+    MpcReset,
+)
 from curobo_msgs.action import SendTrajectory, MpcMove
 
 from curobo.types.base import TensorDeviceType
 from curobo.types.math import Pose
 from curobo.types.robot import JointState
 from curobo.wrap.reacher.mpc import MpcSolver, MpcSolverConfig
+from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
+from curobo.wrap.wrap_base import WrapBase
 from curobo.geom.types import Cuboid
 from curobo.geom.sdf.world import CollisionQueryBuffer
+from curobo.util.logger import log_warn
 from curobo.util_file import load_yaml
+import curobo.util.trajectory as curobo_trajectory_utils
+import curobo.wrap.reacher.motion_gen as curobo_motion_gen_module
+import curobo.wrap.reacher.trajopt as curobo_trajopt_module
 
 from curobo_ros.robot.robot_context import RobotContext
 from curobo_ros.core.controller_trajectory import (
@@ -50,6 +63,146 @@ from curobo_ros.planners import (
 )
 
 
+def _coerce_python_float(value):
+    """Convert scalar torch tensors from cuRobo internals into plain Python floats."""
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            raise ValueError("Cannot coerce an empty tensor to float.")
+        return float(value.detach().cpu().reshape(-1)[0].item())
+    return float(value)
+
+
+def _apply_curobo_compat_patches():
+    """Install runtime shims for known cuRobo/Jazzy compatibility issues."""
+    current = curobo_trajectory_utils.get_batch_interpolated_trajectory
+    if not getattr(current, "_isaac_sim_rita_compat_patch", False):
+        original_get_batch_interpolated_trajectory = current
+
+        def patched_get_batch_interpolated_trajectory(*args, **kwargs):
+            args = list(args)
+            if len(args) >= 10:
+                args[9] = _coerce_python_float(args[9])
+            if len(args) >= 11:
+                args[10] = _coerce_python_float(args[10])
+            if "interpolation_dt" in kwargs:
+                kwargs["interpolation_dt"] = _coerce_python_float(kwargs["interpolation_dt"])
+            if "min_dt" in kwargs:
+                kwargs["min_dt"] = _coerce_python_float(kwargs["min_dt"])
+            if "max_dt" in kwargs:
+                kwargs["max_dt"] = _coerce_python_float(kwargs["max_dt"])
+            return original_get_batch_interpolated_trajectory(*args, **kwargs)
+
+        patched_get_batch_interpolated_trajectory._isaac_sim_rita_compat_patch = True
+        curobo_trajectory_utils.get_batch_interpolated_trajectory = patched_get_batch_interpolated_trajectory
+        curobo_motion_gen_module.get_batch_interpolated_trajectory = patched_get_batch_interpolated_trajectory
+        curobo_trajopt_module.get_batch_interpolated_trajectory = patched_get_batch_interpolated_trajectory
+
+    if getattr(MpcSolver.step, "_isaac_sim_rita_compat_patch", False):
+        return
+
+    def patched_mpc_step(self, current_state, shift_steps=1, seed_traj=None, max_attempts=1):
+        """Retry the installed cuRobo step and mark unrecoverable results infeasible."""
+        converged = False
+        result = None
+
+        # Flush any pending async CUDA errors from previous operations
+        try:
+            torch.cuda.synchronize()
+        except RuntimeError as _sync_err:
+            log_warn(f"CUDA sync error BEFORE mpc step: {_sync_err}")
+            raise
+
+        for _ in range(max(int(max_attempts), 1)):
+            result = self._step_once(current_state.clone(), shift_steps, seed_traj)
+            if (
+                torch.count_nonzero(torch.isnan(result.action.position)) == 0
+                and torch.count_nonzero(~result.metrics.feasible) == 0
+            ):
+                converged = True
+                break
+            self.reset()
+
+        if not converged and result is not None:
+            log_warn(
+                "Patched cuRobo MPC compatibility layer: solver produced a non-finite or "
+                "infeasible action after retries; marking this step infeasible."
+            )
+            try:
+                if result.metrics.feasible is not None:
+                    result.metrics.feasible[:] = False
+            except Exception:
+                pass
+
+        return result
+
+    patched_mpc_step._isaac_sim_rita_compat_patch = True
+    MpcSolver.step = patched_mpc_step
+
+    # --- cuRobo CUDA forward kinematics contiguity fix ---
+    # The MPC optimizer (MPPI) creates non-contiguous tensor views during
+    # rollout (e.g. trajectory[:, t, :]).  When these views reach the CUDA
+    # kernel `kin_fused_forward`, it asserts `joint_vec.is_contiguous()`.
+    # Fix: ensure `q` is contiguous at the Python/CUDA boundary.
+    if not getattr(CudaRobotModel._cuda_forward, "_isaac_sim_rita_compat_patch", False):
+        _original_cuda_forward = CudaRobotModel._cuda_forward
+
+        def _patched_cuda_forward(self, q):
+            return _original_cuda_forward(self, q.contiguous())
+
+        _patched_cuda_forward._isaac_sim_rita_compat_patch = True
+        CudaRobotModel._cuda_forward = _patched_cuda_forward
+
+    # --- MPPI optimizer non-contiguous state fix + CUDA sync barriers ---
+    # The MPPI optimizer produces JointState objects whose position/velocity/
+    # acceleration/jerk tensors are non-contiguous views (from trajectory
+    # slicing).  Downstream Warp/CUDA kernels use .view(-1) which requires
+    # contiguous memory.  Additionally, we decompose get_metrics into
+    # FK → collision → convergence → cost with torch.cuda.synchronize()
+    # barriers between each to prevent async CUDA race conditions between
+    # Warp kernels and PyTorch operations.
+    if not getattr(WrapBase.get_metrics, "_isaac_sim_rita_compat_patch", False):
+        _original_wrap_get_metrics = WrapBase.get_metrics
+
+        def _patched_wrap_get_metrics(self, state, use_cuda_graph=False):
+            try:
+                torch.cuda.synchronize()
+            except RuntimeError as _sync_err:
+                log_warn(f"CUDA sync error BEFORE get_metrics: {_sync_err}")
+                raise
+            for attr in ("position", "velocity", "acceleration", "jerk"):
+                val = getattr(state, attr, None)
+                if isinstance(val, torch.Tensor) and not val.is_contiguous():
+                    setattr(state, attr, val.contiguous())
+            # --- Granular CUDA error isolation ---
+            rollout = self.safety_rollout
+            from curobo.types.state import JointState as _CuroboJS
+            if isinstance(state, _CuroboJS):
+                state = rollout._get_augmented_state(state)
+            try:
+                torch.cuda.synchronize()
+            except RuntimeError as _e:
+                log_warn(f"CUDA error after _get_augmented_state (FK): {_e}")
+                raise
+            out_metrics = rollout.constraint_fn(state)
+            try:
+                torch.cuda.synchronize()
+            except RuntimeError as _e:
+                log_warn(f"CUDA error after constraint_fn (collision): {_e}")
+                raise
+            out_metrics.state = state
+            out_metrics = rollout.convergence_fn(state, out_metrics)
+            try:
+                torch.cuda.synchronize()
+            except RuntimeError as _e:
+                log_warn(f"CUDA error after convergence_fn: {_e}")
+                raise
+            out_metrics.cost = rollout.cost_fn(state)
+            return out_metrics
+
+        _patched_wrap_get_metrics._isaac_sim_rita_compat_patch = True
+        WrapBase.get_metrics = _patched_wrap_get_metrics
+
+
 class UnifiedPlannerNode(Node):
     """
     Unified trajectory planning node with multiple strategies.
@@ -69,6 +222,8 @@ class UnifiedPlannerNode(Node):
 
     def __init__(self):
         super().__init__('unified_planner')
+
+        _apply_curobo_compat_patches()
 
         # Initialize tensor arguments
         self.tensor_args = TensorDeviceType()
@@ -98,8 +253,11 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('max_mpc_iterations', 1000)
         self.declare_parameter('mpc_position_convergence_threshold', 0.02)
         self.declare_parameter('mpc_rotation_convergence_threshold', 0.35)
+        self.declare_parameter('mpc_joint_convergence_threshold', 0.05)
         self.declare_parameter('mpc_step_dt', 0.03)
         self.declare_parameter('mpc_horizon_steps', 30)
+        self.declare_parameter('mpc_use_cuda_graph', False)
+        self.declare_parameter('mpc_use_cuda_graph_metrics', False)
         self.declare_parameter('mpc_command_speed_scale', 1.0)
         self.declare_parameter('mpc_step_max_attempts', 2)
         self.declare_parameter('mpc_execution_interface', 'trajectory_action')
@@ -112,22 +270,34 @@ class UnifiedPlannerNode(Node):
         )
         self.declare_parameter('controller_manager_switch_service', '/controller_manager/switch_controller')
         self.declare_parameter('mpc_infeasible_abort_steps', 10)
+        self.declare_parameter('hybrid_mpc_report_path_invalidated', True)
+        self.declare_parameter('hybrid_mpc_stall_steps', 25)
+        self.declare_parameter('hybrid_mpc_stall_threshold', 0.01)
         self.declare_parameter('mpc_classic_handoff_enabled', True)
         self.declare_parameter('mpc_classic_handoff_distance', 0.015)
         self.declare_parameter('mpc_debug_logging', False)
         self.declare_parameter('mpc_debug_log_every_n_steps', 10)
         self.declare_parameter('mpc_debug_publish_topic', True)
-        self.declare_parameter('mpc_goal_update_position_epsilon', 0.001)
-        self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.001)
+        # Ignore tiny RViz marker jitter so standalone MPC does not keep
+        # rebuilding its goal buffer for what is effectively the same target.
+        self.declare_parameter('mpc_goal_update_position_epsilon', 0.005)
+        self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.01)
+        self.declare_parameter('mpc_goal_update_joint_epsilon', 0.001)
         self.declare_parameter('mpc_dynamic_world_updates_enabled', True)
 
         self._world_update_lock = threading.Lock()
+        self._hybrid_mpc_lock = threading.Lock()
         self._world_state_version = 0
         self._pending_world_version = 0
         self._motion_gen_world_version = 0
         self._mpc_world_version = 0
         self._mpc_execution_active = False
         self._mpc_robot_geometry_dirty = False
+        self._hybrid_mpc_session_active = False
+        self._hybrid_mpc_infeasible_streak = 0
+        self._hybrid_mpc_last_step_time = None
+        self._hybrid_mpc_stall_count = 0
+        self._hybrid_mpc_best_error = None
 
         # Initialize ONLY the base config wrapper
         # Other wrappers will be created on-demand (lazy loading)
@@ -226,6 +396,20 @@ class UnifiedPlannerNode(Node):
             callback_group=MutuallyExclusiveCallbackGroup()
         )
 
+        self.mpc_step_srv = self.create_service(
+            MpcStep,
+            f'{self.get_name()}/mpc_step',
+            self.mpc_step_callback,
+            callback_group=MutuallyExclusiveCallbackGroup(),
+        )
+
+        self.mpc_reset_srv = self.create_service(
+            MpcReset,
+            f'{self.get_name()}/mpc_reset',
+            self.mpc_reset_callback,
+            callback_group=MutuallyExclusiveCallbackGroup(),
+        )
+
         # Create action server (unified for all planner types)
         self._action_server = ActionServer(
             self,
@@ -310,12 +494,12 @@ class UnifiedPlannerNode(Node):
                 self._record_world_dirty()
                 self.get_logger().info("  → Added ground plane to shared world_cfg")
 
-            # Create MPC config, sharing world_coll_checker with MotionGen if available.
-            # This avoids duplicating obstacle tensors in VRAM — both solvers use the
-            # same CUDA tensors. update_world() only needs to be called once.
-            shared_checker = self.motion_gen.world_coll_checker if self.motion_gen is not None else None
-            if shared_checker is not None:
-                self.get_logger().info("  → Sharing world_coll_checker with MotionGen (no extra VRAM)")
+            # MPC must use its own collision checker — MotionGen's checker
+            # pre-allocates buffers sized for (num_seeds × trajopt_tsteps) which
+            # differ from MPC's (num_particles × horizon).  Sharing causes
+            # out-of-bounds CUDA writes on the 2nd MPC step.
+            shared_checker = None
+            self.get_logger().info("  → Using separate world_coll_checker for MPC (independent VRAM)")
 
             with build_mpc_load_from_robot_config_kwargs(
                 self,
@@ -741,6 +925,259 @@ class UnifiedPlannerNode(Node):
             joint_names=joint_names,
         )
 
+    def _joint_state_msg_to_ordered_dict(self, joint_state_msg: JointStateMsg):
+        """Convert a ROS JointState into the planner's joint order when possible."""
+        if joint_state_msg is None or not joint_state_msg.position:
+            return None
+
+        joint_names = list(joint_state_msg.name or [])
+        if not joint_names or len(joint_names) != len(joint_state_msg.position):
+            return None
+
+        positions_by_name = {
+            name: float(position)
+            for name, position in zip(joint_names, joint_state_msg.position)
+        }
+        velocity_values = (
+            list(joint_state_msg.velocity)
+            if len(joint_state_msg.velocity) == len(joint_names)
+            else []
+        )
+        velocities_by_name = {
+            name: float(velocity)
+            for name, velocity in zip(joint_names, velocity_values)
+        }
+
+        target_joint_names = list(self._robot_joint_names) or joint_names
+        missing = [joint_name for joint_name in target_joint_names if joint_name not in positions_by_name]
+        if missing:
+            return {
+                'joint_names': joint_names,
+                'position': [float(value) for value in joint_state_msg.position],
+                'velocity': [float(value) for value in velocity_values] if velocity_values else [0.0] * len(joint_names),
+                'acceleration': [0.0] * len(joint_names),
+                'jerk': [0.0] * len(joint_names),
+            }
+
+        ordered_positions = [
+            positions_by_name[joint_name]
+            for joint_name in target_joint_names
+        ]
+        ordered_velocities = [
+            velocities_by_name.get(joint_name, 0.0)
+            for joint_name in target_joint_names
+        ]
+        return {
+            'joint_names': target_joint_names,
+            'position': ordered_positions,
+            'velocity': ordered_velocities,
+            'acceleration': [0.0] * len(ordered_positions),
+            'jerk': [0.0] * len(ordered_positions),
+        }
+
+    @staticmethod
+    def _ordered_joint_state_msg(joint_names, positions, velocities=None):
+        """Build a JointState message from ordered vectors."""
+        joint_state_msg = JointStateMsg()
+        joint_state_msg.name = list(joint_names or [])
+        joint_state_msg.position = [float(value) for value in positions]
+        if velocities is not None:
+            joint_state_msg.velocity = [float(value) for value in velocities]
+        return joint_state_msg
+
+    @staticmethod
+    def _ordered_rows_are_finite(rows):
+        """Return True when every numeric value in the nested row structure is finite."""
+        if rows is None:
+            return False
+        for row in rows:
+            for value in row:
+                if not math.isfinite(float(value)):
+                    return False
+        return True
+
+    def _extract_first_valid_ordered_command(
+        self,
+        *joint_state_candidates,
+        max_points=1,
+        current_positions=None,
+        target_positions=None,
+    ):
+        """Extract the best finite controller-space command from the provided cuRobo candidates."""
+        ordered_joint_names = self.get_controller_joint_names()
+        candidate_labels = ("js_action", "action")
+        best_candidate = None
+        best_target_error = None
+
+        for index, joint_state in enumerate(joint_state_candidates):
+            if joint_state is None:
+                continue
+
+            candidate_label = (
+                candidate_labels[index]
+                if index < len(candidate_labels)
+                else f"candidate_{index}"
+            )
+            try:
+                positions, velocities, accelerations = extract_ordered_waypoints(
+                    joint_state,
+                    ordered_joint_names,
+                    max_points=max_points,
+                )
+            except Exception as exc:
+                self.get_logger().warn(
+                    f"Failed to extract MPC command from {candidate_label}: {exc}"
+                )
+                continue
+
+            if not positions:
+                continue
+
+            if not self._ordered_rows_are_finite(positions):
+                self.get_logger().warn(
+                    f"MPC {candidate_label} positions contain non-finite values; ignoring candidate."
+                )
+                continue
+            if velocities and not self._ordered_rows_are_finite(velocities):
+                self.get_logger().warn(
+                    f"MPC {candidate_label} velocities contain non-finite values; zeroing velocities."
+                )
+                velocities = [[0.0] * len(ordered_joint_names) for _ in positions]
+            if accelerations and not self._ordered_rows_are_finite(accelerations):
+                self.get_logger().warn(
+                    f"MPC {candidate_label} accelerations contain non-finite values; zeroing accelerations."
+                )
+                accelerations = [[0.0] * len(ordered_joint_names) for _ in positions]
+
+            if current_positions is None or not target_positions:
+                return positions, velocities, accelerations
+
+            target_error = self._max_joint_error(positions[0], target_positions)
+            if target_error is None:
+                continue
+
+            if best_target_error is None or target_error < best_target_error:
+                best_candidate = (positions, velocities, accelerations)
+                best_target_error = target_error
+
+        if best_candidate is not None:
+            return best_candidate
+
+        return None, None, None
+
+    def _reorder_positions(self, joint_names, positions, target_joint_names, context):
+        """Reorder a joint vector into the requested target joint-name order."""
+        target_positions = [float(value) for value in (positions or [])]
+        if not target_positions:
+            return []
+
+        source_joint_names = list(joint_names or [])
+        ordered_target_joint_names = list(target_joint_names or source_joint_names)
+
+        if not source_joint_names or len(source_joint_names) != len(target_positions):
+            return target_positions
+
+        positions_by_name = {
+            name: float(position)
+            for name, position in zip(source_joint_names, target_positions)
+        }
+        missing = [
+            joint_name for joint_name in ordered_target_joint_names
+            if joint_name not in positions_by_name
+        ]
+        if missing:
+            self.get_logger().warn(
+                f'{context} is missing joints required by the requested order: {missing}. '
+                'Using the provided order as-is.'
+            )
+            return target_positions
+
+        return [
+            positions_by_name[joint_name]
+            for joint_name in ordered_target_joint_names
+        ]
+
+    def _reorder_joint_target_positions(self, joint_names, positions):
+        """Reorder a joint target vector into the planner's configured joint order."""
+        return self._reorder_positions(
+            joint_names,
+            positions,
+            list(self._robot_joint_names) or list(joint_names or []),
+            'Hybrid MPC joint target',
+        )
+
+    @staticmethod
+    def _max_joint_error(current_positions, target_positions):
+        """Return the maximum absolute joint delta between two same-length vectors."""
+        if not current_positions or not target_positions:
+            return None
+        if len(current_positions) != len(target_positions):
+            return None
+        return max(
+            abs(float(current) - float(target))
+            for current, target in zip(current_positions, target_positions)
+        )
+
+
+    def _build_mpc_step_request(
+        self,
+        target_pose_msg,
+        trajectory_constraints,
+        target_joint_positions=None,
+        target_joint_names=None,
+    ):
+        """Create a TrajectoryGeneration request from the hybrid local target."""
+        request = TrajectoryGeneration.Request()
+        request.target_pose = target_pose_msg
+        if target_joint_positions:
+            request.target_joint_positions = self._reorder_joint_target_positions(
+                target_joint_names,
+                target_joint_positions,
+            )
+        if trajectory_constraints:
+            request.trajectory_constraints = list(trajectory_constraints)
+        return request
+
+    def _clear_hybrid_mpc_state(self):
+        """Reset cached state for the hybrid-local MPC stepping interface."""
+        planner = getattr(self.planner_manager, '_planners', {}).get('mpc')
+        if isinstance(planner, MPCPlanner):
+            planner.cancel()
+            planner.goal_buffer = None
+            planner.start_state = None
+            planner.goal_pose = None
+            planner.goal_joint_positions = None
+            planner.goal_state = None
+            planner.is_goal_active = False
+            planner.latest_goal_from_topic = None
+            planner.last_goal_topic_raw = None
+            planner.trajectory_constraints = []
+            planner.initial_pose_error = None
+            planner.best_pose_error = None
+            planner.best_position_error = None
+            planner.best_rotation_error = None
+            planner._classic_handoff_requested = False
+            planner._classic_handoff_metadata = None
+
+        self._hybrid_mpc_session_active = False
+        self._hybrid_mpc_infeasible_streak = 0
+        self._hybrid_mpc_last_step_time = None
+        self._hybrid_mpc_stall_count = 0
+        self._hybrid_mpc_best_error = None
+        self.set_mpc_execution_active(False)
+
+    def _reset_hybrid_mpc_session(self, restore_trajectory_controller=True):
+        """Stop the hybrid-local MPC stepping session and optionally restore controllers."""
+        self._clear_hybrid_mpc_state()
+
+        if restore_trajectory_controller:
+            if not self.activate_trajectory_execution_controller():
+                return False, (
+                    f'Failed to activate {self.mpc_deactivate_controller_name} after hybrid MPC reset.'
+                )
+
+        return True, 'Hybrid MPC state reset'
+
     def get_live_joint_state(self):
         """Return ordered live joint position/velocity data or None."""
         return self._get_live_joint_state_dict()
@@ -1045,7 +1482,7 @@ class UnifiedPlannerNode(Node):
             )
             return False
 
-        if any(not torch.isfinite(torch.tensor(float(value))) for value in positions):
+        if any(not math.isfinite(float(value)) for value in positions):
             self.get_logger().error('Streaming command contains non-finite values.')
             return False
 
@@ -1101,6 +1538,272 @@ class UnifiedPlannerNode(Node):
             return False
 
         return classic_planner.execute(self.robot_context, goal_handle)
+
+    def mpc_step_callback(self, request: MpcStep.Request, response: MpcStep.Response):
+        """
+        Run exactly one MPC iteration for MoveIt Hybrid Planning.
+
+        The hybrid-local adapter owns the outer control loop. This service only:
+        1. Refreshes the current MPC goal from the sampled local target
+        2. Runs one solver step from the supplied robot state
+        3. Returns a single joint command plus status flags
+        """
+        with self._hybrid_mpc_lock:
+            try:
+                callback_started_at = time.monotonic()
+                planner = self.planner_manager.get_planner('mpc')
+                self._setup_planner(planner)
+                config = self._get_planner_config(planner)
+
+                current_joint_state = (
+                    self.get_live_joint_state()
+                    or self._joint_state_msg_to_ordered_dict(request.current_state)
+                    or self.get_current_joint_state()
+                )
+                if current_joint_state is None:
+                    response.success = False
+                    response.message = 'No current joint state is available for MPC stepping.'
+                    return response
+
+                if not self._hybrid_mpc_session_active:
+                    if not request.initialize_if_needed:
+                        response.success = False
+                        response.message = 'Hybrid MPC session is not active and initialization was not allowed.'
+                        return response
+
+                    if not self.activate_mpc_streaming_controller():
+                        response.success = False
+                        response.message = 'Failed to activate the MPC streaming controller.'
+                        return response
+
+                    self._hybrid_mpc_session_active = True
+                    self._hybrid_mpc_infeasible_streak = 0
+                    self._hybrid_mpc_stall_count = 0
+                    self._hybrid_mpc_best_error = None
+                    self.set_mpc_execution_active(True)
+
+                start_state = self._joint_state_dict_to_curobo_state(current_joint_state)
+                plan_request = self._build_mpc_step_request(
+                    request.target_pose,
+                    request.trajectory_constraints,
+                    request.target_joint_positions,
+                    request.current_state.name,
+                )
+                controller_current_positions = self._reorder_positions(
+                    current_joint_state.get('joint_names', []),
+                    current_joint_state.get('position', []),
+                    self.get_controller_joint_names(),
+                    'Hybrid MPC current joint state',
+                )
+                controller_target_positions = self._reorder_positions(
+                    request.current_state.name,
+                    request.target_joint_positions,
+                    self.get_controller_joint_names(),
+                    'Hybrid MPC joint target',
+                )
+
+                goal_changed = (
+                    hasattr(planner, 'goal_request_differs')
+                    and planner.goal_request_differs(plan_request)
+                )
+
+                plan_started_at = time.monotonic()
+                planning_result = planner.refresh_hybrid_goal(start_state, plan_request, config)
+                plan_finished_at = time.monotonic()
+                if not planning_result.success:
+                    self._clear_hybrid_mpc_state()
+                    response.success = False
+                    response.message = f'MPC goal setup failed: {planning_result.message}'
+                    return response
+
+                if goal_changed:
+                    # The hybrid local planner advances through many sampled waypoints
+                    # within one MPC session. Carrying progress metrics across those
+                    # target changes makes "stall" detection compare different goals.
+                    self._hybrid_mpc_infeasible_streak = 0
+                    self._hybrid_mpc_stall_count = 0
+                    self._hybrid_mpc_best_error = None
+
+                sync_started_at = time.monotonic()
+                self.sync_mpc_world()
+                sync_finished_at = time.monotonic()
+                mpc_step_dt = float(self.get_parameter('mpc_step_dt').value)
+                mpc_horizon = max(int(self.get_parameter('mpc_horizon_steps').value), 2)
+                now = time.monotonic()
+                if self._hybrid_mpc_last_step_time is not None and mpc_step_dt > 0:
+                    elapsed = now - self._hybrid_mpc_last_step_time
+                    shift_steps = max(1, min(round(elapsed / mpc_step_dt), mpc_horizon - 1))
+                else:
+                    shift_steps = 1
+                self._hybrid_mpc_last_step_time = now
+                solve_started_at = time.monotonic()
+                step_result = self.mpc.step(
+                    start_state,
+                    shift_steps=shift_steps,
+                    max_attempts=max(int(self.get_parameter('mpc_step_max_attempts').value), 1),
+                )
+                solve_finished_at = time.monotonic()
+
+                position_error = MPCPlanner._metric_scalar(
+                    getattr(step_result.metrics, 'position_error', None)
+                )
+                rotation_error = MPCPlanner._metric_scalar(
+                    getattr(step_result.metrics, 'rotation_error', None)
+                )
+                cspace_error = MPCPlanner._metric_scalar(
+                    getattr(step_result.metrics, 'cspace_error', None)
+                )
+                metric_feasible = (
+                    bool(torch.all(step_result.metrics.feasible).item())
+                    if step_result.metrics.feasible is not None
+                    else True
+                )
+                joint_goal_active = bool(getattr(planner, 'goal_joint_positions', None))
+
+                immediate_positions, immediate_velocities, _ = self._extract_first_valid_ordered_command(
+                    getattr(step_result, 'js_action', None),
+                    getattr(step_result, 'action', None),
+                    max_points=1,
+                    current_positions=controller_current_positions,
+                    target_positions=controller_target_positions,
+                )
+                command_valid = bool(immediate_positions)
+                step_feasible = metric_feasible and command_valid
+
+                if step_feasible:
+                    self._hybrid_mpc_infeasible_streak = 0
+                else:
+                    self._hybrid_mpc_infeasible_streak += 1
+
+                # --- Progress stall detection ---
+                # Track whether the error toward the goal is actually improving.
+                # If it stagnates for N steps the path is treated as invalidated
+                # even when individual MPC steps remain feasible.
+                current_error = cspace_error if joint_goal_active else position_error
+                stall_threshold = float(self.get_parameter('hybrid_mpc_stall_threshold').value)
+                if current_error is not None:
+                    if (
+                        self._hybrid_mpc_best_error is None
+                        or current_error < self._hybrid_mpc_best_error - stall_threshold
+                    ):
+                        self._hybrid_mpc_best_error = current_error
+                        self._hybrid_mpc_stall_count = 0
+                    else:
+                        self._hybrid_mpc_stall_count += 1
+
+                if not immediate_positions:
+                    if not controller_current_positions:
+                        response.success = False
+                        response.message = 'No current joint state is available to hold position safely.'
+                        return response
+
+                    self.get_logger().warn(
+                        'Hybrid MPC step produced no finite solver command. '
+                        'Holding current position until the solver recovers or the path is invalidated.'
+                    )
+                    immediate_positions = [controller_current_positions]
+                    immediate_velocities = [[0.0] * len(controller_current_positions)]
+
+                response.joint_command = self._ordered_joint_state_msg(
+                    self.get_controller_joint_names(),
+                    immediate_positions[0],
+                    immediate_velocities[0] if immediate_velocities else None,
+                )
+                response.position_error = (
+                    float(position_error)
+                    if position_error is not None
+                    else math.nan
+                )
+                response.rotation_error = (
+                    float(rotation_error)
+                    if rotation_error is not None
+                    else math.nan
+                )
+                if joint_goal_active:
+                    response.goal_reached = (
+                        cspace_error is not None
+                        and cspace_error < float(planner.joint_convergence_threshold)
+                    )
+                else:
+                    response.goal_reached = (
+                        position_error is not None
+                        and rotation_error is not None
+                        and position_error < float(planner.position_convergence_threshold)
+                        and rotation_error < float(planner.rotation_convergence_threshold)
+                    )
+                infeasible_invalidated = (
+                    self._hybrid_mpc_infeasible_streak
+                    >= max(int(self.get_parameter('mpc_infeasible_abort_steps').value), 1)
+                )
+                stall_steps = max(int(self.get_parameter('hybrid_mpc_stall_steps').value), 1)
+                stall_invalidated = self._hybrid_mpc_stall_count >= stall_steps
+                path_invalidated = infeasible_invalidated or stall_invalidated
+                response.path_invalidated = bool(
+                    self.get_parameter('hybrid_mpc_report_path_invalidated').value
+                ) and path_invalidated
+                response.success = True
+
+                if response.path_invalidated:
+                    reason = (
+                        f"progress stall ({self._hybrid_mpc_stall_count} steps, "
+                        f"best_error={self._hybrid_mpc_best_error:.4f})"
+                        if stall_invalidated
+                        else f"infeasible streak ({self._hybrid_mpc_infeasible_streak} steps)"
+                    )
+                    self.get_logger().warn(
+                        f"Hybrid MPC path invalidated: {reason}"
+                    )
+                    self.publish_mpc_stream_position(
+                        self.get_controller_joint_names(),
+                        controller_current_positions,
+                    )
+                    self._clear_hybrid_mpc_state()
+                    response.message = 'Collision ahead'
+                elif response.goal_reached:
+                    response.message = (
+                        'Local MPC joint goal reached'
+                        if joint_goal_active
+                        else 'Local MPC goal reached'
+                    )
+                elif not command_valid:
+                    response.message = 'MPC step produced no valid command; holding current position'
+                elif not metric_feasible:
+                    response.message = 'MPC reported an infeasible step'
+                else:
+                    response.message = 'MPC step produced a valid streaming command'
+
+                total_duration_ms = (time.monotonic() - callback_started_at) * 1000.0
+                if total_duration_ms > 250.0:
+                    self.get_logger().info(
+                        "Hybrid MPC step timings: "
+                        f"total={total_duration_ms:.1f}ms, "
+                        f"goal_setup={(plan_finished_at - plan_started_at) * 1000.0:.1f}ms, "
+                        f"world_sync={(sync_finished_at - sync_started_at) * 1000.0:.1f}ms, "
+                        f"solve={(solve_finished_at - solve_started_at) * 1000.0:.1f}ms, "
+                        f"goal_reached={response.goal_reached}, "
+                        f"path_invalidated={response.path_invalidated}, "
+                        f"feasible={step_feasible}"
+                    )
+
+                return response
+
+            except Exception as exc:
+                self.get_logger().error(f'Hybrid MPC step failed: {exc}')
+                import traceback
+                self.get_logger().error(traceback.format_exc())
+                response.success = False
+                response.message = f'Hybrid MPC step failed: {exc}'
+                return response
+
+    def mpc_reset_callback(self, request: MpcReset.Request, response: MpcReset.Response):
+        """Reset the hybrid-local MPC stepping session."""
+        with self._hybrid_mpc_lock:
+            success, message = self._reset_hybrid_mpc_session(
+                restore_trajectory_controller=bool(request.restore_trajectory_controller)
+            )
+            response.success = bool(success)
+            response.message = str(message)
+            return response
 
     def generate_trajectory_callback(self, request: TrajectoryGeneration, response):
         """
@@ -1437,10 +2140,14 @@ class UnifiedPlannerNode(Node):
         it will be warmed up now. Subsequent switches to the same planner will
         be instant (retrieved from cache).
         """
-        if isinstance(planner, ClassicPlanner):
-            # Warmup MotionGen if not already done
+        if isinstance(planner, SinglePlanner):
+            # All MotionGen-based planners share the same warmed-up solver and
+            # must see the latest world before planning, especially after a
+            # hybrid MPC invalidation queues obstacle updates mid-execution.
             if self.motion_gen is None:
-                self.get_logger().info("On-demand warmup: Classic planner")
+                self.get_logger().info(
+                    f"On-demand warmup: {planner.get_planner_name()}"
+                )
                 self._warmup_classic()
 
             planner.set_motion_gen(self.motion_gen)
@@ -1482,6 +2189,9 @@ class UnifiedPlannerNode(Node):
                 'rotation_convergence_threshold': self.get_parameter(
                     'mpc_rotation_convergence_threshold'
                 ).value,
+                'joint_convergence_threshold': self.get_parameter(
+                    'mpc_joint_convergence_threshold'
+                ).value,
                 'command_speed_scale': self.get_parameter(
                     'mpc_command_speed_scale'
                 ).value,
@@ -1504,6 +2214,8 @@ class UnifiedPlannerNode(Node):
         if hasattr(planner, 'cancel'):
             planner.cancel()
         self.cancel_active_controller_goal()
+        with self._hybrid_mpc_lock:
+            self._clear_hybrid_mpc_state()
 
         self.get_logger().info("Goal cancelled")
         return rclpy.action.CancelResponse.ACCEPT

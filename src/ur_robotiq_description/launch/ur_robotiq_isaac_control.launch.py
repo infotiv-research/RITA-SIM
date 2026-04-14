@@ -3,7 +3,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterFile
+from launch_ros.parameter_descriptions import ParameterFile, ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 GANTRY_DESCRIPTION_FILE = "ur_robotiq_gantry.urdf.xacro"
@@ -34,11 +34,11 @@ def launch_setup(context, *args, **kwargs):
     safety_limits = LaunchConfiguration("safety_limits")
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
     safety_k_position = LaunchConfiguration("safety_k_position")
-    runtime_config_package = LaunchConfiguration("runtime_config_package")
     description_package = LaunchConfiguration("description_package")
     ur_description_package = LaunchConfiguration("ur_description_package")
     tf_prefix = LaunchConfiguration("tf_prefix")
     controller_spawner_timeout = LaunchConfiguration("controller_spawner_timeout")
+    controller_manager_update_rate = LaunchConfiguration("controller_manager_update_rate")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     activate_joint_controller = LaunchConfiguration("activate_joint_controller")
     launch_rviz = LaunchConfiguration("launch_rviz")
@@ -120,10 +120,6 @@ def launch_setup(context, *args, **kwargs):
         [FindPackageShare(description_package), "config", GANTRY_CONTROLLERS_FILE]
     )
 
-    update_rate_config_file = PathJoinSubstitution(
-        [FindPackageShare(runtime_config_package), "config", ur_type.perform(context) + "_update_rate.yaml"]
-    )
-
     rviz_config_file = PathJoinSubstitution(
         [FindPackageShare(description_package), "rviz", "view_robot.rviz"]
     )
@@ -133,7 +129,11 @@ def launch_setup(context, *args, **kwargs):
         executable="ros2_control_node",
         parameters=[
             robot_description,
-            update_rate_config_file,
+            {
+                # The Isaac topic bridge is less deterministic than direct robot I/O,
+                # so run the controller manager at a lower rate to avoid overruns.
+                "update_rate": ParameterValue(controller_manager_update_rate, value_type=int)
+            },
             ParameterFile(initial_controllers, allow_substs=True),
         ],
         output="screen",
@@ -207,11 +207,11 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_limits", default_value="true"),
         DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
-        DeclareLaunchArgument("runtime_config_package", default_value="ur_robot_driver"),
         DeclareLaunchArgument("description_package", default_value="ur_robotiq_description"),
         DeclareLaunchArgument("ur_description_package", default_value="ur_description"),
         DeclareLaunchArgument("tf_prefix", default_value=""),
         DeclareLaunchArgument("controller_spawner_timeout", default_value="10"),
+        DeclareLaunchArgument("controller_manager_update_rate", default_value="250"),
         DeclareLaunchArgument("initial_joint_controller", default_value="joint_trajectory_controller"),
         DeclareLaunchArgument("activate_joint_controller", default_value="true"),
         DeclareLaunchArgument("launch_rviz", default_value="false"),

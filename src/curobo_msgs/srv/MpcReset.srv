@@ -1,0 +1,4 @@
+bool restore_trajectory_controller
+---
+bool success
+string message

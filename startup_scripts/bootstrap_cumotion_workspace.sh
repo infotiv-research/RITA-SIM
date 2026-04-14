@@ -25,6 +25,7 @@ required_workspace_packages=(
   curobo_msgs
   curobo_ros
   curobo_rviz
+  curobo_hybrid_planning_plugins
   ur_description
   robotiq_description
   ur_robotiq_description
@@ -40,6 +41,9 @@ fi
 
 set +u
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
+if [ -f /opt/vendor_ws/install/local_setup.bash ]; then
+  source /opt/vendor_ws/install/local_setup.bash
+fi
 if [ -f "${USER_WS}/install/local_setup.bash" ]; then
   source "${USER_WS}/install/local_setup.bash"
 fi

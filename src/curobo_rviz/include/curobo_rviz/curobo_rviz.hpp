@@ -142,6 +142,8 @@ namespace curobo_rviz
     rclcpp::Publisher<geometry_msgs::msg::Pose>::SharedPtr mpc_goal_pub_;
     QTimer* mpc_goal_publisher_timer_;
     bool is_mpc_tracking_active_;
+    bool has_last_published_mpc_goal_;
+    geometry_msgs::msg::Pose last_published_mpc_goal_;
     std::vector<sensor_msgs::msg::JointState> last_generated_trajectory_;
     double last_generated_dt_;
     std::string controller_action_name_;

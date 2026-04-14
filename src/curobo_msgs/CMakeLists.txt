@@ -36,6 +36,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/DataGeneration.action"
   "action/SendTrajectory.action"
   "action/MpcMove.action"
+  "srv/MpcStep.srv"
+  "srv/MpcReset.srv"
   "srv/TrajectoryGeneration.srv"
   "srv/GetVoxelGrid.srv"
   "srv/GetCollisionDistance.srv"

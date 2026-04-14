@@ -107,6 +107,31 @@ The default planner is set to cuMotion. The OMPL planner is also available and c
 
 curobo workflow launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
 
+### Hybrid Planner (cuRobo MotionGen + MPC)
+
+> in container: `UR10e cuMotion DevContainer`.
+
+The hybrid planner combines cuRobo MotionGen as a **global planner** (computes a full collision-free trajectory) with cuRobo MPC as a **local planner** (reactively tracks the global trajectory at high frequency). When the MPC detects an obstacle it cannot avoid, MoveIt Hybrid Planning automatically triggers a global replan.
+
+**Prerequisites** &mdash; start these first, in order:
+
+1. **Isaac Sim** &mdash; in the `IsaacSim DevContainer`:
+   ```bash
+   ./control.sh sim          # or sim_cylinder / sim_humanoid
+   ```
+2. **Robot control** &mdash; in the `UR10 ROS2 DevContainer`:
+   ```bash
+   ./control.sh robot_control
+   ```
+3. **Hybrid planner** &mdash; in the `UR10e cuMotion DevContainer`:
+   ```bash
+   ./control.sh hybrid
+   ```
+
+The hybrid launch starts MoveIt (move_group + RViz), the cuRobo trajectory planner, the cuRobo world bridge, and the MoveIt Hybrid Planning components in a single command. Do **not** run `./control.sh curobo` or `./control.sh cumotion` at the same time &mdash; the hybrid command replaces them.
+
+**Using RViz:** set a goal pose with the interactive marker and click **Plan & Execute**. The bridge intercepts the MoveGroup action, routes it through the hybrid pipeline, and streams MPC commands to the robot.
+
 
 ## Robot controls
 

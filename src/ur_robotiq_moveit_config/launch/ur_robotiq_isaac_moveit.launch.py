@@ -122,6 +122,8 @@ def launch_setup(context, *args, **kwargs):
     launch_servo = LaunchConfiguration("launch_servo")
     planning_pipeline = LaunchConfiguration("planning_pipeline")
     launch_move_group = LaunchConfiguration("launch_move_group")
+    capabilities = LaunchConfiguration("capabilities")
+    disable_capabilities = LaunchConfiguration("disable_capabilities")
     launch_cumotion_planner = LaunchConfiguration("launch_cumotion_planner")
     cumotion_use_patched_node = LaunchConfiguration("cumotion_use_patched_node")
     collision_cache_cuboid = LaunchConfiguration("collision_cache_cuboid")
@@ -366,6 +368,8 @@ def launch_setup(context, *args, **kwargs):
             trajectory_execution,
             moveit_controllers,
             planning_scene_monitor_parameters,
+            {"capabilities": capabilities},
+            {"disable_capabilities": disable_capabilities},
             {"use_sim_time": use_sim_time},
             warehouse_ros_config,
         ],
@@ -546,6 +550,16 @@ def generate_launch_description():
             "launch_move_group",
             default_value="true",
             description="Launch the MoveIt move_group node.",
+        ),
+        DeclareLaunchArgument(
+            "capabilities",
+            default_value="",
+            description="Space-separated extra move_group capabilities to load.",
+        ),
+        DeclareLaunchArgument(
+            "disable_capabilities",
+            default_value="",
+            description="Space-separated move_group capabilities to disable.",
         ),
         DeclareLaunchArgument(
             "launch_cumotion_planner",
