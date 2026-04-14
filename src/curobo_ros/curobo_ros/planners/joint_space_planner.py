@@ -66,6 +66,27 @@ class JointSpacePlanner(SinglePlanner):
         """Return planner name."""
         return "Joint Space Motion Generation"
 
+    @staticmethod
+    def _joint_positions_to_list(joint_state: JointState) -> list[float]:
+        """Extract a single joint configuration from cuRobo JointState."""
+        position = joint_state.position
+        if hasattr(position, "dim") and position.dim() > 1:
+            position = position[0]
+        if hasattr(position, "detach"):
+            position = position.detach().cpu().tolist()
+        return [float(value) for value in position]
+
+    def _format_collision_debug(self, label: str, joint_positions: list[float]) -> str:
+        collision_debug = self.node.get_state_collision_debug(joint_positions)
+        if collision_debug is None:
+            return f"{label}(collision_debug=unavailable)"
+
+        return (
+            f"{label}(collision_free={collision_debug['world_collision_free']}, "
+            f"min_sphere_dist={collision_debug['min_sphere_dist']:.5f}, "
+            f"max_sphere_dist={collision_debug['max_sphere_dist']:.5f})"
+        )
+
     def _plan_trajectory(
         self,
         start_state: JointState,
@@ -138,7 +159,7 @@ class JointSpacePlanner(SinglePlanner):
         enable_opt = config.get('enable_opt', True)  # Enable trajectory optimization
 
         # Log planning parameters for debugging
-        start_pos = start_state.position[0].cpu().tolist()
+        start_pos = self._joint_positions_to_list(start_state)
         goal_pos = list(goal_joint_positions)
 
         self.node.get_logger().info(
@@ -153,6 +174,11 @@ class JointSpacePlanner(SinglePlanner):
         self.node.get_logger().info(
             f"  Config: max_attempts={max_attempts}, timeout={timeout}s, "
             f"time_dilation={time_dilation_factor}, enable_graph={enable_graph}, enable_opt={enable_opt}"
+        )
+        self.node.get_logger().info(
+            "  Collision debug: "
+            f"{self._format_collision_debug('start', start_pos)}, "
+            f"{self._format_collision_debug('goal', goal_pos)}"
         )
 
         # Plan trajectory using MotionGen.plan_single_js()
@@ -179,6 +205,33 @@ class JointSpacePlanner(SinglePlanner):
             ) from exc
 
         return result
+
+    def _describe_failed_plan(
+        self,
+        start_state: JointState,
+        goal_request,
+        result: MotionGenResult,
+    ) -> Optional[str]:
+        if not hasattr(goal_request, 'target_joint_positions'):
+            return None
+
+        start_pos = self._joint_positions_to_list(start_state)
+        goal_pos = [float(value) for value in goal_request.target_joint_positions]
+
+        obstacle_names = list(self.config_wrapper.obstacle_names)
+        obstacle_preview = obstacle_names[:8]
+        obstacle_suffix = "" if len(obstacle_names) <= 8 else f" (+{len(obstacle_names) - 8} more)"
+
+        diagnostics = [
+            self._format_collision_debug("start", start_pos),
+            self._format_collision_debug("goal", goal_pos),
+        ]
+        diagnostics.append(
+            f"world_obstacles={obstacle_preview}{obstacle_suffix}"
+            if obstacle_names
+            else "world_obstacles=[]"
+        )
+        return ", ".join(diagnostics)
 
     # Note: No need to override _process_trajectory() since we don't modify
     # the trajectory. The default implementation in SinglePlanner returns

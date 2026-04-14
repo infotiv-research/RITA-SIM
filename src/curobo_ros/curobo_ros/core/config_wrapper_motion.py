@@ -46,11 +46,19 @@ class ConfigWrapperMPC(ConfigWrapper):
         # Declare MPC parameters
         node.declare_parameter('mpc_step_dt', 0.03)  # Time step for MPC (seconds)
         node.declare_parameter('mpc_horizon_steps', 30)  # Number of steps in MPC horizon
+        node.declare_parameter('mpc_use_cuda_graph', False)
+        node.declare_parameter('mpc_use_cuda_graph_metrics', False)
 
         mpc_step_dt = float(get_or_declare_parameter_value(node, 'mpc_step_dt', 0.03))
         mpc_horizon_steps = int(get_or_declare_parameter_value(node, 'mpc_horizon_steps', 30))
         collision_activation_distance = float(
             get_or_declare_parameter_value(node, 'collision_activation_distance', 0.025)
+        )
+        mpc_use_cuda_graph = bool(
+            get_or_declare_parameter_value(node, 'mpc_use_cuda_graph', False)
+        )
+        mpc_use_cuda_graph_metrics = bool(
+            get_or_declare_parameter_value(node, 'mpc_use_cuda_graph_metrics', False)
         )
 
         with build_mpc_load_from_robot_config_kwargs(node) as mpc_config_kwargs:
@@ -64,7 +72,9 @@ class ConfigWrapperMPC(ConfigWrapper):
         node.get_logger().info(
             "MPC configured: "
             f"step_dt={mpc_step_dt}s, horizon={mpc_horizon_steps} steps, "
-            f"collision_activation_distance={collision_activation_distance:.3f}m"
+            f"collision_activation_distance={collision_activation_distance:.3f}m, "
+            f"use_cuda_graph={mpc_use_cuda_graph}, "
+            f"use_cuda_graph_metrics={mpc_use_cuda_graph_metrics}"
         )
 
 

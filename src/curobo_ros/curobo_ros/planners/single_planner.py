@@ -185,9 +185,18 @@ class SinglePlanner(TrajectoryPlanner):
 
             # Check if planning succeeded
             if not result.success.item():
+                failure_details = self._describe_failed_plan(
+                    start_state,
+                    goal_request,
+                    result,
+                )
+                message = f"Planning failed: {result.status}"
+                if failure_details:
+                    self.node.get_logger().error(failure_details)
+                    message = f"{message}. {failure_details}"
                 return PlannerResult(
                     success=False,
-                    message=f"Planning failed: {result.status}",
+                    message=message,
                     metadata={'result': result}
                 )
 
@@ -245,6 +254,15 @@ class SinglePlanner(TrajectoryPlanner):
                 success=False,
                 message=f"Planning error: {str(e)}",
             )
+
+    def _describe_failed_plan(
+        self,
+        start_state: JointState,
+        goal_request: Any,
+        result: MotionGenResult,
+    ) -> Optional[str]:
+        """Return planner-specific failure diagnostics, if available."""
+        return None
 
     @abstractmethod
     def _plan_trajectory(

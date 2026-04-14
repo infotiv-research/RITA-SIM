@@ -45,6 +45,7 @@
     convergence_threshold: 0.02
     mpc_position_convergence_threshold: 0.01
     mpc_rotation_convergence_threshold: 0.1
+    mpc_joint_convergence_threshold: 0.05
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
@@ -58,3 +59,6 @@
     mpc_deactivate_controller_name: joint_trajectory_controller
     controller_manager_switch_service: /controller_manager/switch_controller
     mpc_infeasible_abort_steps: 50
+    hybrid_mpc_report_path_invalidated: true
+    hybrid_mpc_stall_steps: 25
+    hybrid_mpc_stall_threshold: 0.01

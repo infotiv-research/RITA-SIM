@@ -1,29 +1,29 @@
 /**:
   ros__parameters:
     planner_type: classic
-    max_attempts: 8
-    timeout: 20.0
-    time_dilation_factor: 0.5
+    max_attempts: 12
+    timeout: 15.0
+    time_dilation_factor: 0.7
     voxel_size: 0.05
     collision_activation_distance: 0.04
-    trajopt_tsteps: 16
-    use_cuda_graph: false
-    num_trajopt_seeds: 4
-    num_graph_seeds: 2
-    interpolation_steps: 2000
+    trajopt_tsteps: 32
+    use_cuda_graph: true
+    num_trajopt_seeds: 12
+    num_graph_seeds: 12
+    interpolation_steps: 10000
     interpolation_dt: 0.03
     acceleration_scale: 1.0
     self_collision_check: true
-    maximum_trajectory_dt: 0.35
+    maximum_trajectory_dt: 0.25
     finetune_dt_scale: 1.05
     fixed_iters_trajopt: true
-    finetune_trajopt_iters: 150
+    finetune_trajopt_iters: 300
     minimize_jerk: true
 
     curobo_configure_collision_cache: true
-    curobo_collision_cache_obb: 64
-    curobo_collision_cache_mesh: 4
-    curobo_collision_cache_blox: 4
+    curobo_collision_cache_obb: 100
+    curobo_collision_cache_mesh: 10
+    curobo_collision_cache_blox: 10
     curobo_world_mesh_as_cuboid: true
     curobo_world_max_mesh_geometries_per_object: 8
     curobo_world_max_concurrent_adds: 8
@@ -49,8 +49,8 @@
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
-    mpc_horizon_steps: 40
-    mpc_command_speed_scale: 0.6
+    mpc_horizon_steps: 16
+    mpc_command_speed_scale: 0.5
     max_mpc_iterations: 1000
     mpc_step_max_attempts: 2
     mpc_execution_interface: stream_position
@@ -58,7 +58,7 @@
     mpc_stream_controller_topic: /forward_position_controller/commands
     mpc_deactivate_controller_name: joint_trajectory_controller
     controller_manager_switch_service: /controller_manager/switch_controller
-    mpc_infeasible_abort_steps: 50
+    mpc_infeasible_abort_steps: 5
     hybrid_mpc_report_path_invalidated: true
     hybrid_mpc_stall_steps: 25
     hybrid_mpc_stall_threshold: 0.01

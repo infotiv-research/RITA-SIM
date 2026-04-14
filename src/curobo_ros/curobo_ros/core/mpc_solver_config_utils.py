@@ -39,8 +39,20 @@ def build_mpc_load_from_robot_config_kwargs(node, *, world_coll_checker=None):
         'store_rollouts': True,
         'step_dt': float(get_or_declare_parameter_value(node, 'mpc_step_dt', 0.03)),
     }
+    requested_use_cuda_graph = bool(
+        get_or_declare_parameter_value(node, 'mpc_use_cuda_graph', False)
+    )
+    requested_use_cuda_graph_metrics = bool(
+        get_or_declare_parameter_value(node, 'mpc_use_cuda_graph_metrics', False)
+    )
     if world_coll_checker is not None:
         kwargs['world_coll_checker'] = world_coll_checker
+    if 'use_cuda_graph' in load_from_robot_config_parameters:
+        kwargs['use_cuda_graph'] = requested_use_cuda_graph
+    if 'use_cuda_graph_metrics' in load_from_robot_config_parameters:
+        kwargs['use_cuda_graph_metrics'] = requested_use_cuda_graph_metrics
+    if 'use_cuda_graph_full_step' in load_from_robot_config_parameters:
+        kwargs['use_cuda_graph_full_step'] = False
 
     override_particle_file = None
     if 'horizon' in load_from_robot_config_parameters:
@@ -56,7 +68,10 @@ def build_mpc_load_from_robot_config_kwargs(node, *, world_coll_checker=None):
                 {
                     'model': {
                         'horizon': requested_horizon,
-                    }
+                    },
+                    'mppi': {
+                        'use_cuda_graph': False,
+                    },
                 },
                 handle,
                 sort_keys=False,
