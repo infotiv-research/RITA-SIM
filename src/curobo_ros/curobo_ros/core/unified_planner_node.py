@@ -278,8 +278,10 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_debug_logging', False)
         self.declare_parameter('mpc_debug_log_every_n_steps', 10)
         self.declare_parameter('mpc_debug_publish_topic', True)
-        self.declare_parameter('mpc_goal_update_position_epsilon', 0.001)
-        self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.001)
+        # Ignore tiny RViz marker jitter so standalone MPC does not keep
+        # rebuilding its goal buffer for what is effectively the same target.
+        self.declare_parameter('mpc_goal_update_position_epsilon', 0.005)
+        self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.01)
         self.declare_parameter('mpc_goal_update_joint_epsilon', 0.001)
         self.declare_parameter('mpc_dynamic_world_updates_enabled', True)
 

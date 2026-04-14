@@ -6,6 +6,34 @@
 
 namespace curobo_rviz
 {
+  namespace
+  {
+    constexpr double kMpcGoalPublishPositionEpsilon = 0.005;  // meters
+    constexpr double kMpcGoalPublishOrientationEpsilon = 0.01;
+
+    bool shouldPublishMpcGoal(
+      const geometry_msgs::msg::Pose& previous_goal,
+      const geometry_msgs::msg::Pose& next_goal)
+    {
+      const double position_delta = std::max({
+        std::abs(next_goal.position.x - previous_goal.position.x),
+        std::abs(next_goal.position.y - previous_goal.position.y),
+        std::abs(next_goal.position.z - previous_goal.position.z),
+      });
+      const double orientation_delta = std::max({
+        std::abs(next_goal.orientation.x - previous_goal.orientation.x),
+        std::abs(next_goal.orientation.y - previous_goal.orientation.y),
+        std::abs(next_goal.orientation.z - previous_goal.orientation.z),
+        std::abs(next_goal.orientation.w - previous_goal.orientation.w),
+      });
+
+      return (
+        position_delta >= kMpcGoalPublishPositionEpsilon
+        || orientation_delta >= kMpcGoalPublishOrientationEpsilon
+      );
+    }
+  }  // namespace
+
   RvizArgsPanel::RvizArgsPanel(QWidget *parent)
     : Panel{parent}
     , ui_(std::make_unique<Ui::gui_parameters>())
@@ -29,6 +57,7 @@ namespace curobo_rviz
     , obstacle_update_frequency_{0.0}
     , last_generated_dt_{0.0}
     , controller_goal_handle_{nullptr}
+    , has_last_published_mpc_goal_{false}
   {
     // Extend the widget with all attributes and children from UI file
     ui_->setupUi(this);
@@ -315,6 +344,7 @@ namespace curobo_rviz
       if (is_mpc_tracking_active_) {
         mpc_goal_publisher_timer_->stop();
         is_mpc_tracking_active_ = false;
+        has_last_published_mpc_goal_ = false;
         RCLCPP_INFO(node_->get_logger(), "Stopped MPC tracking mode");
       }
 
@@ -373,6 +403,7 @@ namespace curobo_rviz
 
               // Start continuous goal publishing at 10Hz
               is_mpc_tracking_active_ = true;
+              has_last_published_mpc_goal_ = false;
               mpc_goal_publisher_timer_->start(100); // 100ms = 10Hz
 
               // Publish first goal immediately
@@ -413,6 +444,7 @@ namespace curobo_rviz
       if (is_mpc_tracking_active_) {
         mpc_goal_publisher_timer_->stop();
         is_mpc_tracking_active_ = false;
+        has_last_published_mpc_goal_ = false;
         RCLCPP_INFO(node_->get_logger(), "Stopped MPC tracking mode");
       }
 
@@ -1031,7 +1063,15 @@ namespace curobo_rviz
 
       // Get current marker pose and publish to MPC goal topic
       auto marker_pose = arrow_interaction_->get_pose();
+      if (
+        has_last_published_mpc_goal_
+        && !shouldPublishMpcGoal(last_published_mpc_goal_, marker_pose)
+      ) {
+        return;
+      }
       mpc_goal_pub_->publish(marker_pose);
+      last_published_mpc_goal_ = marker_pose;
+      has_last_published_mpc_goal_ = true;
 
       // Debug log (can be verbose, use sparingly)
       // RCLCPP_DEBUG(node_->get_logger(), "Published MPC goal at 10Hz");
