@@ -1,0 +1,14 @@
+<library path="curobo_hybrid_planning_plugins">
+  <class
+    name="curobo_hybrid_planning_plugins/CuroboGlobalPlanner"
+    type="curobo_hybrid_planning_plugins::CuroboGlobalPlanner"
+    base_class_type="moveit::hybrid_planning::GlobalPlannerInterface">
+    <description>MoveIt Hybrid Planning global planner that forwards requests to curobo_ros MotionGen.</description>
+  </class>
+  <class
+    name="curobo_hybrid_planning_plugins/CuroboMpcLocalSolver"
+    type="curobo_hybrid_planning_plugins::CuroboMpcLocalSolver"
+    base_class_type="moveit::hybrid_planning::LocalConstraintSolverInterface">
+    <description>MoveIt Hybrid Planning local constraint solver that steps curobo_ros MPC.</description>
+  </class>
+</library>

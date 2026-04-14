@@ -1,0 +1,4 @@
+global_planner_name: "curobo_hybrid_planning_plugins/CuroboGlobalPlanner"
+curobo_planner_namespace: "/unified_planner"
+joint_states_topic: "/moveit_joint_states"
+service_timeout_sec: 60.0
