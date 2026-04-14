@@ -1,0 +1,13 @@
+sensor_msgs/JointState current_state
+geometry_msgs/Pose target_pose
+float64[] target_joint_positions
+int8[] trajectory_constraints
+bool initialize_if_needed
+---
+bool success
+string message
+sensor_msgs/JointState joint_command
+bool goal_reached
+bool path_invalidated
+float64 position_error
+float64 rotation_error
