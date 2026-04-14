@@ -137,6 +137,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ros-${ROS_DISTRO}-ros2-controllers \
   && rm -rf /var/lib/apt/lists/*
 
+# moveit_hybrid_planning: apt preferred, source fallback into /opt/vendor_ws
+RUN apt-get update \
+  && if apt-cache show ros-${ROS_DISTRO}-moveit-hybrid-planning >/dev/null 2>&1; then \
+       apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-moveit-hybrid-planning; \
+     else \
+       echo "INFO: ros-${ROS_DISTRO}-moveit-hybrid-planning not in apt — building from source"; \
+       mkdir -p /opt/vendor_ws/src \
+       && git clone --depth 1 --branch 2.14.1 \
+            https://github.com/moveit/moveit2.git /tmp/moveit2 \
+       && cp -r /tmp/moveit2/moveit_hybrid_planning /opt/vendor_ws/src/ \
+       && rm -rf /tmp/moveit2 \
+       && bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash \
+            && cd /opt/vendor_ws \
+            && colcon build --packages-select moveit_hybrid_planning --cmake-args -DBUILD_TESTING=OFF"; \
+     fi \
+  && rm -rf /var/lib/apt/lists/*
+
 ENV DEBIAN_FRONTEND=
 ENV LD_LIBRARY_PATH=/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/x86_64-linux-gnu:/opt/ros/jazzy/lib
 
