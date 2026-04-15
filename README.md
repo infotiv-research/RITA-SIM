@@ -69,6 +69,11 @@ Start robot control:
 ./control.sh ros
 ```
 
+- **optionally** to build 3D Gaussian Splatting assets, download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
+Run `./contro.sh build_gaussian_splats` to convert a captured `.ply` into a USDZ that Isaac Sim can reference.
+
+TODO:  the lamp_edited.usdz appears in the content tab of isaac sim 
+
 ### IsaacSim simulation
 
 >  in `IsaacSim DevContainer` vscode container open a new terminal and run the following commands: 
@@ -134,10 +139,6 @@ Make sure that a motion backend (preferably curobo or cumotion) is up and runnin
 ####  Pick and Place Scenario
 
 [![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
-
-
-
-
 
 
 
@@ -217,32 +218,6 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 # Stop the humanoid animation
 ./control.sh humanoid stop
 ```
-
-
-## 3D Gaussian Splatting assets
-
-Download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut). A `rita-3dgrut` container (separate from the Isaac, ROS 2, and cuMotion containers) is used to convert a captured `.ply` into a USDZ that Isaac Sim can reference. The reason for the separate container is that, as of writing, 3DGRUT requires an older CUDA version than we use in the other containers.
-
-```bash
-# 1. One-time: build the 3dgrut container
-docker compose -f setup/docker-compose.3dgrut.yaml build
-
-# 2. Convert a 3DGS .ply into a .usdz (with an embedded collision hull)
-# TODO check the command, it should be like  : docker compose -f setup/docker-compose.3dgrut.yaml run --rm 3dgrut \
-  scripts/ply_to_usdz.sh \
-  assets/gaussian_splats/lamp/lamp_edited.ply \
-  assets/gaussian_splats/lamp/lamp_edited.usdz \
-  --with-collision
-
-# 3. When you're done converting assets, stop the container
-docker compose -f setup/docker-compose.3dgrut.yaml down
-```
-
-It works as this: `scripts/ply_to_usdz.sh` bind-mounts the repo into `/workspace` and runs `threedgrut.export.scripts.ply_to_usd` inside the container. With `--with-collision`, it also calls `scripts/gen_convex_hull_mesh.py` to build a convex-hull triangle mesh from the splat positions and embeds it via `threedgrut.export.scripts.add_mesh_to_usdz` as an invisible collider, so the robot treats the lamp as a solid obstacle while still rendering the photorealistic gaussian.
-
-
-TODO:  the lamp_edited.usdz appears in the content tab of isaac sim 
-
 
 # Credits
 
