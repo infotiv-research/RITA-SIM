@@ -69,7 +69,7 @@ Start robot control:
 ./control.sh ros
 ```
 
-**optional** : to build 3D Gaussian Splatting assets, download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
+**optional** : to build [3D Gaussian Splatting assets](https://youtu.be/E-g0UrML0Xc), download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
 Run `./contro.sh build_gaussian_splats` to convert a captured `.ply` into a USDZ that Isaac Sim can reference.
 
 
@@ -122,7 +122,7 @@ The OMPL planner is CPU only and should be set in Rviz2 under the context window
 
 #### hybrid  (cuRobo MotionGen + MPC)
 
-The hybrid planner combines cuRobo MotionGen as a **global planner** (computes a full collision-free trajectory) with cuRobo MPC as a **local planner** (reactively tracks the global trajectory at high frequency). When the MPC detects an obstacle it cannot avoid, MoveIt Hybrid Planning automatically triggers a global replan.
+The [hybrid planner](https://youtu.be/Himwl89G8vw) combines cuRobo MotionGen as a **global planner** (computes a full collision-free trajectory) with cuRobo MPC as a **local planner** (reactively tracks the global trajectory at high frequency). When the MPC detects an obstacle it cannot avoid, MoveIt Hybrid Planning automatically triggers a global replan.
 
 The hybrid launch starts MoveIt (move_group + RViz), the cuRobo trajectory planner, the cuRobo world bridge, and the MoveIt Hybrid Planning components in a single command.
 
