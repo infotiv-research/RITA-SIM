@@ -45,7 +45,7 @@ You have three configurations:
 - `UR10e cuMotion DevContainer`: cuMotion planner runtime.
 
 
-The best place to learn the available workflows, start components, and understand the command entrypoints is:
+The best place to learn the available workflows, start components, and understand the command entrypoints is open a new terminal by going to `Terminal -> New terminal` and type:
 
 ```bash
 ./control.sh help
@@ -53,30 +53,30 @@ The best place to learn the available workflows, start components, and understan
 
 ### ROS2
 
-> in container: `UR10 ROS2 DevContainer`.
+> in `UR10 ROS2 DevContainer` vscode container open a new terminal and run the following commands: 
 
 
-To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`) and rebuild the workspace:
+To stop launch processes and remove workspace build artifacts (`build/`, `install/`, `log/`) and rebuild the workspace. These commands only need to be executed once:
 
 ```bash
 ./control.sh clean
 ./control.sh build
 ```
 
-Inside the container terminal start robot control:
+Start robot control:
 
 ```bash
-./control.sh robot_control
+./control.sh ros
 ```
 
 ### IsaacSim simulation
 
->  in container: `IsaacSim DevContainer`.
+>  in `IsaacSim DevContainer` vscode container open a new terminal and run the following commands: 
 
-Inside the container terminal run **one of the follwing commands** and then click on  `Start the simulation` in the GUI:
+Inside the container terminal run **one of the following commands** and then click on  `Start the simulation` in the GUI:
 
 ```bash
-./control.sh sim # simple
+./control.sh sim # Simple
 
 ./control.sh sim_cylinder # Starts the scene with the moving cylinder obstacle enabled
 
@@ -84,68 +84,64 @@ Inside the container terminal run **one of the follwing commands** and then clic
 ```
 
 
-### UR10e arm
+### UR10e motion backend
 
-> in container: `UR10e cuMotion DevContainer`.
+> in `UR10e cuMotion DevContainer` vscode container open a new terminal and run the following commands: 
 
-Inside the container terminal execute one of the motion backend below:
+Inside the container terminal execute one of the motion backend **TODO** below:
 
 ```bash
 ./control.sh cumotion
 
 ./control.sh curobo
 
-./control.sh ompl # CPU based
+./control.sh ompl
+
+./control.sh hybrid
 ```
 
+
+
+
+#### cumotion
 Keep in mind that cuMotion can take a few minutes to start on first run.
-
 for cumotion workflow, start planning only after the `cuMotion is ready for planning queries` message appears. 
-The default planner is set to cuMotion. The OMPL planner is also available and can be set in Rviz2 under the context window.
-
-
-
+The default planner is set to cuMotion.
 curobo workflow launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
 
-### Hybrid Planner (cuRobo MotionGen + MPC)
+#### curobo
 
-> in container: `UR10e cuMotion DevContainer`.
+TODO
+
+#### ompl
+The OMPL planner is CPU only and should be set in Rviz2 under the context window.
+
+
+#### hybrid  (cuRobo MotionGen + MPC)
 
 The hybrid planner combines cuRobo MotionGen as a **global planner** (computes a full collision-free trajectory) with cuRobo MPC as a **local planner** (reactively tracks the global trajectory at high frequency). When the MPC detects an obstacle it cannot avoid, MoveIt Hybrid Planning automatically triggers a global replan.
 
-**Prerequisites** &mdash; start these first, in order:
-
-1. **Isaac Sim** &mdash; in the `IsaacSim DevContainer`:
-   ```bash
-   ./control.sh sim          # or sim_cylinder / sim_humanoid
-   ```
-2. **Robot control** &mdash; in the `UR10 ROS2 DevContainer`:
-   ```bash
-   ./control.sh robot_control
-   ```
-3. **Hybrid planner** &mdash; in the `UR10e cuMotion DevContainer`:
-   ```bash
-   ./control.sh hybrid
-   ```
-
-The hybrid launch starts MoveIt (move_group + RViz), the cuRobo trajectory planner, the cuRobo world bridge, and the MoveIt Hybrid Planning components in a single command. Do **not** run `./control.sh curobo` or `./control.sh cumotion` at the same time &mdash; the hybrid command replaces them.
+The hybrid launch starts MoveIt (move_group + RViz), the cuRobo trajectory planner, the cuRobo world bridge, and the MoveIt Hybrid Planning components in a single command.
 
 **Using RViz:** set a goal pose with the interactive marker and click **Plan & Execute**. The bridge intercepts the MoveGroup action, routes it through the hybrid pipeline, and streams MPC commands to the robot.
 
 
-## Robot controls
+### Running Control Scenarios
 
-Make sure that a motion backend (preferebly curobo or cumotion) is up and running before executing the pick and place control commands
+
+Make sure that a motion backend (preferably curobo or cumotion) is up and running before executing the control commands and the **simulation is started**.
+
+####  Pick and Place Scenario
 
 [![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
 
 
 
-### Pick and Place
 
 
 
-In the same container but new terminal:
+
+In the cuMotion container, open a new terminal and run the following commands:
 
 ```bash
 # Default: MoveIt backend with cuMotion pipeline
@@ -170,13 +166,16 @@ In the same container but new terminal:
 
 
 
+### Dynamic Environment
 
-### Run Moving Cylinder Obstacle
+
+In the Isaac Sim container, open a new terminal to modify the environment as below
+
+### moving cylinder
 
 [![SIMLAN demo](https://img.youtube.com/vi/3uVEBaCn-WE/0.jpg)](https://www.youtube.com/watch?v=3uVEBaCn-WE)
 
 
-In the Isaac Sim container, open a new terminal to configure and control the moving cylinder:
 
 ```bash
 # Set the cylinder to vertical up/down motion
@@ -200,7 +199,7 @@ The selected path is reused until you change it with another `set` command.
 
 
 
-### Run Humanoid Obstacle
+### moving human 
 
 [![SIMLAN demo](https://img.youtube.com/vi/47wNTquTGOw/0.jpg)](https://www.youtube.com/watch?v=47wNTquTGOw)
 
@@ -222,14 +221,15 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 
 ## 3D Gaussian Splatting assets
 
-The `assets/gaussian_splats/` folder have 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut). A `rita-3dgrut` container (separate from the Isaac, ROS 2, and cuMotion containers) is used to convert a captured `.ply` into a USDZ that Isaac Sim can reference. The reason for the separate container is that, as of writing, 3DGRUT requires an older CUDA version than we use in the other containers.
+Download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut). A `rita-3dgrut` container (separate from the Isaac, ROS 2, and cuMotion containers) is used to convert a captured `.ply` into a USDZ that Isaac Sim can reference. The reason for the separate container is that, as of writing, 3DGRUT requires an older CUDA version than we use in the other containers.
 
 ```bash
 # 1. One-time: build the 3dgrut container
 docker compose -f setup/docker-compose.3dgrut.yaml build
 
 # 2. Convert a 3DGS .ply into a .usdz (with an embedded collision hull)
-scripts/ply_to_usdz.sh \
+# TODO check the command, it should be like  : docker compose -f setup/docker-compose.3dgrut.yaml run --rm 3dgrut \
+  scripts/ply_to_usdz.sh \
   assets/gaussian_splats/lamp/lamp_edited.ply \
   assets/gaussian_splats/lamp/lamp_edited.usdz \
   --with-collision
@@ -239,6 +239,9 @@ docker compose -f setup/docker-compose.3dgrut.yaml down
 ```
 
 It works as this: `scripts/ply_to_usdz.sh` bind-mounts the repo into `/workspace` and runs `threedgrut.export.scripts.ply_to_usd` inside the container. With `--with-collision`, it also calls `scripts/gen_convex_hull_mesh.py` to build a convex-hull triangle mesh from the splat positions and embeds it via `threedgrut.export.scripts.add_mesh_to_usdz` as an invisible collider, so the robot treats the lamp as a solid obstacle while still rendering the photorealistic gaussian.
+
+
+TODO:  the lamp_edited.usdz appears in the content tab of isaac sim 
 
 
 # Credits

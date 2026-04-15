@@ -65,7 +65,7 @@ Core commands:
   kill            Stop ROS 2 launch processes started by this repo
 
 UR10 ROS2 container commands:
-  robot_control   Start robot control launch
+  ros             Start ROS 2 launch
   planning        Start MoveIt/planning launch
   ur10            Start both launches
 
@@ -188,7 +188,7 @@ clean() {
     echo "---[ clean complete ]---"
 }
 
-robot_control() {
+ros() {
     echo "---[ launching ur_robotiq_isaac_control ]---"
     source_ws
     cleanup_stale_robot_control_stack
@@ -339,8 +339,8 @@ elif [[ "$1" == "source_ws" ]]; then
     source_ws
 elif [[ "$1" == "kill" ]]; then
     kill_processes
-elif [[ "$1" == "robot_control" ]]; then
-    robot_control
+elif [[ "$1" == "ros" ]]; then
+    ros
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
 elif [[ "$1" == "sim_cylinder" ]]; then
