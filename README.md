@@ -69,10 +69,9 @@ Start robot control:
 ./control.sh ros
 ```
 
-- **optionally** to build 3D Gaussian Splatting assets, download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
+**optional** : to build 3D Gaussian Splatting assets, download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
 Run `./contro.sh build_gaussian_splats` to convert a captured `.ply` into a USDZ that Isaac Sim can reference.
 
-TODO:  the lamp_edited.usdz appears in the content tab of isaac sim 
 
 ### IsaacSim simulation
 
@@ -87,6 +86,8 @@ Inside the container terminal run **one of the following commands** and then cli
 
 ./control.sh sim_humanoid # Starts the scene with the humanoid obstacle
 ```
+
+**optional** : TODO: if you have built the gaussian splats assets, the `lamp_edited.usdz` appears in the content tab of isaac sim that can be moved into the scene.
 
 
 ### UR10e motion backend
@@ -104,9 +105,6 @@ Inside the container terminal execute one of the motion backend **TODO** below:
 
 ./control.sh hybrid
 ```
-
-
-
 
 #### cumotion
 Keep in mind that cuMotion can take a few minutes to start on first run.
@@ -130,17 +128,13 @@ The hybrid launch starts MoveIt (move_group + RViz), the cuRobo trajectory plann
 
 **Using RViz:** set a goal pose with the interactive marker and click **Plan & Execute**. The bridge intercepts the MoveGroup action, routes it through the hybrid pipeline, and streams MPC commands to the robot.
 
-
 ### Running Control Scenarios
-
 
 Make sure that a motion backend (preferably curobo or cumotion) is up and running before executing the control commands and the **simulation is started**.
 
 ####  Pick and Place Scenario
 
 [![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
-
-
 
 In the cuMotion container, open a new terminal and run the following commands:
 
