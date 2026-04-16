@@ -486,6 +486,24 @@ class MoveGroupOpsMixin:
             )
         return False
 
+    def _populate_start_state(self, request):
+        """Fill request.start_state with live joint positions.
+
+        Without this, the hybrid global planner reading /moveit_joint_states
+        may see stale zero-valued positions if no prior motion has been executed.
+        """
+        positions = self._wait_for_recent_joint_positions(timeout_sec=0.5)
+        if not positions:
+            self.get_logger().warn(
+                "No recent /joint_states available — start_state will be empty. "
+                "The planner will fall back to its own joint state subscription."
+            )
+            return
+        names = list(positions.keys())
+        vals = [positions[n] for n in names]
+        request.start_state.joint_state.name = names
+        request.start_state.joint_state.position = vals
+
     def _build_pose_goal(
         self,
         x,
@@ -539,6 +557,7 @@ class MoveGroupOpsMixin:
 
         request = MotionPlanRequest()
         request.group_name = PLANNING_GROUP
+        self._populate_start_state(request)
         self._configure_request_pipeline(request)
         request.num_planning_attempts = num_attempts or self.num_planning_attempts
         request.allowed_planning_time = planning_time or self.planning_time
@@ -630,6 +649,7 @@ class MoveGroupOpsMixin:
         """Build a MoveGroup.Goal for a joint-space target."""
         request = MotionPlanRequest()
         request.group_name = PLANNING_GROUP
+        self._populate_start_state(request)
         self._configure_request_pipeline(request, pipeline_override=pipeline_override)
         request.num_planning_attempts = num_attempts or self.num_planning_attempts
         request.allowed_planning_time = planning_time or self.planning_time

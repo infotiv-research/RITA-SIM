@@ -4,6 +4,7 @@ Launch file for the modular target-object pick-and-place node.
 Launch this after the selected planner backend is already running:
 - MoveIt backend: ur_robotiq_isaac_moveit.launch.py / ./control.sh cumotion
 - curobo backend: ur_robotiq_curobo.launch.py / ./control.sh curobo
+- Hybrid backend: curobo_hybrid_planning.launch.py / ./control.sh hybrid
 """
 
 import os
@@ -37,7 +38,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "motion_backend",
             default_value="moveit",
-            description="Motion backend: moveit or curobo_ros.",
+            description="Motion backend: moveit, curobo_ros, or hybrid.",
         ),
         DeclareLaunchArgument(
             "planning_pipeline",
@@ -48,6 +49,47 @@ def generate_launch_description():
             "curobo_planner_type",
             default_value="classic",
             description="Planner type hint for curobo backend: classic, multipoint, or mpc.",
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_enabled",
+            default_value="true",
+            description=(
+                "When motion_backend=hybrid, use direct cuRobo MotionGen for the "
+                "final grasp and drop descents."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_planner_type",
+            default_value="classic",
+            description=(
+                "Direct cuRobo planner type used for hybrid precision descents."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_grasp_enabled",
+            default_value="true",
+            description="Use direct cuRobo MotionGen for the final grasp descent.",
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_dropoff_enabled",
+            default_value="true",
+            description="Use direct cuRobo MotionGen for the final drop descent.",
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_planning_time_s",
+            default_value="0.0",
+            description=(
+                "Optional planning-time override for hybrid precision descents. "
+                "Use 0 to keep the existing stage-specific budgets."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "hybrid_precision_descent_num_attempts",
+            default_value="0",
+            description=(
+                "Optional num_planning_attempts override for hybrid precision descents. "
+                "Use 0 to keep the existing stage-specific budgets."
+            ),
         ),
         DeclareLaunchArgument(
             "curobo_carried_object_sphere_count",
@@ -191,6 +233,24 @@ def generate_launch_description():
                 "motion_backend": LaunchConfiguration("motion_backend"),
                 "planning_pipeline": LaunchConfiguration("planning_pipeline"),
                 "curobo_planner_type": LaunchConfiguration("curobo_planner_type"),
+                "hybrid_precision_descent_enabled": LaunchConfiguration(
+                    "hybrid_precision_descent_enabled"
+                ),
+                "hybrid_precision_descent_planner_type": LaunchConfiguration(
+                    "hybrid_precision_descent_planner_type"
+                ),
+                "hybrid_precision_descent_grasp_enabled": LaunchConfiguration(
+                    "hybrid_precision_descent_grasp_enabled"
+                ),
+                "hybrid_precision_descent_dropoff_enabled": LaunchConfiguration(
+                    "hybrid_precision_descent_dropoff_enabled"
+                ),
+                "hybrid_precision_descent_planning_time_s": LaunchConfiguration(
+                    "hybrid_precision_descent_planning_time_s"
+                ),
+                "hybrid_precision_descent_num_attempts": LaunchConfiguration(
+                    "hybrid_precision_descent_num_attempts"
+                ),
                 "curobo_carried_object_sphere_count": LaunchConfiguration(
                     "curobo_carried_object_sphere_count"
                 ),

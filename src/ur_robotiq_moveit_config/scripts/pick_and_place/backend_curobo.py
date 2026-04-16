@@ -157,28 +157,41 @@ class CuroboMotionBackend(MotionBackendInterface):
     def _capture_original_planner_state(self):
         if self._original_planner_id is not None:
             return True
-        if self.get_planners_client is None:
-            self.node.get_logger().warn(
-                "curobo get_planners service unavailable; pick-and-place will not restore the previous planner."
-            )
-            return False
-        if not self.get_planners_client.wait_for_service(timeout_sec=2.0):
-            self.node.get_logger().warn(
-                "curobo get_planners service unavailable; pick-and-place will not restore the previous planner."
-            )
-            return False
-        future = self.get_planners_client.call_async(GetPlanners.Request())
-        response = self._wait_future_result(future, timeout_sec=5.0)
-        if response is None or not bool(response.success):
+        if not self._refresh_active_planner_state(log_on_failure=True):
             self.node.get_logger().warn(
                 "Failed to query curobo active planner; pick-and-place will not restore the previous planner."
             )
             return False
 
-        self._original_planner_id = int(response.current_planner_id)
-        self._active_planner_id = self._original_planner_id
-        self._original_planner_type = self._planner_key_for_id(self._original_planner_id)
-        self._active_planner_type = self._original_planner_type
+        self._original_planner_id = int(self._active_planner_id)
+        self._original_planner_type = self._active_planner_type
+        return True
+
+    def _refresh_active_planner_state(self, timeout_sec=2.0, log_on_failure=False):
+        if self.get_planners_client is None:
+            if log_on_failure:
+                self.node.get_logger().warn(
+                    "curobo get_planners service unavailable; active planner state cannot be refreshed."
+                )
+            return False
+        if not self.get_planners_client.wait_for_service(timeout_sec=float(timeout_sec)):
+            if log_on_failure:
+                self.node.get_logger().warn(
+                    "curobo get_planners service unavailable; active planner state cannot be refreshed."
+                )
+            return False
+
+        future = self.get_planners_client.call_async(GetPlanners.Request())
+        response = self._wait_future_result(future, timeout_sec=5.0)
+        if response is None or not bool(response.success):
+            if log_on_failure:
+                self.node.get_logger().warn(
+                    "Failed to query curobo active planner state from /unified_planner/get_planners."
+                )
+            return False
+
+        self._active_planner_id = int(response.current_planner_id)
+        self._active_planner_type = self._planner_key_for_id(self._active_planner_id)
         return True
 
     def _planner_key_for_id(self, planner_id):
@@ -200,6 +213,7 @@ class CuroboMotionBackend(MotionBackendInterface):
             planner_type = self._planner_type_map["classic"]
             requested = "classic"
 
+        self._refresh_active_planner_state()
         if self._active_planner_type == requested:
             return True
 
@@ -623,7 +637,9 @@ class CuroboMotionBackend(MotionBackendInterface):
         planning_time=None,
         num_attempts=None,
         planner_type=None,
+        execution_mode="default",
     ):
+        del execution_mode
         orientation_attempts = [("configured", (qx, qy, qz, qw))]
         current_orientation = self.node._lookup_end_effector_orientation()
         if current_orientation is not None:

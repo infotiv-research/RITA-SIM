@@ -22,6 +22,7 @@ class MotionBackendInterface:
         planning_time=None,
         num_attempts=None,
         planner_type=None,
+        execution_mode="default",
     ):
         raise NotImplementedError
 

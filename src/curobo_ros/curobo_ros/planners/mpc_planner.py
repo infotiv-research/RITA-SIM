@@ -258,19 +258,54 @@ class MPCPlanner(TrajectoryPlanner):
             f"MPC: Initialized robot position to start_state: {[f'{x:.3f}' for x in start_position]}"
         )
 
+    @staticmethod
+    def _state_tensor_shape(state, attr_name):
+        """Return the shape of a JointState tensor field when present."""
+        tensor = getattr(state, attr_name, None)
+        return getattr(tensor, "shape", None)
+
+    def _goal_buffer_matches_layout(self, goal: Goal, requested_joint_goal: bool) -> bool:
+        """Return whether the current goal buffer can be updated in place."""
+        if self.goal_buffer is None or not hasattr(self.goal_buffer, "copy_"):
+            return False
+        if self.uses_joint_goal() != requested_joint_goal:
+            return False
+
+        current_state = getattr(self.goal_buffer, "current_state", None)
+        next_current_state = getattr(goal, "current_state", None)
+        if current_state is None or next_current_state is None:
+            return False
+        for attr_name in ("position", "velocity", "acceleration", "jerk"):
+            if (
+                self._state_tensor_shape(current_state, attr_name)
+                != self._state_tensor_shape(next_current_state, attr_name)
+            ):
+                return False
+
+        if requested_joint_goal:
+            goal_state = getattr(self.goal_buffer, "goal_state", None)
+            next_goal_state = getattr(goal, "goal_state", None)
+            if goal_state is None or next_goal_state is None:
+                return False
+            for attr_name in ("position", "velocity", "acceleration", "jerk"):
+                if (
+                    self._state_tensor_shape(goal_state, attr_name)
+                    != self._state_tensor_shape(next_goal_state, attr_name)
+                ):
+                    return False
+            return True
+
+        return getattr(self.goal_buffer, "goal_pose", None) is not None and getattr(goal, "goal_pose", None) is not None
+
     def _set_active_goal(self, start_state, goal_pose, goal_joint_positions):
         """Create and install the active MPC goal buffer."""
-        if self.goal_buffer is not None:
-            self.mpc.reset()
-        self.start_state = start_state
-        self.goal_pose = goal_pose
-        self.goal_joint_positions = goal_joint_positions
-        self.goal_state = (
+        requested_joint_goal = goal_joint_positions is not None
+        goal_state = (
             self._build_goal_state(start_state, goal_joint_positions)
-            if goal_joint_positions is not None
+            if requested_joint_goal
             else None
         )
-        self.last_goal_topic_raw = (
+        last_goal_topic_raw = (
             goal_pose.tolist(q_xyzw=True)
             if goal_pose is not None
             else None
@@ -278,12 +313,35 @@ class MPCPlanner(TrajectoryPlanner):
 
         goal = Goal(
             current_state=start_state,
-            goal_state=self.goal_state,
-            goal_pose=goal_pose if self.goal_state is None else Pose(),
+            goal_state=goal_state,
+            goal_pose=goal_pose if goal_state is None else Pose(),
         )
-        self.goal_buffer = self.mpc.setup_solve_single(goal, 1)
+        reused_goal_buffer = False
+        if self._goal_buffer_matches_layout(goal, requested_joint_goal):
+            try:
+                self.goal_buffer.copy_(goal)
+                reused_goal_buffer = True
+            except Exception as exc:
+                self.node.get_logger().warn(
+                    f"MPC goal-buffer reuse failed, rebuilding solver goal buffer instead: {exc}"
+                )
+                reused_goal_buffer = False
+
+        if not reused_goal_buffer:
+            self.goal_buffer = self.mpc.setup_solve_single(goal, 1)
+
+        self.start_state = start_state
+        self.goal_pose = goal_pose
+        self.goal_joint_positions = goal_joint_positions
+        self.goal_state = goal_state
+        self.last_goal_topic_raw = last_goal_topic_raw
         self.mpc.update_goal(self.goal_buffer)
         self.is_goal_active = True
+        self.node.get_logger().info(
+            "MPC goal buffer reused in place"
+            if reused_goal_buffer
+            else "MPC goal buffer rebuilt"
+        )
 
     def _goal_setup_metadata(self):
         """Return the common PlannerResult metadata for an initialized MPC goal."""

@@ -144,20 +144,21 @@ In the cuMotion container, open a new terminal and run the following commands:
 # Default: MoveIt backend with cuMotion pipeline
 ./control.sh pick_and_place
 
-# Optional: MoveIt backend with OMPL pipeline
+# Specify other planners like this:
 ./control.sh pick_and_place planning_pipeline:=ompl
 
-# Optional: curobo_ros backend
 ./control.sh pick_and_place motion_backend:=curobo_ros
 
-# Optional: curobo_ros backend with MPC execution
 ./control.sh pick_and_place motion_backend:=curobo_ros curobo_planner_type:=mpc
+
+./control.sh pick_and_place motion_backend:=hybrid
 ```
 
 - The launch command starts `pick_and_place_main.py`.
 - `motion_backend:=moveit` connects to MoveIt at `/move_action`.
 - `motion_backend:=curobo_ros` requests trajectories from `/unified_planner/generate_trajectory` and executes them through the existing arm controller action.
 - `motion_backend:=curobo_ros curobo_planner_type:=mpc` uses curobo MPC for each fixed-goal phase so the arm can react to moving obstacles while tracking the current phase target.
+- `motion_backend:=hybrid` routes transport motions through MoveIt Hybrid Planning
 - It publishes the target object as a planning-scene collision object and toggles attach/detach during grasp and release.
 - The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for the MoveIt backend.
 

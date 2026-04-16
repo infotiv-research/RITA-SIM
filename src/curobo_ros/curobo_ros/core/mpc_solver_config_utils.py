@@ -5,6 +5,7 @@ import tempfile
 
 import yaml
 
+from curobo.geom.sdf.world import CollisionCheckerType
 from curobo.wrap.reacher.mpc import MpcSolverConfig
 
 
@@ -45,6 +46,13 @@ def build_mpc_load_from_robot_config_kwargs(node, *, world_coll_checker=None):
     requested_use_cuda_graph_metrics = bool(
         get_or_declare_parameter_value(node, 'mpc_use_cuda_graph_metrics', False)
     )
+    # Use PRIMITIVE collision checker for MPC to avoid Warp mesh SDF kernel
+    # crashes after MpcSolver.reset() between steps.  All mesh obstacles are
+    # already voxelized into cuboids by the obstacle_manager, so OBB checks
+    # give equivalent coverage without the unstable Warp GPU state.
+    if 'collision_checker_type' in load_from_robot_config_parameters:
+        kwargs['collision_checker_type'] = CollisionCheckerType.PRIMITIVE
+        kwargs['collision_cache'] = {'obb': 100}
     if world_coll_checker is not None:
         kwargs['world_coll_checker'] = world_coll_checker
     if 'use_cuda_graph' in load_from_robot_config_parameters:

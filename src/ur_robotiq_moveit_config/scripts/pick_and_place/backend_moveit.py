@@ -42,8 +42,9 @@ class MoveItMotionBackend(MotionBackendInterface):
         planning_time=None,
         num_attempts=None,
         planner_type=None,
+        execution_mode="default",
     ):
-        del planner_type
+        del planner_type, execution_mode
         return self.node._move_to_pose(
             x,
             y,
