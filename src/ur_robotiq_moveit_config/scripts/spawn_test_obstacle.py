@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Spawn a test obstacle in cuRobo and publish an RViz marker.
+"""Spawn a predefined test obstacle in cuRobo and publish an RViz marker.
 
-Edit the variables below, then run:
-    ros2 run ur_robotiq_moveit_config spawn_test_obstacle.py
+Edit ``OBSTACLE_PRESETS`` below, then run:
+    ros2 run ur_robotiq_moveit_config spawn_test_obstacle.py -- --list
+    ros2 run ur_robotiq_moveit_config spawn_test_obstacle.py -- --preset wall
 """
 
+import argparse
 import math
+import zlib
 
 import rclpy
 from rclpy.node import Node
@@ -15,18 +18,39 @@ from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 from curobo_msgs.srv import AddObject
 
-# ── Edit these to configure your test obstacle ─────────────────────
-OBSTACLE_NAME = "test_wall"
-POSITION      = [-1.2, 0.8, 0.9]       # x, y, z in meters
-SIZE          = [0.5, 0.02, 0.4]       # x, y, z dimensions in meters
-COLOR         = [1.0, 0.0, 0.0, 0.8]  # r, g, b, a
-ROTATION_DEG  = [0.0, 0.0, 90.0]      # roll, pitch, yaw in degrees
+# ── Edit these to configure your obstacle presets ──────────────────
+OBSTACLE_PRESETS = {
+    "wall": {
+        "description": "Thin wall near the robot workspace",
+        "name": "test_wall",
+        "position": [-1.2, 0.8, 0.9],       # x, y, z in meters
+        "size": [0.5, 0.02, 0.4],           # x, y, z dimensions in meters
+        "color": [1.0, 0.0, 0.0, 0.8],      # r, g, b, a
+        "rotation_deg": [0.0, 0.0, 90.0],  # roll, pitch, yaw in degrees
+    },
+    "wall_p_p": {
+        "description": "Thin wall for p&p tests",
+        "name": "test_wall",
+        "position": [-1.1, 1.1, 0.9],       # x, y, z in meters
+        "size": [0.5, 0.02, 0.4],           # x, y, z dimensions in meters
+        "color": [1.0, 0.0, 0.0, 0.8],      # r, g, b, a
+        "rotation_deg": [0.0, 0.0, 45.0],  # roll, pitch, yaw in degrees
+    },
+
+}
+DEFAULT_PRESET = "wall"
 # ────────────────────────────────────────────────────────────────────
 
 # RViz marker settings — matches curobo_world_bridge topic so existing
 # RViz config picks it up automatically.
 MARKER_TOPIC = "/test_obstacle_markers"
 WORLD_FRAME = "world"
+MARKER_REPUBLISH_PERIOD_SEC = 0.25
+
+
+def _stable_marker_id(name):
+    """Return a deterministic RViz marker id for a given obstacle name."""
+    return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
 
 
 def _quaternion_from_euler_deg(rotation_deg):
@@ -50,9 +74,42 @@ def _quaternion_from_euler_deg(rotation_deg):
     )
 
 
-def spawn_in_curobo_and_publish_marker(name, position, size, color, rotation_deg):
+def _build_arg_parser():
+    parser = argparse.ArgumentParser(
+        description="Spawn one predefined test obstacle in cuRobo and RViz."
+    )
+    parser.add_argument(
+        "--preset",
+        "-p",
+        default=DEFAULT_PRESET,
+        choices=sorted(OBSTACLE_PRESETS.keys()),
+        help="Obstacle preset to spawn",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available obstacle presets and exit",
+    )
+    return parser
+
+
+def _print_available_presets():
+    print("Available obstacle presets:")
+    for preset_name in sorted(OBSTACLE_PRESETS.keys()):
+        preset = OBSTACLE_PRESETS[preset_name]
+        description = preset.get("description", "No description")
+        print(
+            f"  {preset_name}: {description} | "
+            f"name={preset['name']} position={preset['position']} "
+            f"size={preset['size']} rotation_deg={preset['rotation_deg']}"
+        )
+
+
+def spawn_in_curobo_and_publish_marker(
+    name, position, size, color, rotation_deg, ros_args=None
+):
     """Add the obstacle to cuRobo's collision world and publish an RViz marker."""
-    rclpy.init()
+    rclpy.init(args=ros_args)
     node = Node("spawn_test_obstacle")
     quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler_deg(rotation_deg)
 
@@ -66,7 +123,7 @@ def spawn_in_curobo_and_publish_marker(name, position, size, color, rotation_deg
     marker = Marker()
     marker.header.frame_id = WORLD_FRAME
     marker.ns = "test_obstacles"
-    marker.id = hash(name) % 2147483647
+    marker.id = _stable_marker_id(name)
     marker.type = Marker.CUBE
     marker.action = Marker.ADD
     marker.pose.position = Point(x=position[0], y=position[1], z=position[2])
@@ -84,6 +141,10 @@ def spawn_in_curobo_and_publish_marker(name, position, size, color, rotation_deg
     def _publish_marker():
         marker.header.stamp = node.get_clock().now().to_msg()
         marker_pub.publish(marker_array)
+
+    # Republish periodically so RViz still receives the marker if it
+    # subscribes late, reconnects, or uses volatile QoS.
+    node.create_timer(MARKER_REPUBLISH_PERIOD_SEC, _publish_marker)
 
     def _delete_marker():
         delete_marker = Marker()
@@ -140,9 +201,12 @@ def spawn_in_curobo_and_publish_marker(name, position, size, color, rotation_deg
         rclpy.shutdown()
         return False
 
-    # Keep the durable publisher alive so late-joining RViz subscribers
-    # still receive the last marker sample.
-    print(f"[RViz] Holding marker publisher on {MARKER_TOPIC} (Ctrl+C to stop)")
+    # Keep the publisher alive and republish so RViz can recover from
+    # missed initial samples or subscriber reconnects.
+    print(
+        f"[RViz] Republishing marker on {MARKER_TOPIC} every "
+        f"{MARKER_REPUBLISH_PERIOD_SEC:.1f}s (Ctrl+C to stop)"
+    )
     rclpy.spin(node)
 
     node.destroy_node()
@@ -151,11 +215,27 @@ def spawn_in_curobo_and_publish_marker(name, position, size, color, rotation_deg
 
 
 def main():
+    parser = _build_arg_parser()
+    args, ros_args = parser.parse_known_args()
+
+    if args.list:
+        _print_available_presets()
+        return
+
+    obstacle = OBSTACLE_PRESETS[args.preset]
     print(
-        f"Spawning obstacle '{OBSTACLE_NAME}' at {POSITION} "
-        f"with size {SIZE} and rotation {ROTATION_DEG} deg"
+        f"Spawning preset '{args.preset}' as obstacle '{obstacle['name']}' "
+        f"at {obstacle['position']} with size {obstacle['size']} "
+        f"and rotation {obstacle['rotation_deg']} deg"
     )
-    spawn_in_curobo_and_publish_marker(OBSTACLE_NAME, POSITION, SIZE, COLOR, ROTATION_DEG)
+    spawn_in_curobo_and_publish_marker(
+        obstacle["name"],
+        obstacle["position"],
+        obstacle["size"],
+        obstacle["color"],
+        obstacle["rotation_deg"],
+        ros_args=ros_args,
+    )
 
 
 if __name__ == "__main__":

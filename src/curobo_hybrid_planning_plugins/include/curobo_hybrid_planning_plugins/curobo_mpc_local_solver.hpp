@@ -34,8 +34,9 @@ public:
 private:
   bool buildCurrentState(sensor_msgs::msg::JointState& current_state) const;
   bool buildTargetPoseAndJoints(const robot_trajectory::RobotTrajectory& local_trajectory,
-                               geometry_msgs::msg::Pose& target_pose,
-                               std::vector<double>& target_joint_positions) const;
+                                const sensor_msgs::msg::JointState& current_state,
+                                geometry_msgs::msg::Pose& target_pose,
+                                std::vector<double>& target_joint_positions) const;
   moveit_msgs::action::LocalPlanner::Feedback makeFeedback(const std::string& feedback) const;
   bool callReset(bool restore_trajectory_controller) const;
 
@@ -65,6 +66,7 @@ private:
   std::string tip_link_;
   double step_dt_{ 0.03 };
   double service_timeout_sec_{ 1.0 };
+  double min_target_joint_delta_{ 0.01 };
   bool active_{ false };
   std::mutex solve_mutex_;
 };
