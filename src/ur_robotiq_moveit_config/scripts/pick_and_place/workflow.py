@@ -25,12 +25,18 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
+from rclpy.duration import Duration
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
 from .constants import (
     ARM_TRAJECTORY_ACTION,
     END_EFFECTOR_LINK,
     GRIPPER_TRAJECTORY_ACTION,
+    HOME_JOINT_VALUES,
+    JOINT_NAMES,
 )
 from .backend_curobo import CuroboMotionBackend
+from .backend_hybrid import HybridMotionBackend
 from .backend_moveit import MoveItMotionBackend
 from .cumotion_attachment_ops import CumotionAttachmentOpsMixin
 from .curobo_object_tracking import CuroboObjectTracker
@@ -71,6 +77,12 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("motion_backend", "moveit")
         self.declare_parameter("planning_pipeline", "cumotion")
         self.declare_parameter("curobo_planner_type", "classic")
+        self.declare_parameter("hybrid_precision_descent_enabled", True)
+        self.declare_parameter("hybrid_precision_descent_planner_type", "classic")
+        self.declare_parameter("hybrid_precision_descent_grasp_enabled", True)
+        self.declare_parameter("hybrid_precision_descent_dropoff_enabled", True)
+        self.declare_parameter("hybrid_precision_descent_planning_time_s", 0.0)
+        self.declare_parameter("hybrid_precision_descent_num_attempts", 0)
         self.declare_parameter("curobo_carried_object_sphere_count", 3)
         self.declare_parameter("grasp_offset_z", 0.00)
         self.declare_parameter("post_grasp_lift_z", 0.08)
@@ -151,6 +163,8 @@ class PickAndPlaceTargetObject(
             self.motion_backend = "curobo_ros"
         elif requested_motion_backend in {"moveit", "move_it"}:
             self.motion_backend = "moveit"
+        elif requested_motion_backend in {"hybrid", "hybrid_planner"}:
+            self.motion_backend = "hybrid"
         else:
             self.motion_backend = "moveit"
             self.get_logger().warn(
@@ -158,6 +172,24 @@ class PickAndPlaceTargetObject(
             )
         self.planning_pipeline = str(self.get_parameter("planning_pipeline").value).strip().lower()
         self.curobo_planner_type = str(self.get_parameter("curobo_planner_type").value)
+        self.hybrid_precision_descent_enabled = bool(
+            self.get_parameter("hybrid_precision_descent_enabled").value
+        )
+        self.hybrid_precision_descent_planner_type = str(
+            self.get_parameter("hybrid_precision_descent_planner_type").value
+        )
+        self.hybrid_precision_descent_grasp_enabled = bool(
+            self.get_parameter("hybrid_precision_descent_grasp_enabled").value
+        )
+        self.hybrid_precision_descent_dropoff_enabled = bool(
+            self.get_parameter("hybrid_precision_descent_dropoff_enabled").value
+        )
+        self.hybrid_precision_descent_planning_time_s = float(
+            self.get_parameter("hybrid_precision_descent_planning_time_s").value
+        )
+        self.hybrid_precision_descent_num_attempts = int(
+            self.get_parameter("hybrid_precision_descent_num_attempts").value
+        )
         self.curobo_carried_object_sphere_count = int(
             self.get_parameter("curobo_carried_object_sphere_count").value
         )
@@ -274,9 +306,10 @@ class PickAndPlaceTargetObject(
             int(self.cumotion_attachment_max_spheres),
         )
         self.gripper_touch_links = list(self.get_parameter("gripper_touch_links").value)
-        if self.motion_backend != "moveit":
+        if self.motion_backend not in ("moveit",):
             self.get_logger().info(
-                "motion_backend=curobo_ros selected. planning_pipeline is ignored for this run."
+                f"motion_backend={self.motion_backend} selected. "
+                "planning_pipeline parameter is ignored for this run."
             )
 
         # TF
@@ -351,6 +384,9 @@ class PickAndPlaceTargetObject(
         if str(self.motion_backend).lower() == "curobo_ros":
             self._motion_backend_adapter = CuroboMotionBackend(self)
             self._curobo_object_tracker = CuroboObjectTracker(self)
+        elif str(self.motion_backend).lower() == "hybrid":
+            self._motion_backend_adapter = HybridMotionBackend(self)
+            self._curobo_object_tracker = CuroboObjectTracker(self)
         else:
             self._motion_backend_adapter = MoveItMotionBackend(self)
             self._curobo_object_tracker = None
@@ -387,6 +423,106 @@ class PickAndPlaceTargetObject(
             f"debug_diagnostics={bool(self.dropoff_debug_diagnostics)}, "
             f"move_group_replan_attempts={int(self.move_group_replan_attempts)}"
         )
+        self.get_logger().info(
+            "Hybrid precision descents: "
+            f"enabled={bool(self.hybrid_precision_descent_enabled)}, "
+            f"planner_type={self.hybrid_precision_descent_planner_type}, "
+            f"grasp_enabled={bool(self.hybrid_precision_descent_grasp_enabled)}, "
+            f"dropoff_enabled={bool(self.hybrid_precision_descent_dropoff_enabled)}, "
+            f"override_planning_time="
+            f"{float(self.hybrid_precision_descent_planning_time_s):.2f}s, "
+            f"override_num_attempts={int(self.hybrid_precision_descent_num_attempts)}"
+        )
+
+    def _hybrid_precision_descent_requested(self, stage):
+        if str(self.motion_backend).lower() != "hybrid":
+            return False
+        if not bool(self.hybrid_precision_descent_enabled):
+            return False
+
+        normalized_stage = str(stage).strip().lower()
+        if normalized_stage == "grasp":
+            return bool(self.hybrid_precision_descent_grasp_enabled)
+        if normalized_stage in {"dropoff", "release", "retreat"}:
+            return bool(self.hybrid_precision_descent_dropoff_enabled)
+
+        self.get_logger().warn(
+            f"Unknown hybrid precision descent stage '{stage}', leaving hybrid path unchanged."
+        )
+        return False
+
+    def _resolve_hybrid_precision_descent_request(
+        self,
+        stage,
+        default_planning_time,
+        default_num_attempts,
+    ):
+        planning_time = (
+            None if default_planning_time is None else float(default_planning_time)
+        )
+        num_attempts = (
+            None if default_num_attempts is None else int(default_num_attempts)
+        )
+        if not self._hybrid_precision_descent_requested(stage):
+            return "default", None, planning_time, num_attempts
+
+        if float(self.hybrid_precision_descent_planning_time_s) > 0.0:
+            planning_time = float(self.hybrid_precision_descent_planning_time_s)
+        if int(self.hybrid_precision_descent_num_attempts) > 0:
+            num_attempts = int(self.hybrid_precision_descent_num_attempts)
+
+        planner_type = (
+            str(self.hybrid_precision_descent_planner_type).strip().lower() or "classic"
+        )
+        return "precision_descent", planner_type, planning_time, num_attempts
+
+    def _initial_home_via_controller(self):
+        """Move robot to home configuration via direct joint trajectory.
+
+        Bypasses motion planning entirely by sending a FollowJointTrajectory
+        goal straight to the arm controller.  This is used when the planner
+        cannot plan from the initial robot pose (e.g. hybrid backend's cuRobo
+        considers the URDF-default all-zeros configuration to be in collision).
+        """
+        self.get_logger().info(
+            "Moving to home via direct joint trajectory (no collision avoidance)..."
+        )
+        if not self.arm_traj_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error(
+                f"Arm trajectory action server not available after 30s: "
+                f"{ARM_TRAJECTORY_ACTION}"
+            )
+            return False
+
+        trajectory = JointTrajectory()
+        trajectory.joint_names = list(JOINT_NAMES)
+
+        point = JointTrajectoryPoint()
+        point.positions = [HOME_JOINT_VALUES[j] for j in JOINT_NAMES]
+        point.time_from_start = Duration(seconds=6.0).to_msg()
+        trajectory.points = [point]
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = trajectory
+
+        future = self.arm_traj_client.send_goal_async(goal)
+        goal_handle = self._wait_future_result(future, timeout_sec=30.0)
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error("Initial home trajectory goal was rejected!")
+            return False
+
+        result_future = goal_handle.get_result_async()
+        result = self._wait_future_result(result_future, timeout_sec=15.0)
+        if result is None:
+            self.get_logger().error(
+                "Initial home trajectory did not complete within timeout!"
+            )
+            return False
+
+        self.get_logger().info(
+            "Robot reached home configuration via direct trajectory."
+        )
+        return True
 
     def _delayed_execute(self):
         """Wait for wall-clock delay, then run the execution sequence."""
@@ -408,6 +544,15 @@ class PickAndPlaceTargetObject(
                 return
             if not self._motion_backend_adapter.wait_until_ready():
                 return
+
+            if str(self.motion_backend).lower() == "hybrid":
+                if not self._initial_home_via_controller():
+                    self.get_logger().error(
+                        "Failed to move robot to home via direct trajectory. "
+                        "Aborting — the hybrid planner cannot plan from the "
+                        "default all-zeros configuration."
+                    )
+                    return
 
             self.get_logger().info(
                 f"{self.motion_backend} motion backend connected. Starting sequence..."
@@ -471,8 +616,28 @@ class PickAndPlaceTargetObject(
             grasp_retry_count = max(1, int(self.grasp_retry_count))
             grasp_retry_step = float(self.grasp_retry_step_z)
             used_grasp_offset_z = float(self.grasp_offset_z)
+            grasp_planning_time = 20.0
+            grasp_num_attempts = 20
+            grasp_execution_mode = "default"
             grasp_planner_override = None
-            if (
+            (
+                grasp_execution_mode,
+                grasp_planner_override,
+                grasp_planning_time,
+                grasp_num_attempts,
+            ) = self._resolve_hybrid_precision_descent_request(
+                "grasp",
+                grasp_planning_time,
+                grasp_num_attempts,
+            )
+            if grasp_execution_mode == "precision_descent":
+                self.get_logger().info(
+                    "Hybrid precision grasp descent enabled: using direct cuRobo "
+                    f"planner='{grasp_planner_override}', "
+                    f"planning_time={float(grasp_planning_time):.2f}s, "
+                    f"num_attempts={int(grasp_num_attempts)}."
+                )
+            elif (
                 str(self.motion_backend).lower() == "curobo_ros"
                 and str(self.curobo_planner_type).strip().lower() == "mpc"
             ):
@@ -498,9 +663,10 @@ class PickAndPlaceTargetObject(
                     oqy,
                     oqz,
                     oqw,
-                    planning_time=20.0,
-                    num_attempts=20,
+                    planning_time=grasp_planning_time,
+                    num_attempts=grasp_num_attempts,
                     planner_type=grasp_planner_override,
+                    execution_mode=grasp_execution_mode,
                 )
                 if success:
                     break
@@ -511,8 +677,8 @@ class PickAndPlaceTargetObject(
             self.get_logger().info("Reached grasp pose. Gripper is around the object.")
 
             object_snapshot = None
-            if str(self.motion_backend).lower() == "moveit":
-            # Snapshot exact world geometry only for the MoveIt backend.
+            if str(self.motion_backend).lower() in ("moveit", "hybrid"):
+            # Snapshot exact world geometry for MoveIt and hybrid backends.
                 self.get_logger().info(
                     f"Snapshotting world collision geometry for '{self.target_object_id}'..."
                 )
@@ -667,6 +833,56 @@ class PickAndPlaceTargetObject(
                             f"Could not verify '{self.target_object_id}' in MoveIt's attached objects "
                             "before release planning."
                         )
+            elif str(self.motion_backend).lower() == "hybrid":
+                # Dual attachment: MoveIt planning scene (for global planner)
+                # + CuroboObjectTracker (for cuRobo MotionGen/MPC world model).
+                self.get_logger().info(
+                    f"Attaching '{self.target_object_id}' collision object to gripper "
+                    "in MoveIt planning scene for hybrid global planner..."
+                )
+                success = self._attach_object_collision(
+                    self.target_object_id,
+                    object_pose_after_lift,
+                    world_object_snapshot=object_snapshot,
+                    grasp_offset_z=used_grasp_offset_z,
+                    publish_surface_gripper_command=False,
+                )
+                if not success:
+                    self.get_logger().error(
+                        f"Failed to attach '{self.target_object_id}' collision object "
+                        "in MoveIt planning scene. Aborting."
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
+                if self.verify_attached_in_scene:
+                    attached_seen = self._wait_for_attached_object_in_planning_scene(
+                        self.target_object_id, timeout_sec=2.0
+                    )
+                    if attached_seen:
+                        self.get_logger().info(
+                            f"Verified '{self.target_object_id}' is attached in MoveIt's planning scene."
+                        )
+                    else:
+                        self.get_logger().warn(
+                            f"Could not verify '{self.target_object_id}' in MoveIt's attached objects."
+                        )
+
+                object_pose_in_ee = self._lookup_target_object_pose_in_end_effector(
+                    target_object_world_pose=object_pose_after_lift,
+                )
+                success = self._curobo_object_tracker.attach(
+                    object_pose_world=object_pose_after_lift,
+                    object_pose_in_ee=object_pose_in_ee,
+                )
+                if not success:
+                    self.get_logger().error(
+                        "Failed to attach carried-object spheres in cuRobo world model. Aborting."
+                    )
+                    self._detach_object_collision(
+                        self.target_object_id, publish_surface_gripper_command=False
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
             else:
                 object_pose_in_ee = self._lookup_target_object_pose_in_end_effector(
                     target_object_world_pose=object_pose_after_lift,
@@ -757,6 +973,28 @@ class PickAndPlaceTargetObject(
                     )
                     self._restore_suppressed_object_collision()
                     return
+            elif str(self.motion_backend).lower() == "hybrid":
+                # Dual detach: MoveIt planning scene + cuRobo world model.
+                self.get_logger().info(
+                    f"Releasing '{self.target_object_id}' attachment in MoveIt planning scene..."
+                )
+                success = self._detach_object_collision(self.target_object_id)
+                if not success:
+                    self.get_logger().error(
+                        f"Failed to release '{self.target_object_id}' attachment "
+                        "in MoveIt planning scene. Aborting."
+                    )
+                    self._curobo_object_tracker.detach(best_effort=True)
+                    self._restore_suppressed_object_collision()
+                    return
+
+                success = self._curobo_object_tracker.detach()
+                if not success:
+                    self.get_logger().error(
+                        "Failed to detach carried-object spheres from cuRobo world model. Aborting."
+                    )
+                    self._restore_suppressed_object_collision()
+                    return
             else:
                 self._publish_surface_gripper_command(False)
                 success = self._curobo_object_tracker.detach()
@@ -776,6 +1014,23 @@ class PickAndPlaceTargetObject(
                 f"y={float(self.release_pose_y):.3f}, "
                 f"z={retreat_z:.3f}"
             )
+            (
+                retreat_execution_mode,
+                retreat_planner_override,
+                retreat_planning_time,
+                retreat_num_attempts,
+            ) = self._resolve_hybrid_precision_descent_request(
+                "retreat",
+                float(self.dropoff_planning_time_s),
+                int(self.dropoff_num_planning_attempts),
+            )
+            if retreat_execution_mode == "precision_descent":
+                self.get_logger().info(
+                    "Hybrid precision retreat enabled: using direct cuRobo "
+                    f"planner='{retreat_planner_override}', "
+                    f"planning_time={float(retreat_planning_time):.2f}s, "
+                    f"num_attempts={int(retreat_num_attempts)}."
+                )
             success = self._motion_backend_adapter.move_to_pose(
                 float(self.release_pose_x),
                 float(self.release_pose_y),
@@ -784,8 +1039,10 @@ class PickAndPlaceTargetObject(
                 release_qy,
                 release_qz,
                 release_qw,
-                planning_time=float(self.dropoff_planning_time_s),
-                num_attempts=int(self.dropoff_num_planning_attempts),
+                planning_time=float(retreat_planning_time),
+                num_attempts=int(retreat_num_attempts),
+                planner_type=retreat_planner_override,
+                execution_mode=retreat_execution_mode,
             )
             if not success:
                 self.get_logger().error("Failed to retreat upward after release. Aborting.")
@@ -839,6 +1096,25 @@ class PickAndPlaceTargetObject(
 
         planning_time = max(0.1, float(self.dropoff_planning_time_s))
         num_attempts = max(1, int(self.dropoff_num_planning_attempts))
+        (
+            dropoff_execution_mode,
+            dropoff_planner_override,
+            planning_time,
+            num_attempts,
+        ) = self._resolve_hybrid_precision_descent_request(
+            "dropoff",
+            planning_time,
+            num_attempts,
+        )
+        planning_time = max(0.1, float(planning_time))
+        num_attempts = max(1, int(num_attempts))
+        if dropoff_execution_mode == "precision_descent":
+            self.get_logger().info(
+                "Hybrid precision dropoff descent enabled: using direct cuRobo "
+                f"planner='{dropoff_planner_override}', "
+                f"planning_time={planning_time:.2f}s, "
+                f"num_attempts={num_attempts}."
+            )
         position_tolerance = max(1e-4, float(self.dropoff_position_tolerance_m))
         strict_orientation_tol_xy = max(
             1e-4, float(self.dropoff_orientation_tolerance_rad)
@@ -866,10 +1142,20 @@ class PickAndPlaceTargetObject(
         )
         max_pose_retries = max(1, int(self.dropoff_max_pose_retries))
 
-        attempt_specs = [
-            ("configured", "strict", release_orientation, strict_orientation_tol_xyz),
-            ("configured", "relaxed", release_orientation, relaxed_orientation_tol_xyz),
-        ]
+        if dropoff_execution_mode == "precision_descent":
+            attempt_specs = [
+                (
+                    "configured",
+                    "direct",
+                    release_orientation,
+                    strict_orientation_tol_xyz,
+                ),
+            ]
+        else:
+            attempt_specs = [
+                ("configured", "strict", release_orientation, strict_orientation_tol_xyz),
+                ("configured", "relaxed", release_orientation, relaxed_orientation_tol_xyz),
+            ]
 
         if self.dropoff_use_current_orientation_fallback:
             current_orientation = self._lookup_end_effector_orientation()
@@ -886,13 +1172,13 @@ class PickAndPlaceTargetObject(
                 attempt_specs.append(
                     (
                         "current_ee",
-                        "relaxed",
+                        "direct" if dropoff_execution_mode == "precision_descent" else "relaxed",
                         current_orientation,
                         relaxed_orientation_tol_xyz,
                     )
                 )
 
-        if max_pose_retries > len(attempt_specs):
+        if dropoff_execution_mode != "precision_descent" and max_pose_retries > len(attempt_specs):
             attempt_specs.extend([attempt_specs[-1]] * (max_pose_retries - len(attempt_specs)))
         else:
             attempt_specs = attempt_specs[:max_pose_retries]
@@ -917,51 +1203,76 @@ class PickAndPlaceTargetObject(
                 f"planning_time={planning_time:.2f}s, "
                 f"num_planning_attempts={num_attempts}"
             )
-            goal = self._build_pose_goal(
-                target_x,
-                target_y,
-                target_z,
-                oqx,
-                oqy,
-                oqz,
-                oqw,
-                planning_time=planning_time,
-                num_attempts=num_attempts,
-                constrain_orientation=True,
-                orientation_tolerance=None,
-                orientation_tolerance_xyz=orient_tol_xyz,
-                position_tolerance_m=position_tolerance,
-            )
-            debug_meta = {
-                "stage": "dropoff",
-                "attempt_id": attempt_id,
-                "attempt_index": int(idx),
-                "total_attempts": int(total_attempts),
-                "attempt_source": source,
-                "attempt_mode": mode,
-                "target_object_id": str(self.target_object_id),
-                "target_pose_world": (
-                    float(target_x),
-                    float(target_y),
-                    float(target_z),
-                    float(oqx),
-                    float(oqy),
-                    float(oqz),
-                    float(oqw),
-                ),
-                "orientation_tolerance_xyz": (
-                    float(tol_x),
-                    float(tol_y),
-                    float(tol_z),
-                ),
-                "position_tolerance_m": float(position_tolerance),
-            }
-            if self._send_move_group_goal(
-                goal,
-                context_label=attempt_id,
-                debug_meta=debug_meta,
-                run_failure_diagnostics=bool(self.dropoff_debug_diagnostics),
-            ):
+            if dropoff_execution_mode == "precision_descent":
+                if self._motion_backend_adapter.move_to_pose(
+                    target_x,
+                    target_y,
+                    target_z,
+                    oqx,
+                    oqy,
+                    oqz,
+                    oqw,
+                    planning_time=planning_time,
+                    num_attempts=num_attempts,
+                    planner_type=dropoff_planner_override,
+                    execution_mode=dropoff_execution_mode,
+                ):
+                    self.get_logger().info(
+                        f"Dropoff precision descent succeeded on attempt {idx}/{total_attempts}: "
+                        f"source={source}, mode={mode}, attempt_id={attempt_id}."
+                    )
+                    return True
+            else:
+                goal = self._build_pose_goal(
+                    target_x,
+                    target_y,
+                    target_z,
+                    oqx,
+                    oqy,
+                    oqz,
+                    oqw,
+                    planning_time=planning_time,
+                    num_attempts=num_attempts,
+                    constrain_orientation=True,
+                    orientation_tolerance=None,
+                    orientation_tolerance_xyz=orient_tol_xyz,
+                    position_tolerance_m=position_tolerance,
+                )
+                debug_meta = {
+                    "stage": "dropoff",
+                    "attempt_id": attempt_id,
+                    "attempt_index": int(idx),
+                    "total_attempts": int(total_attempts),
+                    "attempt_source": source,
+                    "attempt_mode": mode,
+                    "target_object_id": str(self.target_object_id),
+                    "target_pose_world": (
+                        float(target_x),
+                        float(target_y),
+                        float(target_z),
+                        float(oqx),
+                        float(oqy),
+                        float(oqz),
+                        float(oqw),
+                    ),
+                    "orientation_tolerance_xyz": (
+                        float(tol_x),
+                        float(tol_y),
+                        float(tol_z),
+                    ),
+                    "position_tolerance_m": float(position_tolerance),
+                }
+                if not self._send_move_group_goal(
+                    goal,
+                    context_label=attempt_id,
+                    debug_meta=debug_meta,
+                    run_failure_diagnostics=bool(self.dropoff_debug_diagnostics),
+                ):
+                    self.get_logger().warn(
+                        f"Dropoff planning attempt {idx}/{total_attempts} failed "
+                        f"(attempt_id={attempt_id})."
+                    )
+                    continue
                 if source == "current_ee" and mode == "relaxed":
                     achieved_orientation = self._lookup_end_effector_orientation()
                     cfg_qx, cfg_qy, cfg_qz, cfg_qw = release_orientation
@@ -1047,6 +1358,10 @@ class PickAndPlaceTargetObject(
         if self._curobo_object_tracker is not None:
             success = self._curobo_object_tracker.detach(best_effort=best_effort) and success
         success = self._detach_object_from_cumotion(best_effort=best_effort) and success
+        if self._attached_object_id is not None:
+            success = self._detach_object_collision(
+                publish_surface_gripper_command=False,
+            ) and success
         return success or best_effort
 
     def _restore_suppressed_object_collision(self):

@@ -258,6 +258,7 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_horizon_steps', 30)
         self.declare_parameter('mpc_use_cuda_graph', False)
         self.declare_parameter('mpc_use_cuda_graph_metrics', False)
+        self.declare_parameter('mpc_force_shift_steps_one', False)
         self.declare_parameter('mpc_command_speed_scale', 1.0)
         self.declare_parameter('mpc_step_max_attempts', 2)
         self.declare_parameter('mpc_execution_interface', 'trajectory_action')
@@ -1630,7 +1631,9 @@ class UnifiedPlannerNode(Node):
                 mpc_step_dt = float(self.get_parameter('mpc_step_dt').value)
                 mpc_horizon = max(int(self.get_parameter('mpc_horizon_steps').value), 2)
                 now = time.monotonic()
-                if self._hybrid_mpc_last_step_time is not None and mpc_step_dt > 0:
+                if bool(self.get_parameter('mpc_force_shift_steps_one').value):
+                    shift_steps = 1
+                elif self._hybrid_mpc_last_step_time is not None and mpc_step_dt > 0:
                     elapsed = now - self._hybrid_mpc_last_step_time
                     shift_steps = max(1, min(round(elapsed / mpc_step_dt), mpc_horizon - 1))
                 else:
@@ -1780,6 +1783,7 @@ class UnifiedPlannerNode(Node):
                         f"goal_setup={(plan_finished_at - plan_started_at) * 1000.0:.1f}ms, "
                         f"world_sync={(sync_finished_at - sync_started_at) * 1000.0:.1f}ms, "
                         f"solve={(solve_finished_at - solve_started_at) * 1000.0:.1f}ms, "
+                        f"shift_steps={shift_steps}, "
                         f"goal_reached={response.goal_reached}, "
                         f"path_invalidated={response.path_invalidated}, "
                         f"feasible={step_feasible}"
