@@ -33,6 +33,9 @@ For Linux GUI forwarding, run this after each reboot:
 xhost +local:docker
 ```
 
+**optional** : to build [3D Gaussian Splatting assets](https://youtu.be/E-g0UrML0Xc), download the [gaussian_splats package](https://infotiv-my.sharepoint.com/:f:/r/personal/hamid_ebadi_infotiv_se/Documents/SIMLAN_VIDEOS/ROBOTIC_ARM_VIDEOS/gaussian_splats?csf=1&web=1&e=QkEGdj) and place the gaussian_splats folder in [`assets/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
+On the host system: Run `./control.sh build_gaussian_splats` to convert all source `.ply` files under `assets/` into USDZ files with embedded collision that Isaac Sim can reference.
+
 ## DevContainers
 
 Clone and open the project in VS Code.
@@ -69,8 +72,6 @@ Start robot control:
 ./control.sh ros
 ```
 
-**optional** : to build [3D Gaussian Splatting assets](https://youtu.be/E-g0UrML0Xc), download the [gaussian_splats package](https://www.sharepoint/....TODO) and place it in [`assets/gaussian_splats/`] folder. It contains 3D Gaussian Splats that are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut).
-Run `./contro.sh build_gaussian_splats` to convert a captured `.ply` into a USDZ that Isaac Sim can reference.
 
 
 ### IsaacSim simulation
@@ -87,14 +88,14 @@ Inside the container terminal run **one of the following commands** and then cli
 ./control.sh sim_humanoid # Starts the scene with the humanoid obstacle
 ```
 
-**optional** : TODO: if you have built the gaussian splats assets, the `lamp_edited.usdz` appears in the content tab of isaac sim that can be moved into the scene.
+**optional** : If you have built the Gaussian splat assets, the generated `.usdz` files are available in Isaac Sim through the Content Browser in 'My computer' under`/ros2_ws/assets/`. To add one to your scene, locate the asset you want and drag it from the Content Browser into the viewport or onto the Stage.
 
 
 ### UR10e motion backend
 
 > in `UR10e cuMotion DevContainer` vscode container open a new terminal and run the following commands: 
 
-Inside the container terminal execute one of the motion backend **TODO** below:
+Inside the container terminal execute one of the motion backend:
 
 ```bash
 ./control.sh cumotion
@@ -109,12 +110,13 @@ Inside the container terminal execute one of the motion backend **TODO** below:
 #### cumotion
 Keep in mind that cuMotion can take a few minutes to start on first run.
 for cumotion workflow, start planning only after the `cuMotion is ready for planning queries` message appears. 
-The default planner is set to cuMotion.
-curobo workflow launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz configuration.
+The default planner is set to cuMotion. cuMotion builds on cuRobo and is exposed to MoveIt 2 through a MoveIt plugin.
 
 #### curobo
 
-TODO
+Curobo can take a few minutes to start on first run.
+Start planning only after the `Unified planner ready with initial planner: classic` message appears.
+Curobo workflow launches `curobo_ros`, the curobo world bridge, the trajectory forwarder used for RViz execution, and the dedicated curobo RViz.
 
 #### ompl
 The OMPL planner is CPU only and should be set in Rviz2 under the context window.

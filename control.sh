@@ -74,6 +74,8 @@ Isaac container commands:
   sim_cylinder    Start Isaac Sim loaded with flowrack_crates_and_robot_cylinder.usd (The same scene but scaled down and with an moving cylinder (obstacle)
                   for dynamic path planning)
   sim_humanoid    Start Isaac Sim loaded with flowrack_crates_and_robot_humanoid.usd
+  build_gaussian_splats
+                  Build the 3DGRUT container and convert all source .ply files under assets/ into sibling .usdz files with collision.
   cylinder        Control cylinder movement.
                   Usage:
                     ./control.sh cylinder set <number>  - Set the desired path number for cylinder movement (2, 3 or 4)
@@ -220,6 +222,21 @@ isaac_sim_humanoid() {
     ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/flowrack_crates_and_robot_humanoid.usd"
 }
 
+build_gaussian_splats() {
+    (
+        set -euo pipefail
+        cd "${SCRIPT_DIR}"
+
+        trap 'docker compose -f setup/docker-compose.3dgrut.yaml down' EXIT
+
+        docker compose -f setup/docker-compose.3dgrut.yaml build
+
+        find assets -type f -name '*.ply' ! -name '*_hull.ply' | while read -r ply_file; do
+            ./scripts/ply_to_usdz.sh "$ply_file" "${ply_file%.ply}.usdz" --with-collision </dev/null
+        done
+    )
+}
+
 cylinder_action() {
     source_ws
 
@@ -347,6 +364,8 @@ elif [[ "$1" == "sim_cylinder" ]]; then
     isaac_sim_cylinder
 elif [[ "$1" == "sim_humanoid" ]]; then
     isaac_sim_humanoid
+elif [[ "$1" == "build_gaussian_splats" ]]; then
+    build_gaussian_splats
 elif [[ "$1" == "ompl" ]]; then
     ompl
 elif [[ "$1" == "cumotion" ]]; then
