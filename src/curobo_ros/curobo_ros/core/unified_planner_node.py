@@ -270,6 +270,7 @@ class UnifiedPlannerNode(Node):
             '/joint_trajectory_controller/follow_joint_trajectory',
         )
         self.declare_parameter('controller_manager_switch_service', '/controller_manager/switch_controller')
+        self.declare_parameter('reject_colliding_request_joint_states', False)
         self.declare_parameter('mpc_infeasible_abort_steps', 10)
         self.declare_parameter('hybrid_mpc_report_path_invalidated', True)
         self.declare_parameter('hybrid_mpc_stall_steps', 25)
@@ -1278,6 +1279,51 @@ class UnifiedPlannerNode(Node):
             self.get_logger().debug(f'Collision debug unavailable: {exc}')
             return None
 
+    @staticmethod
+    def _format_collision_debug(label, collision_debug):
+        """Format world-collision debug info for logs and operator feedback."""
+        if collision_debug is None:
+            return f"{label}(collision_debug=unavailable)"
+
+        return (
+            f"{label}(collision_free={collision_debug['world_collision_free']}, "
+            f"min_sphere_dist={collision_debug['min_sphere_dist']:.5f}, "
+            f"max_sphere_dist={collision_debug['max_sphere_dist']:.5f})"
+        )
+
+    def _validate_request_joint_states(self, start_joint_pose, request):
+        """Reject plans whose provided joint-state endpoints already collide with the world."""
+        if not bool(self.get_parameter('reject_colliding_request_joint_states').value):
+            return None
+
+        failing_states = []
+        debug_parts = []
+
+        start_debug = self.get_state_collision_debug(start_joint_pose)
+        debug_parts.append(self._format_collision_debug('start', start_debug))
+        if start_debug is not None and not start_debug['world_collision_free']:
+            failing_states.append(
+                f"start(min_sphere_dist={start_debug['min_sphere_dist']:.5f})"
+            )
+
+        goal_joint_positions = list(getattr(request, 'target_joint_positions', []) or [])
+        if goal_joint_positions:
+            goal_debug = self.get_state_collision_debug(goal_joint_positions)
+            debug_parts.append(self._format_collision_debug('goal', goal_debug))
+            if goal_debug is not None and not goal_debug['world_collision_free']:
+                failing_states.append(
+                    f"goal(min_sphere_dist={goal_debug['min_sphere_dist']:.5f})"
+                )
+
+        if not failing_states:
+            return None
+
+        return (
+            "Rejected planning request because request joint state collides with the world: "
+            f"{', '.join(failing_states)}. "
+            f"Collision debug: {', '.join(debug_parts)}"
+        )
+
     def activate_mpc_streaming_controller(self, wait_timeout_sec=2.0):
         """Switch ros2_control to the configured MPC streaming controller."""
         return self._switch_controllers(
@@ -1860,6 +1906,15 @@ class UnifiedPlannerNode(Node):
 
             # Initialize planner if needed
             self._setup_planner(planner)
+
+            validation_error = self._validate_request_joint_states(start_joint_pose, request)
+            if validation_error is not None:
+                self.get_logger().error(validation_error)
+                response.success = False
+                response.message = validation_error
+                response.trajectory = []
+                response.dt = 0.0
+                return response
 
             # Plan
             # Each planner extracts its goal from the request (target_pose or target_poses)

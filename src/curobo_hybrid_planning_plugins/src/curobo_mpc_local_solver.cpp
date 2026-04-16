@@ -1,6 +1,8 @@
 #include "curobo_hybrid_planning_plugins/curobo_mpc_local_solver.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include <geometry_msgs/msg/pose.hpp>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.hpp>
@@ -30,6 +32,7 @@ bool CuroboMpcLocalSolver::initialize(const rclcpp::Node::SharedPtr& node,
       link_names.empty() ? std::string() : link_names.back());
   step_dt_ = node_->declare_parameter<double>("hybrid_mpc_step_dt", 0.03);
   service_timeout_sec_ = node_->declare_parameter<double>("hybrid_mpc_service_timeout_sec", 1.0);
+  min_target_joint_delta_ = node_->declare_parameter<double>("hybrid_mpc_min_target_joint_delta", 0.01);
   const std::string step_service_name = node_->declare_parameter<std::string>(
       "hybrid_mpc_step_service", "/unified_planner/mpc_step");
   const std::string reset_service_name = node_->declare_parameter<std::string>(
@@ -85,7 +88,7 @@ moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::solve(
 
   geometry_msgs::msg::Pose target_pose;
   std::vector<double> target_joint_positions;
-  if (!buildTargetPoseAndJoints(local_trajectory, target_pose, target_joint_positions))
+  if (!buildTargetPoseAndJoints(local_trajectory, current_state, target_pose, target_joint_positions))
   {
     active_ = false;
     return makeFeedback(std::string(moveit::hybrid_planning::toString(
@@ -173,6 +176,7 @@ bool CuroboMpcLocalSolver::buildCurrentState(sensor_msgs::msg::JointState& curre
 }
 
 bool CuroboMpcLocalSolver::buildTargetPoseAndJoints(const robot_trajectory::RobotTrajectory& local_trajectory,
+                                                    const sensor_msgs::msg::JointState& current_state,
                                                     geometry_msgs::msg::Pose& target_pose,
                                                     std::vector<double>& target_joint_positions) const
 {
@@ -181,7 +185,33 @@ bool CuroboMpcLocalSolver::buildTargetPoseAndJoints(const robot_trajectory::Robo
     return false;
   }
 
-  const moveit::core::RobotState& target_state = local_trajectory.getWayPoint(local_trajectory.getWayPointCount() - 1);
+  const std::size_t waypoint_count = local_trajectory.getWayPointCount();
+  const auto& current_positions = current_state.position;
+  std::size_t target_index = waypoint_count - 1;
+
+  for (std::size_t index = 0; index < waypoint_count; ++index)
+  {
+    std::vector<double> waypoint_positions;
+    local_trajectory.getWayPoint(index).copyJointGroupPositions(joint_model_group_, waypoint_positions);
+    if (waypoint_positions.size() != current_positions.size())
+    {
+      continue;
+    }
+
+    double max_delta = 0.0;
+    for (std::size_t joint_index = 0; joint_index < waypoint_positions.size(); ++joint_index)
+    {
+      max_delta = std::max(max_delta, std::abs(waypoint_positions[joint_index] - current_positions[joint_index]));
+    }
+
+    if (max_delta > min_target_joint_delta_)
+    {
+      target_index = index;
+      break;
+    }
+  }
+
+  const moveit::core::RobotState& target_state = local_trajectory.getWayPoint(target_index);
   target_state.copyJointGroupPositions(joint_model_group_, target_joint_positions);
   if (target_joint_positions.empty())
   {

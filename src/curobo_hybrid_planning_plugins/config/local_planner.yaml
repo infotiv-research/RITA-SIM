@@ -13,6 +13,7 @@ collision_object_topic: "/collision_object"
 joint_states_topic: "/moveit_joint_states"
 hybrid_mpc_tip_link: "TCP_point"
 hybrid_mpc_step_dt: 0.03
+hybrid_mpc_min_target_joint_delta: 0.01
 hybrid_mpc_service_timeout_sec: 10.0
 hybrid_mpc_step_service: "/unified_planner/mpc_step"
 hybrid_mpc_reset_service: "/unified_planner/mpc_reset"

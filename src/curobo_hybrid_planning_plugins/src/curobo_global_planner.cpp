@@ -295,18 +295,21 @@ bool CuroboGlobalPlanner::buildStartState(const moveit_msgs::msg::MotionPlanRequ
   start_state_msg.name = ordered_joint_names;
 
   std::unordered_map<std::string, double> position_by_name;
-  if (live_has_state)
-  {
-    for (std::size_t index = 0; index < latest_joint_state.name.size(); ++index)
-    {
-      position_by_name[latest_joint_state.name[index]] = latest_joint_state.position[index];
-    }
-  }
   if (request_has_state)
   {
     for (std::size_t index = 0; index < request_joint_state.name.size(); ++index)
     {
       position_by_name[request_joint_state.name[index]] = request_joint_state.position[index];
+    }
+  }
+  if (live_has_state)
+  {
+    // Hybrid replanning must start from the measured robot state. The original
+    // motion request can still carry the stale start configuration from the
+    // first global plan, so let live data override request values.
+    for (std::size_t index = 0; index < latest_joint_state.name.size(); ++index)
+    {
+      position_by_name[latest_joint_state.name[index]] = latest_joint_state.position[index];
     }
   }
 
