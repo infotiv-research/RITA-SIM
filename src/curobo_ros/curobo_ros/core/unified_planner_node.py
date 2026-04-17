@@ -2292,9 +2292,10 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         node.get_logger().info('Keyboard interrupt, shutting down.\n')
-
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

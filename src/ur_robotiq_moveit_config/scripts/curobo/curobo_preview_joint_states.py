@@ -114,7 +114,8 @@ def main(args=None):
         with node._lock:
             node._stop_active_worker_locked()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ def _generate_runtime_robot_config(xrdf_path, urdf_path, override_path, gripper_
     content_path = ContentPath(
         robot_xrdf_absolute_path=xrdf_path,
         robot_urdf_absolute_path=urdf_path,
-        robot_asset_absolute_path="/",
+        robot_asset_absolute_path=".",
     )
     config = convert_xrdf_to_curobo(content_path=content_path)
     override_config = _load_yaml_file(override_path)
@@ -141,7 +141,7 @@ def _generate_runtime_robot_config(xrdf_path, urdf_path, override_path, gripper_
     # Keep the collision model in sync with the repo XRDF/URDF while applying
     # checked-in controller tuning from the override YAML.
     kinematics["use_usd_kinematics"] = False
-    kinematics["asset_root_path"] = "/"
+    kinematics["asset_root_path"] = "."
     kinematics["urdf_path"] = urdf_path
     kinematics["extra_links"] = {
         "attached_object": {
