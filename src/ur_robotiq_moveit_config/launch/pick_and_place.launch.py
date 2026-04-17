@@ -11,7 +11,8 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, EmitEvent
+from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -227,6 +228,7 @@ def generate_launch_description():
         executable="pick_and_place_main.py",
         name="pick_and_place",
         output="screen",
+        on_exit=[EmitEvent(event=Shutdown(reason="pick_and_place node exited"))],
         parameters=[
             {
                 "use_sim_time": LaunchConfiguration("use_sim_time"),

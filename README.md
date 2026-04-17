@@ -216,6 +216,9 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 ./control.sh humanoid stop
 ```
 
+## Automated testing
+For the automated test workflow driven by [`test.sh`](./test.sh), see [TESTING.md](./TESTING.md).
+
 # Credits
 
 The project is done by as a part of Master Thesis within infotiv:
