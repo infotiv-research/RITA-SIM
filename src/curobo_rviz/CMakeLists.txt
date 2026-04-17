@@ -75,6 +75,14 @@ set(${PROJECT_NAME}_HDRS
   include/${PROJECT_NAME}/arrow_interaction_display.hpp
 )
 
+# Headers containing Q_OBJECT — only these should be passed to moc
+set(${PROJECT_NAME}_MOC_HDRS
+  include/${PROJECT_NAME}/curobo_rviz.hpp
+  include/${PROJECT_NAME}/add_objects_display.hpp
+  include/${PROJECT_NAME}/add_objects_panel.hpp
+  include/${PROJECT_NAME}/arrow_interaction_display.hpp
+)
+
 # Define ui file
 set(${PROJECT_NAME}_UIS
   resource/curobo_rviz_panel.ui
@@ -83,7 +91,7 @@ set(${PROJECT_NAME}_UIS
 
 # Generate header for ui
 qt5_wrap_ui(${PROJECT_NAME}_UIS_H ${${PROJECT_NAME}_UIS})
-qt5_wrap_cpp(${PROJECT_NAME}_MOCS ${${PROJECT_NAME}_HDRS})
+qt5_wrap_cpp(${PROJECT_NAME}_MOCS ${${PROJECT_NAME}_MOC_HDRS})
 
 add_library(${library_name} SHARED
   ${${PROJECT_NAME}_SRCS}

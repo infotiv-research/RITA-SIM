@@ -175,8 +175,15 @@ class CuroboHumanCollisionPublisher(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(CuroboHumanCollisionPublisher())
-    rclpy.shutdown()
+    node = CuroboHumanCollisionPublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

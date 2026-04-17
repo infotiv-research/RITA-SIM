@@ -78,7 +78,7 @@ Start robot control:
 
 >  in `IsaacSim DevContainer` vscode container open a new terminal and run the following commands: 
 
-Inside the container terminal run **one of the following commands** and then click on  `Start the simulation` in the GUI:
+Inside the container terminal run **one of the following commands**. Inside the Isaac GUI press `Yes` in the pop up warning about Python Scripting Components and then click on the `Play` button in the GUI:
 
 ```bash
 ./control.sh sim # Simple

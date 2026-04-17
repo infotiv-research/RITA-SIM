@@ -114,8 +114,15 @@ class HumanCollisionPublisher(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(HumanCollisionPublisher())
-    rclpy.shutdown()
+    node = HumanCollisionPublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

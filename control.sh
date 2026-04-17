@@ -174,7 +174,7 @@ build() {
         return 1
     fi
 
-    if ! colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF; then
+    if ! colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-Wno-deprecated-declarations -Wno-unused-result -Wno-reorder -Wno-cpp"; then
         echo "---[ Error: colcon build failed ]---"
         return 1
     fi

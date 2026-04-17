@@ -140,3 +140,21 @@ CUDA_VISIBLE_DEVICES=1 ./control.sh cumotion
 ### [Error] [omni.kit.app._impl] [py stderr]
 
 Can be ignored
+
+
+### No 3D sensor plugin(s) defined for octomap updates
+
+```
+[move_group-2] [ERROR] [move_group.moveit.moveit.ros.occupancy_map_monitor]: No 3D sensor plugin(s) defined for octomap updates
+```
+
+Can be ignored. MoveIt's occupancy_map_monitor expects a depth-sensor plugin to feed an Octomap. We don't use Octomap-based collision. cuRobo handles the planning scene itself, so the monitor has nothing to do and just logs this once.
+
+
+### Action server: /recognize_objects not available
+
+```
+[rviz2-4] [ERROR] [rviz2_moveit.moveit.ros.motion_planning_frame]: Action server: /recognize_objects not available
+```
+
+Can be ignored. The MoveIt MotionPlanning RViz panel has an optional "Object Recognition" tab that connects to an ORK-style perception action server. We don't run one, so the connection attempt fails at panel init. The rest of the panel works normally.

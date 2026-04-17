@@ -160,9 +160,11 @@ def main(args=None):
     node = CuroboLiveCollisionSpheres()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
+        node.destroy_node()
         if rclpy.ok():
-            node.destroy_node()
             rclpy.shutdown()
 
 
