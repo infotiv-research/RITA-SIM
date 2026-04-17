@@ -150,8 +150,8 @@ kill_processes() {
     done
 }
 
-cleanup_stale_robot_control_stack() {
-    # Multiple concurrent control stacks create multiple /controller_manager nodes.
+cleanup_stale_ros_stack() {
+    # Multiple concurrent ROS control stacks create multiple /controller_manager nodes.
     # Spawners can then talk to different managers and fail nondeterministically.
     local cm_count
     cm_count="$(ros2 node list 2>/dev/null | grep -c '^/controller_manager$' || true)"
@@ -193,7 +193,7 @@ clean() {
 ros() {
     echo "---[ launching ur_robotiq_isaac_control ]---"
     source_ws
-    cleanup_stale_robot_control_stack
+    cleanup_stale_ros_stack
     ros2 launch ur_robotiq_description ur_robotiq_isaac_control.launch.py
 }
 
@@ -369,9 +369,11 @@ elif [[ "$1" == "build_gaussian_splats" ]]; then
 elif [[ "$1" == "ompl" ]]; then
     ompl
 elif [[ "$1" == "cumotion" ]]; then
-    cumotion
+    shift 1
+    cumotion "$@"
 elif [[ "$1" == "curobo" ]]; then
-    curobo
+    shift 1
+    curobo "$@"
 elif [[ "$1" == "hybrid" ]]; then
     hybrid
 elif [[ "$1" == "pick_and_place" ]]; then
