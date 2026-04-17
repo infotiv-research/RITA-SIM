@@ -9,6 +9,14 @@ FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Retry transient mirror failures during image builds and rosdep-driven apt installs.
+RUN printf '%s\n' \
+    'Acquire::Retries "5";' \
+    'Acquire::ForceIPv4 "true";' \
+    'Acquire::http::Timeout "30";' \
+    'Acquire::https::Timeout "30";' \
+    > /etc/apt/apt.conf.d/80-network-retries
+
 # Install language
 RUN apt-get update && apt-get install -y --no-install-recommends \
   locales \
@@ -239,7 +247,7 @@ RUN bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && colcon build --cmake-ar
 # Source automatique dans .bashrc de l’utilisateur ros
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/ros/.bashrc && \
     echo "if [ -f /opt/vendor_ws/install/setup.bash ]; then source /opt/vendor_ws/install/setup.bash; fi" >> /home/ros/.bashrc && \
-    echo "source /ros2_ws/install/setup.bash" >> /home/ros/.bashrc && \
+    echo "if [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi" >> /home/ros/.bashrc && \
     chown ros:ros /home/ros/.bashrc
 
 USER ros
