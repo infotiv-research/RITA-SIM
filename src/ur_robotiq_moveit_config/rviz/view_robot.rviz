@@ -226,6 +226,18 @@ Visualization Manager:
         Show Robot Visual: true
       Value: true
       Velocity_Scaling_Factor: 0.1
+      Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Workspace Overview
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /rgb
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

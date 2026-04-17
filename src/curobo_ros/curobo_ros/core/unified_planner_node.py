@@ -300,6 +300,10 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_last_step_time = None
         self._hybrid_mpc_stall_count = 0
         self._hybrid_mpc_best_error = None
+        self.node_is_available = False
+        self._startup_ready_logged = False
+        self._startup_ready_deadline = None
+        self._startup_ready_debounce_sec = 0.75
 
         # Initialize ONLY the base config wrapper
         # Other wrappers will be created on-demand (lazy loading)
@@ -345,6 +349,7 @@ class UnifiedPlannerNode(Node):
             self.mpc_stream_controller_topic,
             10,
         )
+        self._startup_ready_timer = self.create_timer(0.1, self._maybe_log_startup_ready)
         self.mpc_debug_publisher = self.create_publisher(
             String,
             f'{self.get_name()}/mpc_debug',
@@ -445,6 +450,7 @@ class UnifiedPlannerNode(Node):
             planner_type: Type of planner to warmup ('classic', 'mpc', etc.)
         """
         self.get_logger().info(f"Warming up {planner_type} planner...")
+        self.node_is_available = False
 
         if planner_type == 'classic':
             self._warmup_classic()
@@ -458,6 +464,7 @@ class UnifiedPlannerNode(Node):
                 "using classic warmup"
             )
 
+        self.node_is_available = True
         self.get_logger().info(f"✅ {planner_type} planner ready")
 
     def _warmup_classic(self):
@@ -691,6 +698,27 @@ class UnifiedPlannerNode(Node):
             self._world_state_version += 1
             self._pending_world_version = self._world_state_version
             return self._world_state_version
+
+    def notify_startup_warmup_started(self):
+        if not self._startup_ready_logged:
+            self._startup_ready_deadline = None
+
+    def notify_startup_world_update_applied(self):
+        if not self._startup_ready_logged:
+            self._startup_ready_deadline = time.monotonic() + self._startup_ready_debounce_sec
+
+    def _maybe_log_startup_ready(self):
+        if self._startup_ready_logged or self._startup_ready_deadline is None:
+            return
+
+        if time.monotonic() < self._startup_ready_deadline:
+            return
+
+        self._startup_ready_logged = True
+        self._startup_ready_deadline = None
+        self.get_logger().info(
+            "✅ cuRobo fully ready: warmup complete and all collisions are loaded."
+        )
 
     def _record_solver_world_sync(self, solver_name: str, target_version: int):
         with self._world_update_lock:
@@ -2207,7 +2235,9 @@ class UnifiedPlannerNode(Node):
                 self.get_logger().info(
                     f"On-demand warmup: {planner.get_planner_name()}"
                 )
+                self.node_is_available = False
                 self._warmup_classic()
+                self.node_is_available = True
 
             planner.set_motion_gen(self.motion_gen)
             self.sync_motion_gen_world()
@@ -2215,6 +2245,7 @@ class UnifiedPlannerNode(Node):
         elif isinstance(planner, MPCPlanner):
             # Warmup MPC if not already done
             if self.mpc is None or self._mpc_robot_geometry_dirty:
+                self.node_is_available = False
                 if self._mpc_robot_geometry_dirty and self.mpc is not None:
                     self.get_logger().info(
                         "On-demand MPC rebuild: robot geometry changed since the last MPC phase."
@@ -2224,6 +2255,7 @@ class UnifiedPlannerNode(Node):
                     self.get_logger().info("On-demand warmup: MPC planner")
                 self._warmup_mpc()
                 self._mpc_robot_geometry_dirty = False
+                self.node_is_available = True
 
             planner.set_mpc_solver(self.mpc)
             self.sync_mpc_world()

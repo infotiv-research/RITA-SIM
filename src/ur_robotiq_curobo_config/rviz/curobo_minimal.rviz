@@ -418,6 +418,18 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /curobo_human_collision_markers
       Value: true
+      Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Workspace Overview
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /rgb
+      Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: false
       Name: Obstacles

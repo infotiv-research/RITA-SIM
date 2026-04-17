@@ -184,10 +184,12 @@ class ConfigWrapperMotion(ConfigWrapper):
 
         # Set the motion generation configuration in the node and warmup the motion generation
         node.motion_gen = MotionGen(motion_gen_config)
+        node.notify_startup_warmup_started()
 
         node.get_logger().info("warming up..")
 
         self.node_is_available = False
+        node.node_is_available = False
         node_is_available_param = rclpy.parameter.Parameter('node_is_available',rclpy.Parameter.Type.BOOL, False)
         node.set_parameters([node_is_available_param])
 
@@ -197,6 +199,7 @@ class ConfigWrapperMotion(ConfigWrapper):
         node.set_parameters([node_is_available_param])
 
         self.node_is_available = True
+        node.node_is_available = True
 
         node.world_model = node.motion_gen.world_collision
 
@@ -221,6 +224,9 @@ class ConfigWrapperMotion(ConfigWrapper):
         world_cfg = self.obstacle_manager.get_world_cfg()
 
         version, applied_now = node.request_world_update(world_cfg, log_summary=log_summary)
+
+        if applied_now:
+            node.notify_startup_world_update_applied()
 
         num_cuboids = len(world_cfg.cuboid)
         num_meshes = len(world_cfg.mesh)
