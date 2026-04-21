@@ -4,11 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${SCRIPT_DIR}/test_logs"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
-STARTUP_DELAY_SECONDS=3
-ISAAC_READY_TIMEOUT_SECONDS=180
-ROS_READY_TIMEOUT_SECONDS=120
 CUROBO_READY_TIMEOUT_SECONDS=0
-RVIZ_STARTUP_DELAY_SECONDS=3
 ROS_LAUNCH_PATTERN='[u]r_robotiq_isaac_control.launch.py'
 ISAAC_HEADLESS_PATTERN='[s]tart_isaac_main_scene.py'
 CUROBO_PATTERN='[u]r_robotiq_curobo_human.launch.py'
@@ -42,24 +38,13 @@ Commands:
 EOF
 }
 
-require_docker_compose() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Error: docker is not available in PATH." >&2
-    exit 1
-  fi
-
-  if ! docker compose version >/dev/null 2>&1; then
-    echo "Error: docker compose is not available." >&2
-    exit 1
-  fi
-}
 
 ros_compose() {
   docker compose "${ROS_STACK_FILES[@]}" "$@"
 }
 
 isaac_compose() {
-  docker compose "${ISAAC_STACK_FILES[@]}" "$@"
+  docker compose "-f" "${SCRIPT_DIR}/setup/docker-compose.isaac.yaml" 
 }
 
 ros_service_running() {
@@ -142,81 +127,20 @@ ros_ready() {
       ros2 action info /robotiq_gripper_joint_trajectory_controller/follow_joint_trajectory 2>/dev/null | grep -Eq 'Action servers: +1'"
 }
 
-curobo_services_ready() {
-  ros_service_running "cumotion" && \
-    ros_compose exec -T cumotion bash -lc \
-      "pgrep -f \"${CUROBO_PATTERN}\" >/dev/null && \
-      source /opt/ros/${ROS_DISTRO}/setup.bash >/dev/null 2>&1; \
-      source /ros2_ws/install/local_setup.bash >/dev/null 2>&1 || true; \
-      ros2 service type /unified_planner/generate_trajectory >/dev/null 2>&1 && \
-      ros2 service type /unified_planner/set_planner >/dev/null 2>&1 && \
-      ros2 service type /unified_planner/get_planners >/dev/null 2>&1 && \
-      ros2 action info /unified_planner/execute_trajectory 2>/dev/null | grep -Eq 'Action servers: +1' && \
-      ros2 action info /joint_trajectory_controller/follow_joint_trajectory 2>/dev/null | grep -Eq 'Action servers: +1'"
-}
+
 
 curobo_ready_message_seen() {
   [ -f "${LOG_DIR}/curobo.log" ] && grep -Fq "${CUROBO_READY_LOG_PATTERN}" "${LOG_DIR}/curobo.log"
 }
 
-wait_for_isaac_timeline_state() {
-  local expected_state="$1"
-  local description="$2"
-  local waited_seconds=0
-
-  while true; do
-    if isaac_timeline_state_is "${expected_state}"; then
-      echo "${description} is ready."
-      return 0
-    fi
-
-    if (( ISAAC_READY_TIMEOUT_SECONDS > 0 && waited_seconds >= ISAAC_READY_TIMEOUT_SECONDS )); then
-      echo "Error: timed out waiting for ${description}." >&2
-      return 1
-    fi
-
-    sleep 2
-    waited_seconds=$((waited_seconds + 2))
-  done
-}
-
 wait_for_ros_ready() {
   echo "Waiting for ROS control action servers..."
-  wait_until "${ROS_READY_TIMEOUT_SECONDS}" "ROS control" ros_ready
+  wait_until  120 "ROS control" ros_ready
 }
 
 wait_for_curobo_ready() {
   echo "Waiting for curobo ready message..."
-  local waited_seconds=0
-
-  while true; do
-    if curobo_ready_message_seen; then
-      echo "curobo is fully ready."
-      return 0
-    fi
-
-    if [ -z "${CUROBO_STREAM_PID}" ] && curobo_services_ready; then
-      echo "curobo appears to already be running and ready."
-      return 0
-    fi
-
-    if [ -n "${CUROBO_STREAM_PID}" ] && ! kill -0 "${CUROBO_STREAM_PID}" 2>/dev/null; then
-      echo "Error: curobo exited before it became ready." >&2
-      return 1
-    fi
-
-    sleep 2
-    waited_seconds=$((waited_seconds + 2))
-
-    if (( CUROBO_READY_TIMEOUT_SECONDS > 0 && waited_seconds >= CUROBO_READY_TIMEOUT_SECONDS )); then
-      echo "Error: timed out waiting for curobo." >&2
-      return 1
-    fi
-
-    if (( waited_seconds > 0 && waited_seconds % 30 == 0 )); then
-      echo "Still waiting for curobo ready message... (${waited_seconds}s elapsed)"
-    fi
-  done
+  wait_until 350 "curobo ready message in log" curobo_ready_message_seen
 }
 
 start_containers() {
@@ -354,7 +278,7 @@ play_isaac_simulation() {
 
   echo "Playing Isaac Sim timeline..."
   isaac_compose exec -T isaacsim bash -lc "printf 'play\n' > /tmp/rita_isaac_timeline_command"
-  wait_for_isaac_timeline_state "playing" "Isaac Sim timeline"
+  wait_until 60 "playing" "Isaac Sim timeline"
 }
 
 stop_isaac_timeline() {
@@ -364,7 +288,7 @@ stop_isaac_timeline() {
 
   echo "Stopping Isaac Sim timeline..."
   isaac_compose exec -T isaacsim bash -lc "printf 'stop\n' > /tmp/rita_isaac_timeline_command"
-  wait_for_isaac_timeline_state "stopped" "Isaac Sim timeline stop" || true
+  wait_until 60 "stopped" "Isaac Sim timeline stop" || true
 }
 
 stop_curobo_rviz() {
@@ -483,7 +407,7 @@ start_all() {
   start_containers
   prepare_ros_workspace
   start_ros
-  sleep "${STARTUP_DELAY_SECONDS}"
+  sleep 3
   start_isaac_headless
   echo "Start sequence submitted."
   echo "Logs: ${LOG_DIR}/ros_build.log, ${LOG_DIR}/ros.log, and ${LOG_DIR}/isaac_headless.log"
@@ -498,29 +422,12 @@ pick_and_place_curobo_workflow() {
   PICK_AND_PLACE_STARTED_RVIZ=0
   trap cleanup_pick_and_place EXIT INT TERM
 
-  if ! ros_service_running "ros2"; then
-    echo "Error: ros2 container is not running. This workflow expects the stack to already be up." >&2
-    exit 1
-  fi
-  if ! ros_service_running "cumotion"; then
-    echo "Error: cumotion container is not running. This workflow expects the stack to already be up." >&2
-    exit 1
-  fi
-  if ! isaac_service_running "isaacsim"; then
-    echo "Error: isaacsim container is not running. This workflow expects Isaac Sim to already be up." >&2
-    exit 1
-  fi
-  if ! isaac_headless_running; then
-    echo "Error: Isaac Sim headless is not running. This workflow only controls play/stop on the existing simulation." >&2
-    exit 1
-  fi
-
   play_isaac_simulation
   wait_for_ros_ready
   start_curobo_backend
   wait_for_curobo_ready
   start_curobo_rviz
-  sleep "${RVIZ_STARTUP_DELAY_SECONDS}"
+  sleep 3
 
   echo "Logs: ${LOG_DIR}/ros.log, ${LOG_DIR}/isaac_headless.log, ${LOG_DIR}/curobo.log, ${LOG_DIR}/curobo_rviz.log, and ${LOG_DIR}/pick_and_place.log"
   for ((run_index = 1; run_index <= total_runs; run_index++)); do
@@ -544,33 +451,14 @@ stop_all() {
 }
 
 main() {
-  require_docker_compose
-
-  if [ "$#" -lt 1 ]; then
-    usage
-    exit 1
-  fi
-
   case "$1" in
     start)
-      if [ "$#" -ne 1 ]; then
-        usage
-        exit 1
-      fi
       start_all
       ;;
     stop)
-      if [ "$#" -ne 1 ]; then
-        usage
-        exit 1
-      fi
       stop_all
       ;;
     pick_and_place)
-      if [ "$#" -ne 2 ]; then
-        usage
-        exit 1
-      fi
       case "$2" in
         curobo)
           pick_and_place_curobo_workflow
@@ -580,9 +468,6 @@ main() {
           exit 1
           ;;
       esac
-      ;;
-    help|-h|--help)
-      usage
       ;;
     *)
       usage

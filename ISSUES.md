@@ -158,3 +158,29 @@ Can be ignored. MoveIt's occupancy_map_monitor expects a depth-sensor plugin to 
 ```
 
 Can be ignored. The MoveIt MotionPlanning RViz panel has an optional "Object Recognition" tab that connects to an ORK-style perception action server. We don't run one, so the connection attempt fails at panel init. The rest of the panel works normally.
+
+
+
+
+
+### ./automate.sh : `pick_and_place curobo` exits immediately
+
+The scenario runner expects:
+- `ros2`, `cumotion`, and `isaacsim` containers to already be running
+- Isaac Sim headless to already be running
+
+Start the stack first:
+
+```bash
+./automate.sh start
+```
+
+### ./automate.sh : RViz does not open
+
+RViz requires a working `DISPLAY` inside the `cumotion` container. On Linux hosts, run:
+
+```bash
+xhost +local:docker
+```
+
+Then rerun the workflow.
