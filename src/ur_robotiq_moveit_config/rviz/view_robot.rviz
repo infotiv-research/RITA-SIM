@@ -5,6 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
+        - /Image1
       Splitter Ratio: 0.4957627058029175
     Tree Height: 573
   - Class: rviz_common/Selection
@@ -226,11 +227,13 @@ Visualization Manager:
         Show Robot Visual: true
       Value: true
       Velocity_Scaling_Factor: 0.1
-      Class: rviz_default_plugins/Image
+    - Class: rviz_default_plugins/Image
       Enabled: true
-      Name: Workspace Overview
-      Namespaces:
-        {}
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
       Topic:
         Depth: 5
         Durability Policy: Volatile

@@ -88,6 +88,19 @@ Inside the container terminal run **one of the following commands**. Inside the 
 ./control.sh sim_humanoid # Starts the scene with the humanoid obstacle
 ```
 
+Isaac Sim can also be run headless. Start it with:
+
+```bash
+./control.sh sim_headless
+```
+
+After headless Isaac Sim is running, play and stop the simulation timeline with:
+
+```bash
+./control.sh sim_headless play
+./control.sh sim_headless stop
+```
+
 **optional** : If you have built the Gaussian splat assets, the generated `.usdz` files are available in Isaac Sim through the Content Browser in 'My computer' under`/ros2_ws/assets/`. To add one to your scene, locate the asset you want and drag it from the Content Browser into the viewport or onto the Stage.
 
 
