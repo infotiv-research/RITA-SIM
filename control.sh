@@ -71,6 +71,11 @@ UR10 ROS2 container commands:
 
 Isaac container commands:
   sim             Start Isaac Sim loaded with main_scene.usd
+  sim_headless    Start Isaac Sim headless, or control the headless timeline.
+                  Usage:
+                    ./control.sh sim_headless        - Start Isaac Sim headless
+                    ./control.sh sim_headless play   - Play the headless simulation timeline
+                    ./control.sh sim_headless stop   - Stop the headless simulation timeline
   sim_cylinder    Start Isaac Sim loaded with flowrack_crates_and_robot_cylinder.usd (The same scene but scaled down and with an moving cylinder (obstacle)
                   for dynamic path planning)
   sim_humanoid    Start Isaac Sim loaded with flowrack_crates_and_robot_humanoid.usd
@@ -208,6 +213,10 @@ ompl() {
 isaac_sim() {
     echo "---[ starting Isaac Sim ]---"
     ./startup_scripts/post_install_ros2_isaac_start.sh
+}
+
+isaac_sim_headless() {
+    "${ISAAC_SIM_PATH:-/isaac-sim}/python.sh" "${SCRIPT_DIR}/scripts/start_isaac_main_scene.py" --headless "$@"
 }
 
 isaac_sim_cylinder() {
@@ -360,6 +369,9 @@ elif [[ "$1" == "ros" ]]; then
     ros
 elif [[ "$1" == "sim" ]]; then
     isaac_sim
+elif [[ "$1" == "sim_headless" ]]; then
+    shift 1
+    isaac_sim_headless "$@"
 elif [[ "$1" == "sim_cylinder" ]]; then
     isaac_sim_cylinder
 elif [[ "$1" == "sim_humanoid" ]]; then

@@ -17,6 +17,16 @@ ROS_DISTRO = os.environ.get("ROS_DISTRO", "jazzy")
 BRIDGE_LIB_PATH = ISAAC_SIM_PATH / "exts" / "isaacsim.ros2.bridge" / ROS_DISTRO / "lib"
 
 
+def _handle_timeline_command() -> None:
+    command = sys.argv[-1]
+    if command in {"play", "stop"}:
+        Path("/tmp/rita_isaac_timeline_command").write_text(f"{command}\n", encoding="utf-8")
+        sys.exit(0)
+
+
+_handle_timeline_command()
+
+
 def _prepare_ros_bridge_environment() -> None:
     if not BRIDGE_LIB_PATH.is_dir():
         raise FileNotFoundError(f"Isaac Sim ROS 2 bridge libs not found at {BRIDGE_LIB_PATH}")
@@ -63,11 +73,6 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Number of Kit updates to wait before opening the stage.",
-    )
-    parser.add_argument(
-        "--pause-after-startup",
-        action="store_true",
-        help="Pause the simulation timeline once startup completes.",
     )
     parser.add_argument(
         "--control-file",
@@ -188,9 +193,8 @@ async def _open_scene(scene_path: Path, wait_updates: int) -> None:
     carb.log_info(f"Stage opened: {usd_context.get_stage_url()}")
 
 
-async def _start_simulation(wait_updates: int) -> None:
+async def _wait_for_startup_updates(wait_updates: int) -> None:
     app = omni.kit.app.get_app()
-    _timeline_play()
     for _ in range(max(1, wait_updates)):
         await app.next_update_async()
 
@@ -200,7 +204,7 @@ async def _startup_sequence(scene_path: Path, wait_updates: int) -> None:
     SIMULATION_APP.update()
     _run_python_script(LOAD_EXTENSION_SCRIPT)
     await _open_scene(scene_path, wait_updates)
-    await _start_simulation(wait_updates)
+    await _wait_for_startup_updates(wait_updates)
     stage = await _wait_for_world(wait_updates)
     await _run_urdf_export(stage)
 
@@ -267,10 +271,7 @@ def main() -> None:
 
     open_task.result()
 
-    if ARGS.pause_after_startup:
-        _timeline_pause()
-    else:
-        _write_timeline_state("playing")
+    _write_timeline_state("stopped")
 
     while SIMULATION_APP.is_running():
         _apply_pending_timeline_command()
