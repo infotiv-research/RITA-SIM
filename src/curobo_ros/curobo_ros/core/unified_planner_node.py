@@ -286,6 +286,7 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.01)
         self.declare_parameter('mpc_goal_update_joint_epsilon', 0.001)
         self.declare_parameter('mpc_dynamic_world_updates_enabled', True)
+        self.declare_parameter('startup_ready', False)
 
         self._world_update_lock = threading.Lock()
         self._hybrid_mpc_lock = threading.Lock()
@@ -702,6 +703,9 @@ class UnifiedPlannerNode(Node):
     def notify_startup_warmup_started(self):
         if not self._startup_ready_logged:
             self._startup_ready_deadline = None
+            self.set_parameters([
+                rclpy.parameter.Parameter('startup_ready', rclpy.Parameter.Type.BOOL, False)
+            ])
 
     def notify_startup_world_update_applied(self):
         if not self._startup_ready_logged:
@@ -716,6 +720,9 @@ class UnifiedPlannerNode(Node):
 
         self._startup_ready_logged = True
         self._startup_ready_deadline = None
+        self.set_parameters([
+            rclpy.parameter.Parameter('startup_ready', rclpy.Parameter.Type.BOOL, True)
+        ])
         self.get_logger().info(
             "✅ cuRobo fully ready: warmup complete and all collisions are loaded."
         )
