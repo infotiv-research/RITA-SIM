@@ -70,7 +70,7 @@ pick_and_place_run() {
 }
 
 kill() {
-  python3 "${SCRIPT_DIR}/scripts/test_stack.py" kill_non_ros
+  "${COMPOSE[@]}" exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh kill' || true
 }
 
 case "${1:-}" in

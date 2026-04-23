@@ -137,42 +137,6 @@ def wait_hybrid() -> int:
     return 0
 
 
-def kill_non_ros() -> int:
-    command = r'''
-for pattern in \
-  "ur_robotiq_isaac_moveit.launch.py" \
-  "ur_robotiq_isaac_moveit_human.launch.py" \
-  "ur_robotiq_curobo.launch.py" \
-  "ur_robotiq_curobo_human.launch.py" \
-  "pick_and_place.launch.py" \
-  "pick_and_place_main.py" \
-  "start_cumotion_planner.sh" \
-  "start_curobo_planner.sh" \
-  "start_hybrid_planner.sh" \
-  "bootstrap_cumotion_workspace.sh" \
-  "cumotion_planner_upstream_framefix.py" \
-  "cumotion_planner_node" \
-  "curobo_trajectory_planner" \
-  "curobo_human_skeleton_collision_publisher.py" \
-  "curobo_live_collision_spheres.py" \
-  "isaac_urdf_collision_publisher.py" \
-  "curobo_world_bridge.py" \
-  "joint_state_publisher" \
-  "moveit_joint_state_filter" \
-  "move_group" \
-  "rviz2"
-do
-  for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
-    if [ "$pid" != "$$" ]; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-done
-'''
-    compose_quiet("exec", "-T", "cumotion", "bash", "-lc", command)
-    return 0
-
-
 def main(argv: list[str]) -> int:
     if not argv:
         return 1
@@ -192,8 +156,6 @@ def main(argv: list[str]) -> int:
         return wait_ompl()
     if command == "wait_hybrid":
         return wait_hybrid()
-    if command == "kill_non_ros":
-        return kill_non_ros()
     return 1
 
 
