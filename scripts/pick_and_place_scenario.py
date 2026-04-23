@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-
+from pathlib import Path
 import subprocess
 import sys
 
-REPO_ROOT = "/home/research/isaac-sim-rita"
-TEST_SH = "/home/research/isaac-sim-rita/test.sh"
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+REPO_ROOT = SCRIPT_DIR.parent
+
+TEST_SH = REPO_ROOT / "test.sh"
+
+
 PICK_AND_PLACE_RUNS = 1
 PLANNER = sys.argv[1] if len(sys.argv) > 1 else "curobo"
 
