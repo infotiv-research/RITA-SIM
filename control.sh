@@ -387,7 +387,8 @@ elif [[ "$1" == "curobo" ]]; then
     shift 1
     curobo "$@"
 elif [[ "$1" == "hybrid" ]]; then
-    hybrid
+    shift 1
+    hybrid "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"
