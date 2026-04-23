@@ -14,6 +14,18 @@ def test_sh(*args: str) -> None:
     subprocess.run([TEST_SH, *args], cwd=REPO_ROOT)
 
 
+def pick_and_place_args(planner: str) -> tuple[str, ...]:
+    planner_args = {
+        "curobo": ("motion_backend:=curobo_ros",),
+        "cumotion": ("motion_backend:=moveit", "planning_pipeline:=cumotion"),
+        "hybrid": ("motion_backend:=hybrid",),
+        "ompl": ("motion_backend:=moveit", "planning_pipeline:=ompl"),
+    }
+    if planner not in planner_args:
+        raise ValueError(f"Unknown planner: {planner}")
+    return planner_args[planner]
+
+
 def pick_and_place_sequence() -> int:
     try:
         print("playing isaac sim")
@@ -31,7 +43,7 @@ def pick_and_place_sequence() -> int:
                 test_sh("sim_headless", "play")
 
             print(f"pick_and_place run {run_number}")
-            test_sh("pick_and_place_run", PLANNER, str(run_number))
+            test_sh("pick_and_place_run", str(run_number), *pick_and_place_args(PLANNER))
 
             print("stopping isaac sim")
             test_sh("sim_headless", "stop")

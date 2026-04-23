@@ -53,19 +53,10 @@ hybrid() {
 }
 
 pick_and_place_run() {
-  planner="${1:-curobo}"
-  run_number="${2:-1}"
+  run_number="${1:-1}"
+  shift
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
-  if [[ "${planner}" == "curobo" ]]; then
-    args="motion_backend:=curobo_ros"
-  elif [[ "${planner}" == "cumotion" ]]; then
-    args="motion_backend:=moveit planning_pipeline:=cumotion"
-  elif [[ "${planner}" == "hybrid" ]]; then
-    args="motion_backend:=hybrid"
-  else
-    args="motion_backend:=moveit planning_pipeline:=ompl"
-  fi
-  "${COMPOSE[@]}" exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh pick_and_place '"${args}" \
+  "${COMPOSE[@]}" exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh pick_and_place "$@"' bash "$@" \
     > "${SCRIPT_DIR}/test_logs/pick_and_place_run_${run_number}.log" 2>&1
 }
 
