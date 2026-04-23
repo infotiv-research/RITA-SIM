@@ -376,6 +376,7 @@ class UnifiedPlannerNode(Node):
 
         # Warmup only the initial planner
         self._warmup_initial_planner(initial_planner)
+        self._prewarm_startup_planners(initial_planner)
 
         # Set initial planner (will be retrieved from cache)
         self.planner_manager.set_current_planner(initial_planner)
@@ -465,7 +466,20 @@ class UnifiedPlannerNode(Node):
             )
 
         self.node_is_available = True
-        self.get_logger().info(f"✅ {planner_type} planner ready")
+        self.get_logger().info(f"{planner_type} planner ready")
+
+    def _prewarm_startup_planners(self, initial_planner: str):
+        """Warm up additional cached solvers during startup.
+
+        Hybrid execution always needs MPC shortly after the first global plan, so
+        we prewarm it here to move that latency out of the first motion request.
+        """
+        if initial_planner != 'mpc' and self.mpc is None:
+            self.get_logger().info("Prewarming MPC solver during startup.")
+            self.node_is_available = False
+            self._warmup_mpc()
+            self.node_is_available = True
+            self.get_logger().info("MPC planner prewarmed for startup")
 
     def _warmup_classic(self):
         """Warmup MotionGen for Classic/Batch/Constrained planners."""

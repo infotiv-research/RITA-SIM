@@ -95,6 +95,22 @@ moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::solve(
         moveit::hybrid_planning::LocalFeedbackEnum::LOCAL_PLANNER_STUCK)));
   }
 
+  double target_max_delta = 0.0;
+  if (target_joint_positions.size() == current_state.position.size())
+  {
+    for (std::size_t joint_index = 0; joint_index < target_joint_positions.size(); ++joint_index)
+    {
+      target_max_delta = std::max(target_max_delta,
+                                  std::abs(target_joint_positions[joint_index] - current_state.position[joint_index]));
+    }
+  }
+  RCLCPP_DEBUG_THROTTLE(node_->get_logger(),
+                        *node_->get_clock(),
+                        1000,
+                        "Hybrid MPC local target: max_joint_delta=%.4f, active=%s",
+                        target_max_delta,
+                        active_ ? "true" : "false");
+
   auto request = std::make_shared<curobo_msgs::srv::MpcStep::Request>();
   request->current_state = current_state;
   request->target_pose = target_pose;
