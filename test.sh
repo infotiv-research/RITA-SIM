@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(pwd)"
 
-COMPOSE_CMD="docker compose -p rita_stack \
+COMPOSE_CMD="docker compose -p ros_stack \
   -f ${SCRIPT_DIR}/setup/docker-compose.ros2.yaml \
   -f ${SCRIPT_DIR}/setup/docker-compose.cumotion.yaml \
   -f ${SCRIPT_DIR}/setup/docker-compose.isaac.yaml"

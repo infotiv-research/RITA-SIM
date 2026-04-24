@@ -14,7 +14,7 @@ COMPOSE = [
     "docker",
     "compose",
     "-p",
-    "rita_stack",
+    "ros_stack",
     "-f",
     str(REPO_ROOT / "setup/docker-compose.ros2.yaml"),
     "-f",
