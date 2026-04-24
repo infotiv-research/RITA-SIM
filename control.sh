@@ -97,6 +97,10 @@ UR10 cuMotion container commands:
   cumotion        Start cuMotion with 7dof UR10e gantry config by default.
   curobo          Start curobo_ros with dedicated RViz workflow.
   hybrid          Start MoveIt Hybrid Planning (cuRobo MotionGen + MPC).
+  hybrid_benchmark
+                  Run the scripted hybrid obstacle benchmark.
+                  Usage:
+                    ./control.sh hybrid_benchmark --case test_1 --runs 1
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -136,10 +140,13 @@ kill_processes() {
         "start_cumotion_planner.sh"
         "start_curobo_planner.sh"
         "start_hybrid_planner.sh"
+        "curobo_hybrid_planning.launch.py"
         "bootstrap_cumotion_workspace.sh"
         "cumotion_planner_upstream_framefix.py"
         "cumotion_planner_node"
         "curobo_trajectory_planner"
+        "hybrid_move_action_bridge.py"
+        "curobo_hybrid_planning_container"
         "curobo_human_skeleton_collision_publisher.py"
         "curobo_live_collision_spheres.py"
         "isaac_urdf_collision_publisher.py"
@@ -325,6 +332,12 @@ hybrid() {
     ./startup_scripts/start_hybrid_planner.sh "$@"
 }
 
+hybrid_benchmark() {
+    echo "---[ running hybrid obstacle benchmark ]---"
+    source_ws
+    ros2 run ur_robotiq_moveit_config hybrid_obstacle_benchmark.py -- "$@"
+}
+
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
@@ -389,6 +402,9 @@ elif [[ "$1" == "curobo" ]]; then
 elif [[ "$1" == "hybrid" ]]; then
     shift 1
     hybrid "$@"
+elif [[ "$1" == "hybrid_benchmark" ]]; then
+    shift 1
+    hybrid_benchmark "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

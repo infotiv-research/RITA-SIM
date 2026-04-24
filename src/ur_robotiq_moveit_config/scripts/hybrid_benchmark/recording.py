@@ -116,8 +116,8 @@ def accumulate_hybrid_mpc_telemetry(run_data: dict, payload: dict, t_rel_sec: fl
     summary = run_data["hybrid_mpc_summary"]
     if payload.get("path_invalidated"):
         summary["path_invalidated_count"] += 1
-    if payload.get("path_invalidated") and summary["first_invalidation_t_rel_sec"] is None:
-        summary["first_invalidation_t_rel_sec"] = t_rel_sec
+        if summary["first_invalidation_t_rel_sec"] is None:
+            summary["first_invalidation_t_rel_sec"] = t_rel_sec
 
 
 # Decide whether a MoveGroup result represents a successful completed motion.

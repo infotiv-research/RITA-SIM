@@ -38,9 +38,36 @@ def build_arg_parser():
     return parser
 
 
-def main():
+def _as_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def validate_result(result: dict) -> list[str]:
+    failures = []
+    obstacle = result.get("obstacle") or {}
+    replanning = result.get("replanning") or {}
+
+    if not bool(result.get("success")):
+        failures.append("move_group_goal_failed")
+    if bool(result.get("timed_out")):
+        failures.append("timed_out")
+    if not bool(obstacle.get("spawned")):
+        failures.append("obstacle_not_spawned")
+    if _as_int(replanning.get("path_invalidated_count")) < 1:
+        failures.append("path_not_invalidated")
+    if _as_int(replanning.get("replan_count")) < 1:
+        failures.append("no_global_replan")
+    return failures
+
+
+def main() -> int:
     parser = build_arg_parser()
     args, ros_args = parser.parse_known_args()
+    run_count = max(int(args.runs), 1)
+    passed_runs = 0
 
     output_dir = Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -54,9 +81,10 @@ def main():
 
     try:
         if not node.wait_until_ready(timeout_sec=30.0):
-            raise RuntimeError("Hybrid benchmark dependencies are not ready.")
+            print("FAIL: Hybrid benchmark dependencies are not ready.")
+            return 1
 
-        for run_index in range(1, max(int(args.runs), 1) + 1):
+        for run_index in range(1, run_count + 1):
             result = node.run_single_benchmark(args, run_index)
             filename = (
                 f"hybrid_benchmark_{args.case}_run{run_index:02d}_"
@@ -68,16 +96,28 @@ def main():
                 handle.write("\n")
 
             replanning = result.get("replanning", {})
+            failures = validate_result(result)
+            passed = not failures
+            if passed:
+                passed_runs += 1
             print(
-                f"[run {run_index}] case={args.case} "
+                f"[run {run_index}] {'PASS' if passed else 'FAIL'} "
+                f"case={args.case} "
                 f"success={bool(result.get('success'))} "
                 f"replans={replanning.get('replan_count')} "
                 f"invalidations={replanning.get('path_invalidated_count')} "
                 f"output={output_path}"
+                + (f" failures={','.join(failures)}" if failures else "")
             )
 
-            if run_index < int(args.runs):
+            if run_index < run_count:
                 time.sleep(float(DEFAULT_SETTLE_TIME_SEC))
+
+        print(f"Hybrid benchmark summary: {passed_runs}/{run_count} runs passed")
+        return 0 if passed_runs == run_count else 1
+    except Exception as exc:
+        print(f"FAIL: Hybrid benchmark crashed: {exc}")
+        return 1
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
@@ -87,4 +127,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
