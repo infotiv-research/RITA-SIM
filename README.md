@@ -230,7 +230,7 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 ```
 
 ## Automated testing
-For the automated test workflow driven by [`test.sh`](./test.sh), see [TESTING.md](./TESTING.md).
+For the automated test workflow, see [TESTING.md](./TESTING.md).
 
 # Credits
 

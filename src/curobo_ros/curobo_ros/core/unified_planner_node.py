@@ -6,11 +6,13 @@ This node supports multiple planning strategies (Classic, MPC, etc.)
 and allows dynamic switching between them.
 """
 
+import json
 import math
-import torch
-import rclpy
-import time
 import threading
+import time
+
+import rclpy
+import torch
 from rclpy.node import Node
 from rclpy.action import ActionClient, ActionServer
 from rclpy.executors import MultiThreadedExecutor
@@ -70,6 +72,24 @@ def _coerce_python_float(value):
             raise ValueError("Cannot coerce an empty tensor to float.")
         return float(value.detach().cpu().reshape(-1)[0].item())
     return float(value)
+
+
+def _json_safe(value):
+    """Convert telemetry payload values into JSON-friendly primitives.
+
+    Must stay in sync with ``hybrid_benchmark.constants.json_safe`` — the
+    benchmark consumer decodes telemetry published here and divergence
+    silently corrupts recorded runs.
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _apply_curobo_compat_patches():
@@ -286,6 +306,7 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('mpc_goal_update_orientation_epsilon', 0.01)
         self.declare_parameter('mpc_goal_update_joint_epsilon', 0.001)
         self.declare_parameter('mpc_dynamic_world_updates_enabled', True)
+        self.declare_parameter('startup_ready', False)
 
         self._world_update_lock = threading.Lock()
         self._hybrid_mpc_lock = threading.Lock()
@@ -300,6 +321,7 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_last_step_time = None
         self._hybrid_mpc_stall_count = 0
         self._hybrid_mpc_best_error = None
+        self._hybrid_mpc_step_index = 0
         self.node_is_available = False
         self._startup_ready_logged = False
         self._startup_ready_deadline = None
@@ -354,6 +376,11 @@ class UnifiedPlannerNode(Node):
             String,
             f'{self.get_name()}/mpc_debug',
             10,
+        )
+        self.hybrid_mpc_telemetry_publisher = self.create_publisher(
+            String,
+            f'{self.get_name()}/hybrid_mpc_telemetry',
+            50,
         )
 
         # Shared world_cfg for all planners - references ObstacleManager's world_cfg
@@ -716,6 +743,9 @@ class UnifiedPlannerNode(Node):
     def notify_startup_warmup_started(self):
         if not self._startup_ready_logged:
             self._startup_ready_deadline = None
+            self.set_parameters([
+                rclpy.parameter.Parameter('startup_ready', rclpy.Parameter.Type.BOOL, False)
+            ])
 
     def notify_startup_world_update_applied(self):
         if not self._startup_ready_logged:
@@ -730,6 +760,9 @@ class UnifiedPlannerNode(Node):
 
         self._startup_ready_logged = True
         self._startup_ready_deadline = None
+        self.set_parameters([
+            rclpy.parameter.Parameter('startup_ready', rclpy.Parameter.Type.BOOL, True)
+        ])
         self.get_logger().info(
             "✅ cuRobo fully ready: warmup complete and all collisions are loaded."
         )
@@ -1208,6 +1241,7 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_last_step_time = None
         self._hybrid_mpc_stall_count = 0
         self._hybrid_mpc_best_error = None
+        self._hybrid_mpc_step_index = 0
         self.set_mpc_execution_active(False)
 
     def _reset_hybrid_mpc_session(self, restore_trajectory_controller=True):
@@ -1253,6 +1287,17 @@ class UnifiedPlannerNode(Node):
             self.get_logger().info(f"[MPC_DEBUG] {message}")
         if bool(self.get_parameter('mpc_debug_publish_topic').value):
             self.mpc_debug_publisher.publish(String(data=str(message)))
+
+    def publish_hybrid_mpc_telemetry(self, **fields):
+        """Publish structured per-step telemetry for hybrid planner benchmarking."""
+        payload = {
+            'event': 'hybrid_mpc_step',
+            'stamp_ns': int(self.get_clock().now().nanoseconds),
+        }
+        payload.update(fields)
+        self.hybrid_mpc_telemetry_publisher.publish(
+            String(data=json.dumps(_json_safe(payload), sort_keys=True))
+        )
 
     def get_state_collision_debug(self, joint_positions):
         """
@@ -1649,26 +1694,46 @@ class UnifiedPlannerNode(Node):
                     or self._joint_state_msg_to_ordered_dict(request.current_state)
                     or self.get_current_joint_state()
                 )
+                step_index = self._hybrid_mpc_step_index + 1
                 if current_joint_state is None:
                     response.success = False
                     response.message = 'No current joint state is available for MPC stepping.'
+                    self.publish_hybrid_mpc_telemetry(
+                        step_index=step_index,
+                        success=False,
+                        message=response.message,
+                        stage='current_state',
+                    )
                     return response
 
                 if not self._hybrid_mpc_session_active:
                     if not request.initialize_if_needed:
                         response.success = False
                         response.message = 'Hybrid MPC session is not active and initialization was not allowed.'
+                        self.publish_hybrid_mpc_telemetry(
+                            step_index=step_index,
+                            success=False,
+                            message=response.message,
+                            stage='session_init',
+                        )
                         return response
 
                     if not self.activate_mpc_streaming_controller():
                         response.success = False
                         response.message = 'Failed to activate the MPC streaming controller.'
+                        self.publish_hybrid_mpc_telemetry(
+                            step_index=step_index,
+                            success=False,
+                            message=response.message,
+                            stage='controller_activation',
+                        )
                         return response
 
                     self._hybrid_mpc_session_active = True
                     self._hybrid_mpc_infeasible_streak = 0
                     self._hybrid_mpc_stall_count = 0
                     self._hybrid_mpc_best_error = None
+                    self._hybrid_mpc_step_index = 0
                     self.set_mpc_execution_active(True)
 
                 start_state = self._joint_state_dict_to_curobo_state(current_joint_state)
@@ -1703,6 +1768,13 @@ class UnifiedPlannerNode(Node):
                     self._clear_hybrid_mpc_state()
                     response.success = False
                     response.message = f'MPC goal setup failed: {planning_result.message}'
+                    self.publish_hybrid_mpc_telemetry(
+                        step_index=step_index,
+                        success=False,
+                        message=response.message,
+                        stage='goal_setup',
+                        goal_changed=goal_changed,
+                    )
                     return response
 
                 if goal_changed:
@@ -1734,6 +1806,7 @@ class UnifiedPlannerNode(Node):
                     max_attempts=max(int(self.get_parameter('mpc_step_max_attempts').value), 1),
                 )
                 solve_finished_at = time.monotonic()
+                self._hybrid_mpc_step_index = step_index
 
                 position_error = MPCPlanner._metric_scalar(
                     getattr(step_result.metrics, 'position_error', None)
@@ -1786,6 +1859,12 @@ class UnifiedPlannerNode(Node):
                     if not controller_current_positions:
                         response.success = False
                         response.message = 'No current joint state is available to hold position safely.'
+                        self.publish_hybrid_mpc_telemetry(
+                            step_index=step_index,
+                            success=False,
+                            message=response.message,
+                            stage='hold_position',
+                        )
                         return response
 
                     self.get_logger().warn(
@@ -1829,20 +1908,24 @@ class UnifiedPlannerNode(Node):
                 stall_steps = max(int(self.get_parameter('hybrid_mpc_stall_steps').value), 1)
                 stall_invalidated = self._hybrid_mpc_stall_count >= stall_steps
                 path_invalidated = infeasible_invalidated or stall_invalidated
+                telemetry_infeasible_streak = int(self._hybrid_mpc_infeasible_streak)
+                telemetry_stall_count = int(self._hybrid_mpc_stall_count)
+                telemetry_best_error = self._hybrid_mpc_best_error
+                invalidation_reason = None
                 response.path_invalidated = bool(
                     self.get_parameter('hybrid_mpc_report_path_invalidated').value
                 ) and path_invalidated
                 response.success = True
 
                 if response.path_invalidated:
-                    reason = (
+                    invalidation_reason = (
                         f"progress stall ({self._hybrid_mpc_stall_count} steps, "
                         f"best_error={self._hybrid_mpc_best_error:.4f})"
                         if stall_invalidated
                         else f"infeasible streak ({self._hybrid_mpc_infeasible_streak} steps)"
                     )
                     self.get_logger().warn(
-                        f"Hybrid MPC path invalidated: {reason}"
+                        f"Hybrid MPC path invalidated: {invalidation_reason}"
                     )
                     self.publish_mpc_stream_position(
                         self.get_controller_joint_names(),
@@ -1864,6 +1947,30 @@ class UnifiedPlannerNode(Node):
                     response.message = 'MPC step produced a valid streaming command'
 
                 total_duration_ms = (time.monotonic() - callback_started_at) * 1000.0
+                self.publish_hybrid_mpc_telemetry(
+                    step_index=step_index,
+                    success=bool(response.success),
+                    message=response.message,
+                    goal_changed=goal_changed,
+                    goal_reached=bool(response.goal_reached),
+                    path_invalidated=bool(response.path_invalidated),
+                    joint_goal_active=joint_goal_active,
+                    command_valid=command_valid,
+                    metric_feasible=metric_feasible,
+                    step_feasible=step_feasible,
+                    shift_steps=int(shift_steps),
+                    position_error=position_error,
+                    rotation_error=rotation_error,
+                    cspace_error=cspace_error,
+                    infeasible_streak=telemetry_infeasible_streak,
+                    stall_count=telemetry_stall_count,
+                    best_error=telemetry_best_error,
+                    invalidation_reason=invalidation_reason,
+                    total_duration_ms=total_duration_ms,
+                    goal_setup_ms=(plan_finished_at - plan_started_at) * 1000.0,
+                    world_sync_ms=(sync_finished_at - sync_started_at) * 1000.0,
+                    solve_ms=(solve_finished_at - solve_started_at) * 1000.0,
+                )
                 if total_duration_ms > 250.0:
                     self.get_logger().info(
                         "Hybrid MPC step timings: "
@@ -1885,6 +1992,12 @@ class UnifiedPlannerNode(Node):
                 self.get_logger().error(traceback.format_exc())
                 response.success = False
                 response.message = f'Hybrid MPC step failed: {exc}'
+                self.publish_hybrid_mpc_telemetry(
+                    step_index=self._hybrid_mpc_step_index + 1,
+                    success=False,
+                    message=response.message,
+                    stage='exception',
+                )
                 return response
 
     def mpc_reset_callback(self, request: MpcReset.Request, response: MpcReset.Response):
