@@ -7,6 +7,7 @@
 /.codex/
 /AGENTS.md
 /CLAUDE.md
+.agents/
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
@@ -24,3 +25,4 @@ isaac.sim.mcp_extension/
 .mcp.json
 assets/gaussian_splats/
 /test_logs/
+/benchmark_results/
