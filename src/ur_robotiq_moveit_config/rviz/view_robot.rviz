@@ -241,6 +241,18 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /rgb
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Test Obstacle Markers
+      Namespaces:
+        test_obstacles: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /test_obstacle_markers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

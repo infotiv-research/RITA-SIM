@@ -10,6 +10,11 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY srdf DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY scripts/pick_and_place DESTINATION lib/${PROJECT_NAME})
+install(
+  DIRECTORY scripts/hybrid_benchmark
+  DESTINATION lib/${PROJECT_NAME}
+  PATTERN "__pycache__" EXCLUDE
+)
 install(PROGRAMS scripts/curobo/curobo_home_bootstrap.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/curobo_collision_setup.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/curobo_collision_spheres_toggle.py DESTINATION lib/${PROJECT_NAME})
@@ -20,6 +25,7 @@ install(PROGRAMS scripts/isaac_urdf_collision_publisher.py DESTINATION lib/${PRO
 install(PROGRAMS scripts/curobo/curobo_world_bridge.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/cumotion_planner_upstream_framefix.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/hybrid_move_action_bridge.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/hybrid_obstacle_benchmark.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/human_skeleton_collision_publisher.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pick_and_place_main.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/spawn_test_obstacle.py DESTINATION lib/${PROJECT_NAME})
