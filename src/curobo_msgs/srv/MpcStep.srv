@@ -2,6 +2,7 @@ sensor_msgs/JointState current_state
 geometry_msgs/Pose target_pose
 float64[] target_joint_positions
 int8[] trajectory_constraints
+sensor_msgs/JointState[] path_sentinel_joint_states
 bool initialize_if_needed
 ---
 bool success
@@ -9,5 +10,9 @@ string message
 sensor_msgs/JointState joint_command
 bool goal_reached
 bool path_invalidated
+bool path_sentinel_blocked
+int32 path_sentinel_blocked_index
+int32 path_sentinel_checked_waypoints
+float64 path_sentinel_min_distance
 float64 position_error
 float64 rotation_error

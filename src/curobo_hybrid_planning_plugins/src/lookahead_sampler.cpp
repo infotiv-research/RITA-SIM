@@ -41,15 +41,33 @@ bool LookaheadSampler::initialize(const rclcpp::Node::SharedPtr& node,
       std::max(0.0, node_->declare_parameter<double>("lookahead_reached_tolerance", kDefaultReachedTolerance));
   max_target_joint_distance_ = std::max(
       0.0, node_->declare_parameter<double>("lookahead_max_target_joint_distance", kDefaultMaxTargetJointDistance));
+  path_sentinel_enabled_ = node_->declare_parameter<bool>("hybrid_path_sentinel_enabled", true);
+  const int path_sentinel_max_waypoints = node_->declare_parameter<int>(
+      "hybrid_path_sentinel_max_waypoints", static_cast<int>(kDefaultPathSentinelMaxWaypoints));
+  path_sentinel_max_waypoints_ = static_cast<std::size_t>(std::max(1, path_sentinel_max_waypoints));
+  path_sentinel_max_time_ahead_sec_ = std::max(
+      0.0,
+      node_->declare_parameter<double>("hybrid_path_sentinel_max_time_ahead_sec",
+                                       kDefaultPathSentinelMaxTimeAheadSec));
+  path_sentinel_max_joint_distance_ = std::max(
+      0.0,
+      node_->declare_parameter<double>("hybrid_path_sentinel_max_joint_distance",
+                                       kDefaultPathSentinelMaxJointDistance));
 
   RCLCPP_INFO(node_->get_logger(),
               "LookaheadSampler initialized for group '%s': lookahead_waypoints=%zu, "
-              "nearest_search_window=%zu, reached_tolerance=%.3f, max_target_joint_distance=%.3f",
+              "nearest_search_window=%zu, reached_tolerance=%.3f, max_target_joint_distance=%.3f, "
+              "path_sentinel_enabled=%s, path_sentinel_max_waypoints=%zu, "
+              "path_sentinel_max_time_ahead_sec=%.3f, path_sentinel_max_joint_distance=%.3f",
               group_name.c_str(),
               lookahead_waypoints_,
               nearest_search_window_,
               reached_tolerance_,
-              max_target_joint_distance_);
+              max_target_joint_distance_,
+              path_sentinel_enabled_ ? "true" : "false",
+              path_sentinel_max_waypoints_,
+              path_sentinel_max_time_ahead_sec_,
+              path_sentinel_max_joint_distance_);
   return true;
 }
 
@@ -118,8 +136,11 @@ LookaheadSampler::getLocalTrajectory(const moveit::core::RobotState& current_sta
                         final_index,
                         progress_distance,
                         target_distance);
+  // The first waypoint is the MPC tracking target. Additional waypoints are a
+  // forward collision sentinel window consumed by CuroboMpcLocalSolver.
   local_trajectory.addSuffixWayPoint(reference_trajectory_->getWayPoint(target_index),
                                      reference_trajectory_->getWayPointDurationFromPrevious(target_index));
+  appendPathSentinelWaypoints(current_state, progress_waypoint_index_, target_index, local_trajectory);
   return makeFeedback("");
 }
 
@@ -199,6 +220,49 @@ std::size_t LookaheadSampler::clampTargetIndexByDistance(const moveit::core::Rob
     --target_index;
   }
   return target_index;
+}
+
+void LookaheadSampler::appendPathSentinelWaypoints(const moveit::core::RobotState& current_state,
+                                                   std::size_t progress_index,
+                                                   std::size_t target_index,
+                                                   robot_trajectory::RobotTrajectory& local_trajectory) const
+{
+  if (!path_sentinel_enabled_ || !hasReferenceTrajectory() || path_sentinel_max_waypoints_ <= 1)
+  {
+    return;
+  }
+
+  const std::size_t final_index = reference_trajectory_->getWayPointCount() - 1;
+  const std::size_t start_index = std::min(progress_index, final_index);
+  double elapsed_sec = 0.0;
+  std::size_t appended_count = 1;  // The MPC target waypoint is already present.
+
+  for (std::size_t index = start_index; index <= final_index && appended_count < path_sentinel_max_waypoints_; ++index)
+  {
+    if (index > start_index)
+    {
+      elapsed_sec += reference_trajectory_->getWayPointDurationFromPrevious(index);
+    }
+    if (path_sentinel_max_time_ahead_sec_ > 0.0 && elapsed_sec > path_sentinel_max_time_ahead_sec_)
+    {
+      break;
+    }
+
+    const double joint_distance = reference_trajectory_->getWayPoint(index).distance(current_state, joint_group_);
+    if (path_sentinel_max_joint_distance_ > 0.0 && joint_distance > path_sentinel_max_joint_distance_)
+    {
+      break;
+    }
+
+    if (index == target_index)
+    {
+      continue;
+    }
+
+    local_trajectory.addSuffixWayPoint(reference_trajectory_->getWayPoint(index),
+                                       reference_trajectory_->getWayPointDurationFromPrevious(index));
+    ++appended_count;
+  }
 }
 
 moveit_msgs::action::LocalPlanner::Feedback LookaheadSampler::makeFeedback(const std::string& feedback) const

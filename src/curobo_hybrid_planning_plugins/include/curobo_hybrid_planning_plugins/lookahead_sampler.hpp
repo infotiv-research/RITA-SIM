@@ -35,12 +35,19 @@ private:
   static constexpr std::size_t kDefaultNearestSearchWindow = 20;
   static constexpr double kDefaultReachedTolerance = 0.05;
   static constexpr double kDefaultMaxTargetJointDistance = 0.25;
+  static constexpr std::size_t kDefaultPathSentinelMaxWaypoints = 40;
+  static constexpr double kDefaultPathSentinelMaxTimeAheadSec = 1.2;
+  static constexpr double kDefaultPathSentinelMaxJointDistance = 0.8;
 
   bool hasReferenceTrajectory() const;
   std::size_t findNearestWaypointIndex(const moveit::core::RobotState& current_state) const;
   std::size_t clampTargetIndexByDistance(const moveit::core::RobotState& current_state,
                                          std::size_t progress_index,
                                          std::size_t target_index) const;
+  void appendPathSentinelWaypoints(const moveit::core::RobotState& current_state,
+                                   std::size_t progress_index,
+                                   std::size_t target_index,
+                                   robot_trajectory::RobotTrajectory& local_trajectory) const;
   moveit_msgs::action::LocalPlanner::Feedback makeFeedback(const std::string& feedback) const;
 
   // The active global reference trajectory is owned by the protected
@@ -53,5 +60,9 @@ private:
   std::size_t nearest_search_window_{ kDefaultNearestSearchWindow };
   double reached_tolerance_{ kDefaultReachedTolerance };
   double max_target_joint_distance_{ kDefaultMaxTargetJointDistance };
+  bool path_sentinel_enabled_{ true };
+  std::size_t path_sentinel_max_waypoints_{ kDefaultPathSentinelMaxWaypoints };
+  double path_sentinel_max_time_ahead_sec_{ kDefaultPathSentinelMaxTimeAheadSec };
+  double path_sentinel_max_joint_distance_{ kDefaultPathSentinelMaxJointDistance };
 };
 }  // namespace curobo_hybrid_planning_plugins

@@ -49,7 +49,7 @@
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
-    mpc_horizon_steps: 12
+    mpc_horizon_steps: 20
     mpc_force_shift_steps_one: true
     mpc_command_speed_scale: 1.0
     max_mpc_iterations: 1000
@@ -63,3 +63,6 @@
     hybrid_mpc_report_path_invalidated: true
     hybrid_mpc_stall_steps: 25
     hybrid_mpc_stall_threshold: 0.01
+    hybrid_path_sentinel_enabled: true
+    hybrid_path_sentinel_safety_margin_m: 0.08
+    hybrid_path_sentinel_only_after_world_update: true

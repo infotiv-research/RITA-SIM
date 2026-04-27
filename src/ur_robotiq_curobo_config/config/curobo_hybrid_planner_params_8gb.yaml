@@ -63,3 +63,6 @@
     hybrid_mpc_report_path_invalidated: true
     hybrid_mpc_stall_steps: 25
     hybrid_mpc_stall_threshold: 0.01
+    hybrid_path_sentinel_enabled: true
+    hybrid_path_sentinel_safety_margin_m: 0.08
+    hybrid_path_sentinel_only_after_world_update: true

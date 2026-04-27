@@ -37,6 +37,9 @@ private:
                                 const sensor_msgs::msg::JointState& current_state,
                                 geometry_msgs::msg::Pose& target_pose,
                                 std::vector<double>& target_joint_positions) const;
+  std::vector<sensor_msgs::msg::JointState>
+  buildPathSentinelJointStates(const robot_trajectory::RobotTrajectory& local_trajectory,
+                               const sensor_msgs::msg::JointState& current_state) const;
   moveit_msgs::action::LocalPlanner::Feedback makeFeedback(const std::string& feedback) const;
   bool callReset(bool restore_trajectory_controller) const;
 
