@@ -1,7 +1,15 @@
 robot_description: "robot_description"
-trajectory_operator_plugin_name: "moveit_hybrid_planning/SimpleSampler"
+trajectory_operator_plugin_name: "curobo_hybrid_planning_plugins/LookaheadSampler"
 local_constraint_solver_plugin_name: "curobo_hybrid_planning_plugins/CuroboMpcLocalSolver"
-local_planning_frequency: 10.0
+local_planning_frequency: 30.0
+lookahead_waypoints: 10
+lookahead_reached_tolerance: 0.05
+lookahead_nearest_search_window: 20
+lookahead_max_target_joint_distance: 0.45
+hybrid_path_sentinel_enabled: true
+hybrid_path_sentinel_max_waypoints: 40
+hybrid_path_sentinel_max_time_ahead_sec: 1.2
+hybrid_path_sentinel_max_joint_distance: 0.8
 global_solution_topic: "global_trajectory"
 local_solution_topic: "/forward_position_controller/commands"
 local_solution_topic_type: "std_msgs/Float64MultiArray"

@@ -3,7 +3,7 @@
     planner_type: classic
     max_attempts: 12
     timeout: 15.0
-    time_dilation_factor: 0.7
+    time_dilation_factor: 1.0
     voxel_size: 0.05
     collision_activation_distance: 0.04
     trajopt_tsteps: 32
@@ -49,9 +49,9 @@
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
-    mpc_horizon_steps: 12
+    mpc_horizon_steps: 20
     mpc_force_shift_steps_one: true
-    mpc_command_speed_scale: 0.4
+    mpc_command_speed_scale: 1.0
     max_mpc_iterations: 1000
     mpc_step_max_attempts: 2
     mpc_execution_interface: stream_position
@@ -63,3 +63,6 @@
     hybrid_mpc_report_path_invalidated: true
     hybrid_mpc_stall_steps: 25
     hybrid_mpc_stall_threshold: 0.01
+    hybrid_path_sentinel_enabled: true
+    hybrid_path_sentinel_safety_margin_m: 0.08
+    hybrid_path_sentinel_only_after_world_update: true

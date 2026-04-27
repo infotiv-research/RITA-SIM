@@ -295,6 +295,9 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('hybrid_mpc_report_path_invalidated', True)
         self.declare_parameter('hybrid_mpc_stall_steps', 25)
         self.declare_parameter('hybrid_mpc_stall_threshold', 0.01)
+        self.declare_parameter('hybrid_path_sentinel_enabled', True)
+        self.declare_parameter('hybrid_path_sentinel_safety_margin_m', 0.08)
+        self.declare_parameter('hybrid_path_sentinel_only_after_world_update', True)
         self.declare_parameter('mpc_classic_handoff_enabled', True)
         self.declare_parameter('mpc_classic_handoff_distance', 0.015)
         self.declare_parameter('mpc_debug_logging', False)
@@ -322,6 +325,7 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_stall_count = 0
         self._hybrid_mpc_best_error = None
         self._hybrid_mpc_step_index = 0
+        self._hybrid_mpc_path_sentinel_baseline_world_version = None
         self.node_is_available = False
         self._startup_ready_logged = False
         self._startup_ready_deadline = None
@@ -403,6 +407,7 @@ class UnifiedPlannerNode(Node):
 
         # Warmup only the initial planner
         self._warmup_initial_planner(initial_planner)
+        self._prewarm_startup_planners(initial_planner)
 
         # Set initial planner (will be retrieved from cache)
         self.planner_manager.set_current_planner(initial_planner)
@@ -492,7 +497,20 @@ class UnifiedPlannerNode(Node):
             )
 
         self.node_is_available = True
-        self.get_logger().info(f"✅ {planner_type} planner ready")
+        self.get_logger().info(f"{planner_type} planner ready")
+
+    def _prewarm_startup_planners(self, initial_planner: str):
+        """Warm up additional cached solvers during startup.
+
+        Hybrid execution always needs MPC shortly after the first global plan, so
+        we prewarm it here to move that latency out of the first motion request.
+        """
+        if initial_planner != 'mpc' and self.mpc is None:
+            self.get_logger().info("Prewarming MPC solver during startup.")
+            self.node_is_available = False
+            self._warmup_mpc()
+            self.node_is_available = True
+            self.get_logger().info("MPC planner prewarmed for startup")
 
     def _warmup_classic(self):
         """Warmup MotionGen for Classic/Batch/Constrained planners."""
@@ -1228,6 +1246,7 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_stall_count = 0
         self._hybrid_mpc_best_error = None
         self._hybrid_mpc_step_index = 0
+        self._hybrid_mpc_path_sentinel_baseline_world_version = None
         self.set_mpc_execution_active(False)
 
     def _reset_hybrid_mpc_session(self, restore_trajectory_controller=True):
@@ -1285,7 +1304,7 @@ class UnifiedPlannerNode(Node):
             String(data=json.dumps(_json_safe(payload), sort_keys=True))
         )
 
-    def get_state_collision_debug(self, joint_positions):
+    def get_state_collision_debug(self, joint_positions, activation_distance_m=None):
         """
         Return a compact world-collision summary for a joint configuration.
 
@@ -1321,7 +1340,11 @@ class UnifiedPlannerNode(Node):
                 checker.collision_types,
             )
             activation_distance = self.tensor_args.to_device([
-                float(self.get_parameter('collision_activation_distance').value)
+                float(
+                    activation_distance_m
+                    if activation_distance_m is not None
+                    else self.get_parameter('collision_activation_distance').value
+                )
             ])
             weight = self.tensor_args.to_device([1.0])
             env_query_idx = torch.zeros(
@@ -1351,6 +1374,58 @@ class UnifiedPlannerNode(Node):
         except Exception as exc:
             self.get_logger().debug(f'Collision debug unavailable: {exc}')
             return None
+
+    def _check_hybrid_path_sentinel(self, path_sentinel_joint_states):
+        """Check upcoming global-path waypoints against the active cuRobo world."""
+        result = {
+            'blocked': False,
+            'blocked_index': -1,
+            'checked_waypoints': 0,
+            'min_distance': math.nan,
+        }
+        if not bool(self.get_parameter('hybrid_path_sentinel_enabled').value):
+            return result
+        if bool(self.get_parameter('hybrid_path_sentinel_only_after_world_update').value):
+            baseline_version = self._hybrid_mpc_path_sentinel_baseline_world_version
+            if baseline_version is not None and self._get_world_state_version() <= baseline_version:
+                return result
+
+        safety_margin = max(
+            float(self.get_parameter('hybrid_path_sentinel_safety_margin_m').value),
+            0.0,
+        )
+        min_distance = None
+        for waypoint_index, joint_state in enumerate(path_sentinel_joint_states or []):
+            positions = self._reorder_joint_target_positions(
+                list(getattr(joint_state, 'name', []) or []),
+                list(getattr(joint_state, 'position', []) or []),
+            )
+            if not positions:
+                continue
+
+            collision_debug = self.get_state_collision_debug(
+                positions,
+                activation_distance_m=max(
+                    safety_margin,
+                    float(self.get_parameter('collision_activation_distance').value),
+                ),
+            )
+            if collision_debug is None:
+                continue
+
+            result['checked_waypoints'] += 1
+            waypoint_min_distance = float(collision_debug['min_sphere_dist'])
+            if min_distance is None or waypoint_min_distance < min_distance:
+                min_distance = waypoint_min_distance
+
+            if waypoint_min_distance < safety_margin:
+                result['blocked'] = True
+                result['blocked_index'] = int(waypoint_index)
+                break
+
+        if min_distance is not None:
+            result['min_distance'] = float(min_distance)
+        return result
 
     @staticmethod
     def _format_collision_debug(label, collision_debug):
@@ -1720,6 +1795,7 @@ class UnifiedPlannerNode(Node):
                     self._hybrid_mpc_stall_count = 0
                     self._hybrid_mpc_best_error = None
                     self._hybrid_mpc_step_index = 0
+                    self._hybrid_mpc_path_sentinel_baseline_world_version = self._get_world_state_version()
                     self.set_mpc_execution_active(True)
 
                 start_state = self._joint_state_dict_to_curobo_state(current_joint_state)
@@ -1774,6 +1850,68 @@ class UnifiedPlannerNode(Node):
                 sync_started_at = time.monotonic()
                 self.sync_mpc_world()
                 sync_finished_at = time.monotonic()
+                path_sentinel_result = self._check_hybrid_path_sentinel(
+                    getattr(request, 'path_sentinel_joint_states', [])
+                )
+                response.path_sentinel_blocked = bool(path_sentinel_result['blocked'])
+                response.path_sentinel_blocked_index = int(path_sentinel_result['blocked_index'])
+                response.path_sentinel_checked_waypoints = int(path_sentinel_result['checked_waypoints'])
+                response.path_sentinel_min_distance = float(path_sentinel_result['min_distance'])
+                if response.path_sentinel_blocked:
+                    telemetry_infeasible_streak = int(self._hybrid_mpc_infeasible_streak)
+                    telemetry_stall_count = int(self._hybrid_mpc_stall_count)
+                    telemetry_best_error = self._hybrid_mpc_best_error
+                    joint_goal_active = bool(getattr(planner, 'goal_joint_positions', None))
+                    response.joint_command = self._ordered_joint_state_msg(
+                        self.get_controller_joint_names(),
+                        controller_current_positions,
+                        [0.0] * len(controller_current_positions),
+                    )
+                    response.position_error = math.nan
+                    response.rotation_error = math.nan
+                    response.goal_reached = False
+                    response.path_invalidated = bool(
+                        self.get_parameter('hybrid_mpc_report_path_invalidated').value
+                    )
+                    response.success = True
+                    response.message = 'Blocked global path ahead'
+                    invalidation_reason = (
+                        f"blocked global path ahead "
+                        f"(waypoint={response.path_sentinel_blocked_index}, "
+                        f"min_distance={response.path_sentinel_min_distance:.4f}m)"
+                    )
+                    self.get_logger().warn(f"Hybrid MPC path invalidated: {invalidation_reason}")
+                    self.publish_mpc_stream_position(
+                        self.get_controller_joint_names(),
+                        controller_current_positions,
+                    )
+                    self._clear_hybrid_mpc_state()
+                    self.publish_hybrid_mpc_telemetry(
+                        step_index=step_index,
+                        success=True,
+                        message=response.message,
+                        goal_changed=goal_changed,
+                        goal_reached=False,
+                        path_invalidated=bool(response.path_invalidated),
+                        joint_goal_active=joint_goal_active,
+                        command_valid=True,
+                        metric_feasible=False,
+                        step_feasible=False,
+                        infeasible_streak=telemetry_infeasible_streak,
+                        stall_count=telemetry_stall_count,
+                        best_error=telemetry_best_error,
+                        invalidation_reason=invalidation_reason,
+                        path_sentinel_blocked=True,
+                        path_sentinel_min_distance=response.path_sentinel_min_distance,
+                        path_sentinel_blocked_index=response.path_sentinel_blocked_index,
+                        path_sentinel_checked_waypoints=response.path_sentinel_checked_waypoints,
+                        total_duration_ms=(time.monotonic() - callback_started_at) * 1000.0,
+                        goal_setup_ms=(plan_finished_at - plan_started_at) * 1000.0,
+                        world_sync_ms=(sync_finished_at - sync_started_at) * 1000.0,
+                        solve_ms=0.0,
+                    )
+                    return response
+
                 mpc_step_dt = float(self.get_parameter('mpc_step_dt').value)
                 mpc_horizon = max(int(self.get_parameter('mpc_horizon_steps').value), 2)
                 now = time.monotonic()
@@ -1952,6 +2090,10 @@ class UnifiedPlannerNode(Node):
                     stall_count=telemetry_stall_count,
                     best_error=telemetry_best_error,
                     invalidation_reason=invalidation_reason,
+                    path_sentinel_blocked=bool(response.path_sentinel_blocked),
+                    path_sentinel_min_distance=response.path_sentinel_min_distance,
+                    path_sentinel_blocked_index=response.path_sentinel_blocked_index,
+                    path_sentinel_checked_waypoints=response.path_sentinel_checked_waypoints,
                     total_duration_ms=total_duration_ms,
                     goal_setup_ms=(plan_finished_at - plan_started_at) * 1000.0,
                     world_sync_ms=(sync_finished_at - sync_started_at) * 1000.0,

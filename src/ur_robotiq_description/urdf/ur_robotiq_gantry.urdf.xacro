@@ -62,7 +62,7 @@
   <!-- gantry parameters -->
   <xacro:arg name="gantry_lower_limit" default="-0.75"/>
   <xacro:arg name="gantry_upper_limit" default="0.75"/>
-  <xacro:arg name="gantry_velocity_limit" default="1.0"/>
+  <xacro:arg name="gantry_velocity_limit" default="1.5"/>
   <xacro:arg name="gantry_effort_limit" default="2000.0"/>
   <xacro:arg name="gantry_beam_length" default="3.0"/>
   <xacro:arg name="gantry_beam_width" default="0.16"/>
@@ -146,7 +146,7 @@
     <origin xyz="$(arg gantry_track_xyz)" rpy="$(arg gantry_track_rpy)"/>
     <axis xyz="1 0 0"/>
     <limit lower="$(arg gantry_lower_limit)" upper="$(arg gantry_upper_limit)" effort="$(arg gantry_effort_limit)" velocity="$(arg gantry_velocity_limit)"/>
-    <dynamics damping="8.0" friction="1.0"/>
+    <dynamics damping="100.0" friction="0.0"/>
   </joint>
 
   <xacro:ur_robot

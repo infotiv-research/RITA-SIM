@@ -22,6 +22,7 @@ find_package(trajectory_msgs REQUIRED)
 add_library(${PROJECT_NAME} SHARED
   src/curobo_global_planner.cpp
   src/curobo_mpc_local_solver.cpp
+  src/lookahead_sampler.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME}
