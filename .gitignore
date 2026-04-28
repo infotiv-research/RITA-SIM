@@ -26,3 +26,4 @@ isaac.sim.mcp_extension/
 assets/gaussian_splats/
 /test_logs/
 /benchmark_results/
+/test_data/

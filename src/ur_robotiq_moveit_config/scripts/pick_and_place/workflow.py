@@ -8,6 +8,7 @@ Responsibilities:
 """
 
 from collections import deque
+import json
 import math
 import threading
 import time
@@ -366,6 +367,9 @@ class PickAndPlaceTargetObject(
         self.environment_collision_control_pub = self.create_publisher(
             String, "/environment_collision/control", 10
         )
+        self.metrics_event_pub = self.create_publisher(
+            String, "/pick_and_place/metrics_events", 10
+        )
         self._attached_object_id = None
         self._target_object_suppressed = False
         self._home_joint_values = None
@@ -381,6 +385,9 @@ class PickAndPlaceTargetObject(
 
         self._executed = False
         self._shutdown_requested = False
+        self._pending_shutdown_reason = None
+        self.sequence_success = False
+        self.sequence_failed = False
         if str(self.motion_backend).lower() == "curobo_ros":
             self._motion_backend_adapter = CuroboMotionBackend(self)
             self._curobo_object_tracker = CuroboObjectTracker(self)
@@ -529,6 +536,33 @@ class PickAndPlaceTargetObject(
         time.sleep(3.0)
         self._execute()
 
+    def _publish_metrics_event(self, event: str, phase: str, **fields) -> None:
+        msg = String()
+        msg.data = json.dumps({"event": event, "phase": phase, **fields})
+        self.metrics_event_pub.publish(msg)
+
+    def _start_metrics_phase(self, phase: str) -> None:
+        self._publish_metrics_event("phase_start", phase)
+
+    def _finish_metrics_phase(
+        self, phase: str, success: bool, failure_reason: str = ""
+    ) -> None:
+        self._publish_metrics_event(
+            "phase_end",
+            phase,
+            success=bool(success),
+            failure_reason=failure_reason,
+        )
+
+    def _fail_metrics_phase(self, phase: str, reason: str) -> None:
+        self._finish_metrics_phase(phase, False, reason)
+        self._abort_sequence(reason)
+
+    def _abort_sequence(self, reason: str) -> None:
+        self.sequence_failed = True
+        if self._pending_shutdown_reason is None:
+            self._pending_shutdown_reason = f"Sequence failed: {reason}"
+
     def _execute(self):
         """Main execution sequence."""
         if self._executed:
@@ -541,8 +575,10 @@ class PickAndPlaceTargetObject(
                     f"Gripper trajectory action server not available after 30s: "
                     f"{GRIPPER_TRAJECTORY_ACTION}"
                 )
+                self._abort_sequence("gripper_trajectory_action_server_unavailable")
                 return
             if not self._motion_backend_adapter.wait_until_ready():
+                self._abort_sequence("motion_backend_not_ready")
                 return
 
             if str(self.motion_backend).lower() == "hybrid":
@@ -552,6 +588,7 @@ class PickAndPlaceTargetObject(
                         "Aborting — the hybrid planner cannot plan from the "
                         "default all-zeros configuration."
                     )
+                    self._abort_sequence("hybrid_initial_home_failed")
                     return
 
             self.get_logger().info(
@@ -564,6 +601,7 @@ class PickAndPlaceTargetObject(
                 self.get_logger().error(
                     f"Failed to look up target object frame '{self.target_object_frame}'. Aborting."
                 )
+                self._abort_sequence("target_object_pose_lookup_failed")
                 return
 
             ox, oy, oz, oqx, oqy, oqz, oqw = object_pose
@@ -578,6 +616,7 @@ class PickAndPlaceTargetObject(
             success = self._move_gripper(0.0)
             if not success:
                 self.get_logger().error("Failed to open gripper. Aborting.")
+                self._abort_sequence("failed_to_open_gripper")
                 return
             self.get_logger().info("Gripper opened.")
 
@@ -586,6 +625,7 @@ class PickAndPlaceTargetObject(
             self.get_logger().info(
                 f"Moving to pre-grasp pose: x={ox:.3f}, y={oy:.3f}, z={pre_grasp_z:.3f}"
             )
+            self._start_metrics_phase("pre_grasp")
             success = self._motion_backend_adapter.move_to_pose(
                 ox, oy, pre_grasp_z, oqx, oqy, oqz, oqw
             )
@@ -605,8 +645,12 @@ class PickAndPlaceTargetObject(
                     num_attempts=20,
                 )
                 if not success:
+                    self._fail_metrics_phase(
+                        "pre_grasp", "failed_to_move_to_pre_grasp_pose"
+                    )
                     self.get_logger().error("Failed to move to pre-grasp pose. Aborting.")
                     return
+            self._finish_metrics_phase("pre_grasp", True)
             self.get_logger().info("Reached pre-grasp pose.")
 
             # 4. Move to grasp pose (gripper around object) while object remains in scene
@@ -646,6 +690,7 @@ class PickAndPlaceTargetObject(
                     "Using curobo classic planner for final grasp descent while "
                     "keeping MPC for the surrounding pick-and-place phases."
                 )
+            self._start_metrics_phase("grasp")
             for grasp_try in range(grasp_retry_count):
                 offset_z = float(self.grasp_offset_z) + grasp_try * grasp_retry_step
                 used_grasp_offset_z = offset_z
@@ -672,8 +717,10 @@ class PickAndPlaceTargetObject(
                     break
 
             if not success:
+                self._fail_metrics_phase("grasp", "failed_to_move_to_grasp_pose")
                 self.get_logger().error("Failed to move to grasp pose. Aborting.")
                 return
+            self._finish_metrics_phase("grasp", True)
             self.get_logger().info("Reached grasp pose. Gripper is around the object.")
 
             object_snapshot = None
@@ -708,6 +755,7 @@ class PickAndPlaceTargetObject(
                             "after recovery. Aborting because MoveIt/cumotion attachment requires "
                             "runtime object collision geometry."
                         )
+                        self._abort_sequence("target_object_geometry_snapshot_failed")
                         return
 
             # 6. Suppress world collision right before the close command.
@@ -721,6 +769,7 @@ class PickAndPlaceTargetObject(
                 self.get_logger().error(
                     f"Failed to suppress '{self.target_object_id}' in environment collisions. Aborting."
                 )
+                self._abort_sequence("failed_to_suppress_target_object_collision")
                 return
             self._target_object_suppressed = True
 
@@ -734,6 +783,7 @@ class PickAndPlaceTargetObject(
             if not success:
                 self.get_logger().error("Failed to close gripper. Aborting.")
                 self._restore_suppressed_object_collision()
+                self._abort_sequence("failed_to_close_gripper")
                 return
             self.get_logger().info("Gripper closed.")
 
@@ -751,6 +801,7 @@ class PickAndPlaceTargetObject(
                 "Performing post-grasp lift: "
                 f"x={ox:.3f}, y={oy:.3f}, z={lift_z:.3f}"
             )
+            self._start_metrics_phase("post_grasp_lift")
             success = self._motion_backend_adapter.move_to_pose(
                 ox,
                 oy,
@@ -763,9 +814,11 @@ class PickAndPlaceTargetObject(
                 num_attempts=10,
             )
             if not success:
+                self._fail_metrics_phase("post_grasp_lift", "failed_post_grasp_lift")
                 self.get_logger().error("Failed post-grasp lift. Aborting.")
                 self._restore_suppressed_object_collision()
                 return
+            self._finish_metrics_phase("post_grasp_lift", True)
             self.get_logger().info("Post-grasp lift completed.")
 
             object_pose_after_lift = self._lookup_target_object_pose()
@@ -798,6 +851,7 @@ class PickAndPlaceTargetObject(
                             "Failed to attach target object to cuMotion robot collision spheres. Aborting."
                         )
                         self._restore_suppressed_object_collision()
+                        self._abort_sequence("failed_to_attach_object_to_cumotion")
                         return
 
                 self.get_logger().info(
@@ -816,6 +870,7 @@ class PickAndPlaceTargetObject(
                     )
                     self._detach_object_from_cumotion(best_effort=True)
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_attach_object_collision")
                     return
                 self.get_logger().info(
                     f"Collision object '{self.target_object_id}' attached to gripper."
@@ -853,6 +908,7 @@ class PickAndPlaceTargetObject(
                         "in MoveIt planning scene. Aborting."
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_attach_object_collision")
                     return
                 if self.verify_attached_in_scene:
                     attached_seen = self._wait_for_attached_object_in_planning_scene(
@@ -882,6 +938,7 @@ class PickAndPlaceTargetObject(
                         self.target_object_id, publish_surface_gripper_command=False
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_attach_curobo_carried_object")
                     return
             else:
                 object_pose_in_ee = self._lookup_target_object_pose_in_end_effector(
@@ -896,6 +953,7 @@ class PickAndPlaceTargetObject(
                         "Failed to attach carried-object spheres for curobo backend. Aborting."
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_attach_curobo_carried_object")
                     return
 
             release_orientation = self._resolve_release_orientation()
@@ -903,6 +961,7 @@ class PickAndPlaceTargetObject(
                 self.get_logger().error("Configured release orientation is invalid.")
                 self._detach_dynamic_collision_representations(best_effort=True)
                 self._restore_suppressed_object_collision()
+                self._abort_sequence("invalid_release_orientation")
                 return
             release_qx, release_qy, release_qz, release_qw = release_orientation
 
@@ -913,6 +972,7 @@ class PickAndPlaceTargetObject(
                 f"y={float(self.release_pose_y):.3f}, "
                 f"z={predrop_z:.3f}"
             )
+            self._start_metrics_phase("pre_drop")
             success = self._motion_backend_adapter.move_to_pose(
                 float(self.release_pose_x),
                 float(self.release_pose_y),
@@ -925,19 +985,24 @@ class PickAndPlaceTargetObject(
                 num_attempts=int(self.dropoff_num_planning_attempts),
             )
             if not success:
+                self._fail_metrics_phase("pre_drop", "failed_to_move_to_pre_drop_pose")
                 self.get_logger().error("Failed to move to pre-drop pose. Aborting.")
                 self._detach_dynamic_collision_representations(best_effort=True)
                 self._restore_suppressed_object_collision()
                 return
+            self._finish_metrics_phase("pre_drop", True)
             self.get_logger().info("Reached pre-drop pose.")
 
             # 8. Move directly to release pose while carrying attached collision geometry.
+            self._start_metrics_phase("release")
             success = self._motion_backend_adapter.move_to_release_pose_with_retries()
             if not success:
+                self._fail_metrics_phase("release", "failed_to_move_to_release_pose")
                 self.get_logger().error("Failed to move to release pose. Aborting.")
                 self._detach_dynamic_collision_representations(best_effort=True)
                 self._restore_suppressed_object_collision()
                 return
+            self._finish_metrics_phase("release", True)
             self.get_logger().info("Reached release pose.")
 
             # 9. Open gripper to release object
@@ -949,6 +1014,7 @@ class PickAndPlaceTargetObject(
                 )
                 self._detach_dynamic_collision_representations(best_effort=True)
                 self._restore_suppressed_object_collision()
+                self._abort_sequence("failed_to_open_gripper_at_release_pose")
                 return
             self.get_logger().info("Gripper opened at release pose.")
 
@@ -964,6 +1030,7 @@ class PickAndPlaceTargetObject(
                     )
                     self._detach_object_from_cumotion(best_effort=True)
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_detach_moveit_object")
                     return
 
                 success = self._detach_object_from_cumotion(retry_once=True)
@@ -972,6 +1039,7 @@ class PickAndPlaceTargetObject(
                         "Failed to detach target object from cuMotion collision spheres. Aborting."
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_detach_object_from_cumotion")
                     return
             elif str(self.motion_backend).lower() == "hybrid":
                 # Dual detach: MoveIt planning scene + cuRobo world model.
@@ -986,6 +1054,7 @@ class PickAndPlaceTargetObject(
                     )
                     self._curobo_object_tracker.detach(best_effort=True)
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_detach_moveit_object")
                     return
 
                 success = self._curobo_object_tracker.detach()
@@ -994,6 +1063,7 @@ class PickAndPlaceTargetObject(
                         "Failed to detach carried-object spheres from cuRobo world model. Aborting."
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_detach_curobo_carried_object")
                     return
             else:
                 self._publish_surface_gripper_command(False)
@@ -1003,6 +1073,7 @@ class PickAndPlaceTargetObject(
                         "Failed to detach carried-object spheres from curobo backend. Aborting."
                     )
                     self._restore_suppressed_object_collision()
+                    self._abort_sequence("failed_to_detach_curobo_carried_object")
                     return
 
             retreat_z = float(self.release_pose_z) + max(
@@ -1031,6 +1102,7 @@ class PickAndPlaceTargetObject(
                     f"planning_time={float(retreat_planning_time):.2f}s, "
                     f"num_attempts={int(retreat_num_attempts)}."
                 )
+            self._start_metrics_phase("post_release_retreat")
             success = self._motion_backend_adapter.move_to_pose(
                 float(self.release_pose_x),
                 float(self.release_pose_y),
@@ -1045,9 +1117,14 @@ class PickAndPlaceTargetObject(
                 execution_mode=retreat_execution_mode,
             )
             if not success:
+                self._fail_metrics_phase(
+                    "post_release_retreat",
+                    "failed_to_retreat_upward_after_release",
+                )
                 self.get_logger().error("Failed to retreat upward after release. Aborting.")
                 self._restore_suppressed_object_collision()
                 return
+            self._finish_metrics_phase("post_release_retreat", True)
             self.get_logger().info("Post-release retreat completed.")
 
             # 11. Unsuppress object so environment publisher resumes world ownership
@@ -1062,20 +1139,27 @@ class PickAndPlaceTargetObject(
                     f"Failed to unsuppress world collision object '{self.target_object_id}'. Aborting."
                 )
                 self._detach_dynamic_collision_representations(best_effort=True)
+                self._abort_sequence("failed_to_unsuppress_world_collision_object")
                 return
             self._target_object_suppressed = False
 
             # 12. Return to home
             self.get_logger().info("Returning to home joint state...")
+            self._start_metrics_phase("return_home")
             success = self._motion_backend_adapter.move_to_home()
             if not success:
+                self._fail_metrics_phase(
+                    "return_home", "failed_to_return_to_home_joint_state"
+                )
                 self.get_logger().error("Failed to return to home joint state. Aborting.")
                 self._detach_dynamic_collision_representations(best_effort=True)
                 return
+            self._finish_metrics_phase("return_home", True)
 
             self.get_logger().info(
                 "Pick-and-place sequence complete. Object released, environment collision restored, and robot returned home."
             )
+            self.sequence_success = True
             shutdown_reason = "Sequence complete"
         finally:
             restored = self._motion_backend_adapter.restore_previous_planner()
@@ -1083,6 +1167,8 @@ class PickAndPlaceTargetObject(
                 self.get_logger().warn(
                     "Pick-and-place could not restore the previous planner state."
                 )
+            if self._pending_shutdown_reason is not None:
+                self._request_shutdown(self._pending_shutdown_reason)
 
         if shutdown_reason is not None:
             self._request_shutdown(shutdown_reason)
