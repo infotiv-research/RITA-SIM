@@ -19,6 +19,14 @@ once the command above executed succcessfully, run the automated pick-and-place.
 ./test.sh pick_and_place curobo
 ```
 
+To run the automated hybrid obstacle benchmark:
+
+```bash
+./test.sh hybrid_benchmark --case test_1 --runs 1
+```
+
+JSON results are written under [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
+
 
 to stop the stack
 

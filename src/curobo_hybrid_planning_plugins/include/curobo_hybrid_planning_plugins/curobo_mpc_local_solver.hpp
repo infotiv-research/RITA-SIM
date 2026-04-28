@@ -37,20 +37,23 @@ private:
                                 const sensor_msgs::msg::JointState& current_state,
                                 geometry_msgs::msg::Pose& target_pose,
                                 std::vector<double>& target_joint_positions) const;
+  std::vector<sensor_msgs::msg::JointState>
+  buildPathSentinelJointStates(const robot_trajectory::RobotTrajectory& local_trajectory,
+                               const sensor_msgs::msg::JointState& current_state) const;
   moveit_msgs::action::LocalPlanner::Feedback makeFeedback(const std::string& feedback) const;
   bool callReset(bool restore_trajectory_controller) const;
 
   template <typename FutureT>
   bool waitForFuture(FutureT& future, const std::chrono::milliseconds& timeout) const
   {
+    constexpr auto poll_interval = std::chrono::milliseconds(10);
     const auto start = std::chrono::steady_clock::now();
     while ((std::chrono::steady_clock::now() - start) < timeout)
     {
-      if (future.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
+      if (future.wait_for(poll_interval) == std::future_status::ready)
       {
         return true;
       }
-      rclcpp::sleep_for(std::chrono::milliseconds(10));
     }
     return false;
   }

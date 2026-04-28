@@ -11,4 +11,10 @@
     base_class_type="moveit::hybrid_planning::LocalConstraintSolverInterface">
     <description>MoveIt Hybrid Planning local constraint solver that steps curobo_ros MPC.</description>
   </class>
+  <class
+    name="curobo_hybrid_planning_plugins/LookaheadSampler"
+    type="curobo_hybrid_planning_plugins::LookaheadSampler"
+    base_class_type="moveit::hybrid_planning::TrajectoryOperatorInterface">
+    <description>MoveIt Hybrid Planning trajectory operator that samples a fixed waypoint lookahead.</description>
+  </class>
 </library>

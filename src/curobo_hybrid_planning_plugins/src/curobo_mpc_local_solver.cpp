@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include <geometry_msgs/msg/pose.hpp>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.hpp>
@@ -95,10 +96,27 @@ moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::solve(
         moveit::hybrid_planning::LocalFeedbackEnum::LOCAL_PLANNER_STUCK)));
   }
 
+  double target_max_delta = 0.0;
+  if (target_joint_positions.size() == current_state.position.size())
+  {
+    for (std::size_t joint_index = 0; joint_index < target_joint_positions.size(); ++joint_index)
+    {
+      target_max_delta = std::max(target_max_delta,
+                                  std::abs(target_joint_positions[joint_index] - current_state.position[joint_index]));
+    }
+  }
+  RCLCPP_DEBUG_THROTTLE(node_->get_logger(),
+                        *node_->get_clock(),
+                        1000,
+                        "Hybrid MPC local target: max_joint_delta=%.4f, active=%s",
+                        target_max_delta,
+                        active_ ? "true" : "false");
+
   auto request = std::make_shared<curobo_msgs::srv::MpcStep::Request>();
   request->current_state = current_state;
   request->target_pose = target_pose;
   request->target_joint_positions = target_joint_positions;
+  request->path_sentinel_joint_states = buildPathSentinelJointStates(local_trajectory, current_state);
   request->initialize_if_needed = !active_;
 
   auto future = mpc_step_client_->async_send_request(request);
@@ -185,33 +203,8 @@ bool CuroboMpcLocalSolver::buildTargetPoseAndJoints(const robot_trajectory::Robo
     return false;
   }
 
-  const std::size_t waypoint_count = local_trajectory.getWayPointCount();
-  const auto& current_positions = current_state.position;
-  std::size_t target_index = waypoint_count - 1;
-
-  for (std::size_t index = 0; index < waypoint_count; ++index)
-  {
-    std::vector<double> waypoint_positions;
-    local_trajectory.getWayPoint(index).copyJointGroupPositions(joint_model_group_, waypoint_positions);
-    if (waypoint_positions.size() != current_positions.size())
-    {
-      continue;
-    }
-
-    double max_delta = 0.0;
-    for (std::size_t joint_index = 0; joint_index < waypoint_positions.size(); ++joint_index)
-    {
-      max_delta = std::max(max_delta, std::abs(waypoint_positions[joint_index] - current_positions[joint_index]));
-    }
-
-    if (max_delta > min_target_joint_delta_)
-    {
-      target_index = index;
-      break;
-    }
-  }
-
-  const moveit::core::RobotState& target_state = local_trajectory.getWayPoint(target_index);
+  (void)current_state;
+  const moveit::core::RobotState& target_state = local_trajectory.getWayPoint(0);
   target_state.copyJointGroupPositions(joint_model_group_, target_joint_positions);
   if (target_joint_positions.empty())
   {
@@ -228,6 +221,32 @@ bool CuroboMpcLocalSolver::buildTargetPoseAndJoints(const robot_trajectory::Robo
   target_pose.orientation.z = ee_quaternion.z();
   target_pose.orientation.w = ee_quaternion.w();
   return true;
+}
+
+std::vector<sensor_msgs::msg::JointState> CuroboMpcLocalSolver::buildPathSentinelJointStates(
+    const robot_trajectory::RobotTrajectory& local_trajectory,
+    const sensor_msgs::msg::JointState& current_state) const
+{
+  std::vector<sensor_msgs::msg::JointState> sentinel_states;
+  const std::size_t waypoint_count = local_trajectory.getWayPointCount();
+  sentinel_states.reserve(waypoint_count);
+
+  for (std::size_t index = 0; index < waypoint_count; ++index)
+  {
+    std::vector<double> waypoint_positions;
+    local_trajectory.getWayPoint(index).copyJointGroupPositions(joint_model_group_, waypoint_positions);
+    if (waypoint_positions.size() != current_state.name.size())
+    {
+      continue;
+    }
+
+    sensor_msgs::msg::JointState joint_state;
+    joint_state.name = current_state.name;
+    joint_state.position = std::move(waypoint_positions);
+    sentinel_states.push_back(std::move(joint_state));
+  }
+
+  return sentinel_states;
 }
 
 moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::makeFeedback(const std::string& feedback) const

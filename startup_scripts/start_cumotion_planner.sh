@@ -55,7 +55,7 @@ set_profile_params() {
       cumotion_num_trajopt_time_steps_value=40
       cumotion_trajopt_finetune_iters_value=360
       cumotion_interpolation_dt_value=0.02
-      cumotion_time_dilation_factor_value=0.30
+      cumotion_time_dilation_factor_value=0.85
       ;;
 
     medium)
@@ -67,7 +67,7 @@ set_profile_params() {
       cumotion_num_trajopt_time_steps_value=56
       cumotion_trajopt_finetune_iters_value=420
       cumotion_interpolation_dt_value=0.02
-      cumotion_time_dilation_factor_value=0.28
+      cumotion_time_dilation_factor_value=0.85
       ;;
 
     high)
@@ -79,7 +79,7 @@ set_profile_params() {
       cumotion_num_trajopt_time_steps_value=64
       cumotion_trajopt_finetune_iters_value=600
       cumotion_interpolation_dt_value=0.02
-      cumotion_time_dilation_factor_value=0.25
+      cumotion_time_dilation_factor_value=0.85
       ;;
     *)
       log "WARNING: Unknown profile '${profile}', using low."

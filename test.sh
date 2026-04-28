@@ -60,6 +60,12 @@ hybrid() {
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" wait_hybrid
 }
 
+hybrid_benchmark_run() {
+  python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
+  $COMPOSE_CMD exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh hybrid_benchmark "$@"' bash "$@" \
+    > "${SCRIPT_DIR}/test_logs/hybrid_benchmark.log" 2>&1
+}
+
 pick_and_place_run() {
   run_number="${1:-1}"
   shift
@@ -111,6 +117,14 @@ case "${1:-}" in
   hybrid)
     shift
     hybrid "$@"
+    ;;
+  hybrid_benchmark)
+    shift
+    python3 "${SCRIPT_DIR}/scripts/hybrid_benchmark_scenario.py" "$@"
+    ;;
+  hybrid_benchmark_run)
+    shift
+    hybrid_benchmark_run "$@"
     ;;
   pick_and_place)
     shift

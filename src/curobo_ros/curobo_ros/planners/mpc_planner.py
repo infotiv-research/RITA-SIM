@@ -70,6 +70,7 @@ class MPCPlanner(TrajectoryPlanner):
         self.trajectory_constraints = []
         self._classic_handoff_requested = False
         self._classic_handoff_metadata = None
+        self._last_goal_setup_signature = None
 
         # MPC parameters
         self.convergence_threshold = 0.01  # meters
@@ -337,11 +338,10 @@ class MPCPlanner(TrajectoryPlanner):
         self.last_goal_topic_raw = last_goal_topic_raw
         self.mpc.update_goal(self.goal_buffer)
         self.is_goal_active = True
-        self.node.get_logger().info(
-            "MPC goal buffer reused in place"
-            if reused_goal_buffer
-            else "MPC goal buffer rebuilt"
-        )
+        if reused_goal_buffer:
+            self.node.get_logger().debug("MPC goal buffer reused in place")
+        else:
+            self.node.get_logger().info("MPC goal buffer rebuilt")
 
     def _goal_setup_metadata(self):
         """Return the common PlannerResult metadata for an initialized MPC goal."""
@@ -359,6 +359,26 @@ class MPCPlanner(TrajectoryPlanner):
     def _log_goal_setup(self):
         """Emit goal-setup logging after the MPC goal buffer is ready."""
         goal_mode = "joint_target" if self.uses_joint_goal() else "pose_target"
+        if self.uses_joint_goal():
+            signature = (
+                goal_mode,
+                float(self.joint_convergence_threshold),
+                float(self._get_command_speed_scale()),
+                int(self.max_iterations),
+            )
+        else:
+            signature = (
+                goal_mode,
+                float(self.position_convergence_threshold),
+                float(self.rotation_convergence_threshold),
+                float(self._get_command_speed_scale()),
+                int(self.max_iterations),
+            )
+
+        if signature == self._last_goal_setup_signature:
+            return
+        self._last_goal_setup_signature = signature
+
         if self.uses_joint_goal():
             self.node.get_logger().info(
                 f"MPC goal setup ({goal_mode}): "
