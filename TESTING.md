@@ -25,7 +25,8 @@ To run the automated hybrid obstacle benchmark:
 ./test.sh hybrid_benchmark --case test_1 --runs 1
 ```
 
-JSON results are written under [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
+JSON results are written under a timestamped run folder in
+[`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
 
 
 to stop the stack

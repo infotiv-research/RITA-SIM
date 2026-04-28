@@ -52,6 +52,9 @@ def create_run_record(run_index: int, goal_spec: dict):
             "spawned": False,
             "spawn_t_rel_sec": None,
             "spawn_tcp_to_obstacle_surface_distance_m": None,
+            "min_tcp_clearance_m": None,
+            "min_robot_clearance_m": None,
+            "distance_sampling_active": True,
             "service_message": None,
             "wait_reason": None,
         },
@@ -133,6 +136,19 @@ def is_successful_move_group_result(result_data: dict):
 # Convert obstacle tracking state into the compact output schema.
 def _summarize_obstacle(obstacle_state: dict):
     planned = obstacle_state.get("planned_obstacle") or {}
+    tcp_available = obstacle_state.get("min_tcp_clearance_m") is not None
+    robot_available = obstacle_state.get("min_robot_clearance_m") is not None
+    if tcp_available and robot_available:
+        distance_sampling_status = "ok"
+    elif tcp_available:
+        distance_sampling_status = "robot_collision_spheres_unavailable"
+    elif robot_available:
+        distance_sampling_status = "tcp_unavailable"
+    elif planned:
+        distance_sampling_status = "tcp_and_robot_unavailable"
+    else:
+        distance_sampling_status = "obstacle_not_planned"
+
     obstacle = {
         "spawned": bool(obstacle_state.get("spawned")),
         "spawn_time_after_goal_sent_sec": obstacle_state.get("spawn_t_rel_sec"),
@@ -140,6 +156,9 @@ def _summarize_obstacle(obstacle_state: dict):
         "rotation_deg": list(planned.get("rotation_deg") or []),
         "size": list(planned.get("size") or []),
         "tcp_clearance_at_spawn_m": obstacle_state.get("spawn_tcp_to_obstacle_surface_distance_m"),
+        "min_tcp_clearance_m": obstacle_state.get("min_tcp_clearance_m"),
+        "min_robot_clearance_m": obstacle_state.get("min_robot_clearance_m"),
+        "distance_sampling_status": distance_sampling_status,
     }
     if obstacle_state.get("wait_reason"):
         obstacle["wait_reason"] = obstacle_state.get("wait_reason")

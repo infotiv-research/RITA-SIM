@@ -52,6 +52,21 @@ def _point_to_yaw_box_surface_distance(point_xyz, center_xyz, size_xyz, yaw_deg)
     return math.sqrt(outside_x * outside_x + outside_y * outside_y + outside_z * outside_z)
 
 
+# Measure point clearance to an obstacle dictionary from this benchmark.
+def point_clearance_to_obstacle(point_xyz, obstacle: dict):
+    return _point_to_yaw_box_surface_distance(
+        point_xyz,
+        [float(value) for value in obstacle["position"]],
+        [float(value) for value in obstacle["size"]],
+        float(obstacle["rotation_deg"][2]),
+    )
+
+
+# Measure approximate sphere clearance to an obstacle dictionary from this benchmark.
+def sphere_clearance_to_obstacle(sphere_center_xyz, sphere_radius, obstacle: dict):
+    return point_clearance_to_obstacle(sphere_center_xyz, obstacle) - max(float(sphere_radius), 0.0)
+
+
 class ObstaclePlacementResolver:
     # Keep the FK service client and async wait helper used for placement queries.
     def __init__(self, fk_client, wait_for_future):
@@ -87,12 +102,7 @@ class ObstaclePlacementResolver:
             pose = self._call_fk(joint_positions, timeout_sec=float(timeout_sec))
         except PlacementError:
             return None
-        return _point_to_yaw_box_surface_distance(
-            _pose_to_position(pose),
-            [float(value) for value in obstacle["position"]],
-            [float(value) for value in obstacle["size"]],
-            float(obstacle["rotation_deg"][2]),
-        )
+        return point_clearance_to_obstacle(_pose_to_position(pose), obstacle)
 
     # Pick an obstacle pose from the initial global trajectory and report selection metadata.
     def resolve_obstacle_placement(self, reference_plan):

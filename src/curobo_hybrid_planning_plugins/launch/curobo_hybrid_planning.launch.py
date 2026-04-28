@@ -125,6 +125,8 @@ def _build_curobo_planner_nodes(context):
         planner_defaults.get("curobo_world_max_move_batch_size", 128)
     )
     visualize_collision_world = bool(planner_defaults.get("visualize_collision_world", True))
+    robot_collision_sphere_alpha = float(planner_defaults.get("robot_collision_sphere_alpha", 0.5))
+    robot_collision_sphere_rate_hz = float(planner_defaults.get("robot_collision_sphere_rate_hz", 10.0))
 
     curobo_planner = Node(
         package="curobo_ros",
@@ -173,7 +175,24 @@ def _build_curobo_planner_nodes(context):
         ],
     )
 
-    return [curobo_planner, world_bridge]
+    live_collision_spheres = Node(
+        package="ur_robotiq_moveit_config",
+        executable="curobo_live_collision_spheres.py",
+        output="screen",
+        parameters=[
+            {
+                "robot_config_file": runtime_yaml,
+                "joint_state_topic": "/joint_states",
+                "joint_names": arm_joint_names,
+                "base_link": "gantry_base_link",
+                "marker_topic": "/curobo_live_collision_spheres",
+                "marker_alpha": robot_collision_sphere_alpha,
+                "publish_rate_hz": robot_collision_sphere_rate_hz,
+            }
+        ],
+    )
+
+    return [curobo_planner, world_bridge, live_collision_spheres]
 
 
 def _build_hybrid_container(context, *_args, **_kwargs):

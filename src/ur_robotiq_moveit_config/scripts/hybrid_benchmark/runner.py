@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from copy import deepcopy
@@ -15,9 +16,11 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
-from visualization_msgs.msg import MarkerArray
+from tf2_ros import Buffer, TransformException, TransformListener
+from visualization_msgs.msg import Marker, MarkerArray
 
 from curobo_msgs.srv import AddObject, RemoveObject
 
@@ -29,13 +32,20 @@ from .constants import (
     DEFAULT_SETTLE_TIME_SEC,
     DEFAULT_SPAWN_TRIGGER_CLEARANCE_M,
     DEFAULT_SPAWN_TRIGGER_POLL_PERIOD_SEC,
+    END_EFFECTOR_LINK,
     MARKER_TOPIC,
     MOVEIT_FK_SERVICE_NAME,
+    WORLD_FRAME,
     quaternion_from_euler_deg,
 )
 from .move_group_goals import resolve_benchmark_case
 from .markers import ObstacleMarkerManager
-from .placement import ObstaclePlacementResolver, PlacementError
+from .placement import (
+    ObstaclePlacementResolver,
+    PlacementError,
+    point_clearance_to_obstacle,
+    sphere_clearance_to_obstacle,
+)
 from .recording import (
     append_global_solution,
     append_joint_state,
@@ -62,6 +72,8 @@ class HybridObstacleBenchmark(Node):
         self._lock = threading.Lock()
         self._active_run = None
         self._global_plan_ready_event = threading.Event()
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
         self.move_group_client = ActionClient(
             self, MoveGroup, "/move_action", callback_group=self._cb_group
@@ -89,6 +101,7 @@ class HybridObstacleBenchmark(Node):
         for msg_type, topic, callback, depth in (
             (MotionPlanResponse, "/global_trajectory", self._on_global_solution, 10),
             (JointState, "/moveit_joint_states", self._on_joint_state, 20),
+            (MarkerArray, "/curobo_live_collision_spheres", self._on_collision_spheres, 10),
             (String, "/unified_planner/hybrid_mpc_telemetry", self._on_hybrid_mpc_telemetry, 50),
         ):
             self.create_subscription(msg_type, topic, callback, depth, callback_group=self._cb_group)
@@ -145,6 +158,29 @@ class HybridObstacleBenchmark(Node):
             if self._active_run is not None:
                 self._active_run["obstacle"].update(fields)
 
+    # Return the active planned obstacle when sampling is enabled.
+    def _distance_sampling_obstacle(self):
+        with self._lock:
+            if self._active_run is None:
+                return None
+            obstacle_state = self._active_run.get("obstacle") or {}
+            if not bool(obstacle_state.get("distance_sampling_active", True)):
+                return None
+            planned = obstacle_state.get("planned_obstacle")
+            if not planned:
+                return None
+            return deepcopy(planned)
+
+    # Store a new obstacle clearance minimum if it improves on the current one.
+    def _update_clearance_minimum(self, value_key: str, clearance_m: float):
+        with self._lock:
+            if self._active_run is not None:
+                obstacle = self._active_run["obstacle"]
+                current = obstacle.get(value_key)
+                clearance = float(clearance_m)
+                if current is None or clearance < float(current):
+                    obstacle[value_key] = clearance
+
     # Remove the benchmark obstacle from the planner and RViz.
     def _clear_obstacle(self, name: str) -> None:
         self._call_remove_obstacle(name, timeout_sec=5.0)
@@ -177,9 +213,104 @@ class HybridObstacleBenchmark(Node):
         positions = extract_joint_positions(msg)
         if positions is None:
             return
+        obstacle = self._distance_sampling_obstacle()
         with self._lock:
             if self._active_run is not None:
                 append_joint_state(self._active_run, positions)
+        if obstacle is None:
+            return
+        tcp_position = self._point_in_world(END_EFFECTOR_LINK, [0.0, 0.0, 0.0])
+        if tcp_position is not None:
+            self._update_clearance_minimum(
+                "min_tcp_clearance_m",
+                point_clearance_to_obstacle(tcp_position, obstacle),
+            )
+
+    # Rotate a vector by a normalized quaternion.
+    @staticmethod
+    def _rotate_vector_by_quaternion(vector_xyz, quaternion_xyzw):
+        x, y, z = (float(value) for value in vector_xyz)
+        qx, qy, qz, qw = (float(value) for value in quaternion_xyzw)
+        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if norm <= 0.0:
+            return [x, y, z]
+        qx /= norm
+        qy /= norm
+        qz /= norm
+        qw /= norm
+        tx = 2.0 * (qy * z - qz * y)
+        ty = 2.0 * (qz * x - qx * z)
+        tz = 2.0 * (qx * y - qy * x)
+        return [
+            x + qw * tx + (qy * tz - qz * ty),
+            y + qw * ty + (qz * tx - qx * tz),
+            z + qw * tz + (qx * ty - qy * tx),
+        ]
+
+    # Transform a point into the benchmark world frame.
+    def _point_in_world(self, frame_id: str, point_xyz):
+        frame_id = str(frame_id or WORLD_FRAME).strip()
+        if frame_id.startswith("/"):
+            frame_id = frame_id[1:]
+        point = [float(value) for value in point_xyz]
+        if frame_id == WORLD_FRAME:
+            return point
+        try:
+            transform = self._tf_buffer.lookup_transform(WORLD_FRAME, frame_id, Time())
+        except TransformException:
+            return None
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        rotated = self._rotate_vector_by_quaternion(
+            point,
+            [rotation.x, rotation.y, rotation.z, rotation.w],
+        )
+        return [
+            float(translation.x) + rotated[0],
+            float(translation.y) + rotated[1],
+            float(translation.z) + rotated[2],
+        ]
+
+    # Transform a marker position into the benchmark world frame.
+    def _marker_position_in_world(self, marker):
+        return self._point_in_world(
+            getattr(marker.header, "frame_id", "") or WORLD_FRAME,
+            [
+                float(marker.pose.position.x),
+                float(marker.pose.position.y),
+                float(marker.pose.position.z),
+            ],
+        )
+
+    # Record the minimum robot collision-sphere clearance for live cuRobo markers.
+    def _on_collision_spheres(self, msg: MarkerArray):
+        obstacle = self._distance_sampling_obstacle()
+        if obstacle is None:
+            return
+
+        min_clearance = None
+        for marker in msg.markers:
+            if int(marker.action) != Marker.ADD or int(marker.type) != Marker.SPHERE:
+                continue
+            radius = max(
+                float(marker.scale.x),
+                float(marker.scale.y),
+                float(marker.scale.z),
+            ) * 0.5
+            if radius <= 0.0:
+                continue
+            center = self._marker_position_in_world(marker)
+            if center is None:
+                continue
+            clearance = sphere_clearance_to_obstacle(center, radius, obstacle)
+            if min_clearance is None or clearance < min_clearance:
+                min_clearance = float(clearance)
+
+        if min_clearance is not None:
+            self._update_clearance_minimum(
+                "min_robot_clearance_m",
+                min_clearance,
+            )
 
     # Record hybrid MPC telemetry such as path invalidation events.
     def _on_hybrid_mpc_telemetry(self, msg: String):
@@ -245,7 +376,13 @@ class HybridObstacleBenchmark(Node):
         with self._lock:
             if self._active_run is None:
                 return None, None
-            return self._relative_time(self._active_run, time.monotonic()), float(clearance)
+            t_rel_sec = self._relative_time(self._active_run, time.monotonic())
+            obstacle_state = self._active_run.get("obstacle") or {}
+            if bool(obstacle_state.get("distance_sampling_active", True)):
+                current = obstacle_state.get("min_tcp_clearance_m")
+                if current is None or float(clearance) < float(current):
+                    obstacle_state["min_tcp_clearance_m"] = float(clearance)
+            return t_rel_sec, float(clearance)
 
     # Spawn the benchmark obstacle once the TCP reaches the configured clearance trigger.
     def _spawn_obstacle_on_clearance_trigger(self, run_index: int, stop_event: threading.Event):
@@ -372,6 +509,7 @@ class HybridObstacleBenchmark(Node):
         spawn_thread.start()
 
         move_group_result = self._send_move_group_goal(benchmark_goal)
+        self._update_obstacle_state(distance_sampling_active=False)
 
         stop_event.set()
         spawn_thread.join(timeout=12.0)

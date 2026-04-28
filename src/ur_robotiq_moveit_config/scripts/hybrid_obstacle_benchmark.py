@@ -69,7 +69,11 @@ def main() -> int:
     run_count = max(int(args.runs), 1)
     passed_runs = 0
 
-    output_dir = Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
+    started_at = datetime.now()
+    output_dir = (
+        Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
+        / f"{started_at.strftime('%Y%m%d_%H%M%S')}_{args.case}_runs{run_count:02d}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rclpy.init(args=ros_args)
@@ -86,10 +90,7 @@ def main() -> int:
 
         for run_index in range(1, run_count + 1):
             result = node.run_single_benchmark(args, run_index)
-            filename = (
-                f"hybrid_benchmark_{args.case}_run{run_index:02d}_"
-                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            )
+            filename = f"hybrid_benchmark_{args.case}_run{run_index:02d}.json"
             output_path = output_dir / filename
             with output_path.open("w", encoding="utf-8") as handle:
                 json.dump(json_safe(result), handle, indent=2, sort_keys=True)
