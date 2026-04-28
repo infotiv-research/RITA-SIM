@@ -13,6 +13,12 @@ Start the stack by running the following command:
 ./test.sh start
 ```
 
+With the containers already running, build the workspace packages with
+
+```bash
+./test.sh build
+```
+
 once the command above executed succcessfully, run the automated pick-and-place.
 
 ```bash
