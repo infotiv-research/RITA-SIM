@@ -18,16 +18,7 @@ Follow the [instruction](https://github.com/infotiv-research/SIMLAN/blob/main/de
 - VS Code extension: **Dev Containers**.
 - NVIDIA driver + GPU support in Docker (required for Isaac Sim GUI).
 
-Run the commands below to check that the prerequisites (e.g docker and ocker-compose) and drivers (NVIDIA drivers and Docker GPU access) are installed correctly.
-```
-docker --version
-docker-compose --version
-
-nvidia-smi
-docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
-```
-
-For Linux GUI forwarding, run this after each reboot:
+Make sure to run this command after each reboot:
 
 ```bash
 xhost +local:docker
@@ -38,9 +29,7 @@ On the host system: Run `./control.sh build_gaussian_splats` to convert all sour
 
 ## DevContainers
 
-Clone and open the project in VS Code.
-
-If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) and run `Dev Containers: Reopen in Container`.
+Open the project in VS Code. If VS Code does not prompt automatically, open command palette (`Ctrl+Shift+P`) and run `Dev Containers: Reopen in Container`.
 
 You have three configurations:
 - `UR10 ROS2 DevContainer`: ROS 2 development and control stack.
@@ -240,22 +229,6 @@ The project is done by as a part of Master Thesis within infotiv:
 
 Team/Tech Lead: Hamid Ebadi
 
-The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted for this project 
-
-
-This repository vendors the cuRobo ROS packages directly in `src/`:
-
-- `src/curobo_msgs`
-- `src/curobo_ros`
-- `src/curobo_rviz`
-
-These packages originated from the following upstream repositories:
-
-- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
-- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
-- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
-
-
 RITA designs are Inspired by:
 - [Towards an infrastructure for preparation and control of intelligent automation systems](https://research.chalmers.se/publication/528129/file/528129_Fulltext.pdf)
 - [To Collaborate and Coexist with Robots in an Industrial Setting: UX-based design guidelines for cobots in Industry 4.0 and 5.0](https://www.diva-portal.org/smash/get/diva2:1882744/FULLTEXT01.pdf)
@@ -280,3 +253,18 @@ Portions of the code are adapted from:
 - Universal Robots ROS 2 repositories (BSD-3-Clause)
 - Robotiq ROS 2 repositories (BSD-3-Clause / Apache-2.0)
 - ROS 2 Control Tutorial by PickNik Robotics (Apache-2.0)
+
+The code in the repo is taken from [ur10e_2f140_topic_based_ros2_control](https://github.com/qdeyna/ur10e_2f140_topic_based_ros2_control) and adapted for this project 
+
+
+This repository vendors the cuRobo ROS packages directly in `src/`:
+
+- `src/curobo_msgs`
+- `src/curobo_ros`
+- `src/curobo_rviz`
+
+These packages originated from the following upstream repositories:
+
+- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
+- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git` 
+- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
