@@ -124,7 +124,7 @@ case "${1:-}" in
     kill
     ;;
   *)
-    echo "Usage: ./test.sh start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
+    echo "Usage: ./test.sh start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | hybrid_benchmark [--case test_1] [--runs 1] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
     exit 1
     ;;
 esac
