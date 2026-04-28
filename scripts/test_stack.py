@@ -117,6 +117,11 @@ def wait_start() -> int:
     return 0
 
 
+def wait_ros() -> int:
+    wait_until_ready("ros2", ROS_READY_CMD, "ros2 restarted")
+    return 0
+
+
 def wait_curobo() -> int:
     wait_until_ready("cumotion", CUROBO_READY_CMD, "done")
     return 0
@@ -148,6 +153,8 @@ def main(argv: list[str]) -> int:
         return prepare_start()
     if command == "wait_start":
         return wait_start()
+    if command == "wait_ros":
+        return wait_ros()
     if command == "wait_curobo":
         return wait_curobo()
     if command == "wait_cumotion":

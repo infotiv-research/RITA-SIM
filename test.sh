@@ -25,6 +25,13 @@ stop() {
   $COMPOSE_CMD stop ros2 cumotion isaacsim
 }
 
+restart_ros() {
+  python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
+  $COMPOSE_CMD exec -T ros2 bash -lc 'cd /ros2_ws && ./control.sh kill' || true
+  $COMPOSE_CMD exec -d ros2 bash -lc 'cd /ros2_ws && ./control.sh ros > test_logs/ros.log 2>&1'
+  python3 "${SCRIPT_DIR}/scripts/test_stack.py" wait_ros
+}
+
 sim_headless() {
   $COMPOSE_CMD exec -T isaacsim bash -lc 'cd /ros2_ws && ./control.sh sim_headless "$@"' bash "$@"
 }
@@ -56,8 +63,18 @@ hybrid() {
 pick_and_place_run() {
   run_number="${1:-1}"
   shift
+  timeout_s="${PICK_AND_PLACE_RUN_TIMEOUT_S:-100}"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
-  $COMPOSE_CMD exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh pick_and_place "$@"' bash "$@" \
+  $COMPOSE_CMD exec -T -e PICK_AND_PLACE_RUN_TIMEOUT_S="${timeout_s}" cumotion bash -lc '
+    cd /ros2_ws
+    timeout --kill-after=10s "${PICK_AND_PLACE_RUN_TIMEOUT_S}s" ./control.sh pick_and_place "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      pkill -f "pick_and_place.launch.py" 2>/dev/null || true
+      pkill -f "pick_and_place_main.py" 2>/dev/null || true
+    fi
+    exit "$status"
+  ' bash "$@" \
     > "${SCRIPT_DIR}/test_logs/pick_and_place_run_${run_number}.log" 2>&1
 }
 
@@ -71,6 +88,9 @@ case "${1:-}" in
     ;;
   stop)
     stop
+    ;;
+  restart_ros)
+    restart_ros
     ;;
   sim_headless)
     shift
@@ -104,7 +124,7 @@ case "${1:-}" in
     kill
     ;;
   *)
-    echo "Usage: ./test.sh start | stop | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
+    echo "Usage: ./test.sh start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
     exit 1
     ;;
 esac

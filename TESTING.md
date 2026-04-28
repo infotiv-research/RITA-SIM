@@ -28,3 +28,18 @@ to stop the stack
 
 Logs are written under [`test_logs/`](./test_logs/):
 
+## Change Camera View in RViz
+
+To change the camera point of view during headless tests, set the image topic to `/rgb`, `/rgb_gripper`, or `/rgb_overhead`.
+
+For `ompl`, `cumotion`, and `hybrid`:
+
+```text
+Displays -> Image -> Topic
+```
+
+For `curobo`:
+
+```text
+Displays -> Workspace Overview -> Topic
+```

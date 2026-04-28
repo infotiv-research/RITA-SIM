@@ -19,7 +19,8 @@ def main(args=None):
             rclpy.shutdown()
         except Exception:
             pass
+    return 0 if node.sequence_success and not node.sequence_failed else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
