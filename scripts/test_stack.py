@@ -37,8 +37,23 @@ ISAAC_READY_CMD = 'test "$(cat /tmp/rita_isaac_timeline_state 2>/dev/null)" = "s
 CUROBO_READY_CMD = (
     "source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash && "
     "(source /ros2_ws/install/local_setup.bash 2>/dev/null || true) && "
+    "("
     "ros2 param get /unified_planner startup_ready 2>/dev/null "
     '| grep -Eiq "true"'
+    " || "
+    "("
+    "ros2 param get /unified_planner node_is_available 2>/dev/null "
+    '| grep -Eiq "true" && '
+    "ros2 service call /unified_planner/is_available std_srvs/srv/Trigger {} 2>/dev/null "
+    '| grep -Eq "success=True" && '
+    "ros2 service type /unified_planner/generate_trajectory 2>/dev/null "
+    '| grep -Eq "^curobo_msgs/srv/TrajectoryGeneration$" && '
+    "ros2 service type /unified_planner/set_planner 2>/dev/null "
+    '| grep -Eq "^curobo_msgs/srv/SetPlanner$" && '
+    "ros2 action info /unified_planner/execute_trajectory 2>/dev/null "
+    '| grep -Eq "Action servers: +1"'
+    ")"
+    ")"
 )
 
 MOVEIT_READY_CMD = (

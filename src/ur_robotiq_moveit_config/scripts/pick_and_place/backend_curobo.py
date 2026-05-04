@@ -37,6 +37,8 @@ class CuroboMotionBackend(MotionBackendInterface):
     name = "curobo_ros"
     _trajectory_controller_name = "joint_trajectory_controller"
     _mpc_stream_controller_name = "forward_position_controller"
+    _joint_state_wait_timeout_sec = 8.0
+    _joint_state_max_age_sec = 0.5
     _continuous_joint_limits = {
         "shoulder_pan_joint": (-2.0 * math.pi, 2.0 * math.pi),
         "wrist_1_joint": (-2.0 * math.pi, 2.0 * math.pi),
@@ -511,12 +513,15 @@ class CuroboMotionBackend(MotionBackendInterface):
         return [candidate for _, candidate in ranked_candidates]
 
     def _current_joint_state(self):
-        latest = self.node._wait_for_recent_joint_positions(timeout_sec=1.0, max_age_sec=0.5)
+        latest = self.node._wait_for_recent_joint_positions(
+            timeout_sec=self._joint_state_wait_timeout_sec,
+            max_age_sec=self._joint_state_max_age_sec,
+        )
         if latest is None:
-            self.node.get_logger().warn(
-                "No recent /joint_states available, falling back to HOME_JOINT_VALUES for curobo start state."
+            self.node.get_logger().error(
+                "No recent /joint_states available; refusing to send curobo request with a guessed start state."
             )
-            latest = HOME_JOINT_VALUES
+            return None
         msg = JointState()
         msg.name = list(JOINT_NAMES)
         msg.position = [float(latest[joint_name]) for joint_name in JOINT_NAMES]
@@ -546,8 +551,12 @@ class CuroboMotionBackend(MotionBackendInterface):
                 "planner will use its current timeout/max_attempts values."
             )
 
+        start_pose = self._current_joint_state()
+        if start_pose is None:
+            return None
+
         request = TrajectoryGeneration.Request()
-        request.start_pose = self._current_joint_state()
+        request.start_pose = start_pose
         request.target_pose = Pose()
         request.target_pose.position.x = float(x)
         request.target_pose.position.y = float(y)
@@ -595,8 +604,12 @@ class CuroboMotionBackend(MotionBackendInterface):
                 "planner will use its current timeout/max_attempts values."
             )
 
+        start_pose = self._current_joint_state()
+        if start_pose is None:
+            return None
+
         request = TrajectoryGeneration.Request()
-        request.start_pose = self._current_joint_state()
+        request.start_pose = start_pose
         request.target_joint_positions = [float(joint_targets[joint_name]) for joint_name in JOINT_NAMES]
         future = self.trajectory_client.call_async(request)
         response = self._wait_future_result(future, timeout_sec=30.0)

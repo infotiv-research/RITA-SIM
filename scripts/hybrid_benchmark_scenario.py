@@ -16,6 +16,11 @@ def test_sh(*args: str) -> subprocess.CompletedProcess:
 
 def hybrid_benchmark_sequence(args: list[str]) -> int:
     try:
+        print("restarting ros2 before hybrid benchmark")
+        restart = test_sh("restart_ros")
+        if restart.returncode != 0:
+            return restart.returncode
+
         print("playing isaac sim")
         play = test_sh("sim_headless", "play")
         if play.returncode != 0:
