@@ -30,11 +30,12 @@ from .constants import (
     DEFAULT_INITIAL_PLAN_TIMEOUT_SEC,
     DEFAULT_POST_RUN_IDLE_SEC,
     DEFAULT_SETTLE_TIME_SEC,
-    DEFAULT_SPAWN_TRIGGER_CLEARANCE_M,
+    DEFAULT_SPAWN_TRIGGER_PROFILE,
     DEFAULT_SPAWN_TRIGGER_POLL_PERIOD_SEC,
     END_EFFECTOR_LINK,
     MARKER_TOPIC,
     MOVEIT_FK_SERVICE_NAME,
+    SPAWN_TRIGGER_PROFILES_M,
     WORLD_FRAME,
     quaternion_from_euler_deg,
 )
@@ -61,6 +62,20 @@ from .recording import (
 # Create a normalized failure record for MoveGroup action attempts.
 def _move_group_failure(accepted: bool, timed_out: bool, status=GoalStatus.STATUS_ABORTED):
     return {"accepted": accepted, "timed_out": timed_out, "status": status, "error_code": None}
+
+
+def _resolve_spawn_trigger_config(args) -> dict:
+    profile = str(getattr(args, "spawn_profile", DEFAULT_SPAWN_TRIGGER_PROFILE))
+    if profile not in SPAWN_TRIGGER_PROFILES_M:
+        profile = DEFAULT_SPAWN_TRIGGER_PROFILE
+
+    override = getattr(args, "spawn_clearance_m", None)
+    clearance_m = SPAWN_TRIGGER_PROFILES_M[profile] if override is None else float(override)
+    return {
+        "spawn_trigger_profile": profile,
+        "spawn_trigger_clearance_m": float(clearance_m),
+        "spawn_clearance_override_m": float(override) if override is not None else None,
+    }
 
 
 class HybridObstacleBenchmark(Node):
@@ -385,7 +400,16 @@ class HybridObstacleBenchmark(Node):
             return t_rel_sec, float(clearance)
 
     # Spawn the benchmark obstacle once the TCP reaches the configured clearance trigger.
-    def _spawn_obstacle_on_clearance_trigger(self, run_index: int, stop_event: threading.Event):
+    def _spawn_obstacle_on_clearance_trigger(
+        self,
+        run_index: int,
+        stop_event: threading.Event,
+        spawn_config: dict,
+    ):
+        trigger_profile = str(spawn_config["spawn_trigger_profile"])
+        trigger_clearance_m = float(spawn_config["spawn_trigger_clearance_m"])
+        self._update_obstacle_state(**spawn_config)
+
         reference_plan = self._wait_for_initial_global_plan(
             timeout_sec=DEFAULT_INITIAL_PLAN_TIMEOUT_SEC,
             stop_event=stop_event,
@@ -406,10 +430,13 @@ class HybridObstacleBenchmark(Node):
                 "size": [float(v) for v in obstacle["size"]],
                 "rotation_deg": [float(v) for v in obstacle["rotation_deg"]],
             },
+            trajectory_selection=trajectory_selection,
         )
         position = obstacle["position"]
         print(
             f"[run {run_index}] trajectory-aware obstacle target "
+            f"profile={trigger_profile} "
+            f"trigger_clearance={trigger_clearance_m:.3f}m "
             f"point={trajectory_selection.get('selected_point_index')} "
             f"t={target_time if target_time is not None else 'n/a'}s "
             f"spawn=({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})"
@@ -418,7 +445,7 @@ class HybridObstacleBenchmark(Node):
         trigger_clearance = None
         while not stop_event.is_set():
             _, trigger_clearance = self._measure_current_tcp_clearance(obstacle, timeout_sec=0.25)
-            if trigger_clearance is not None and trigger_clearance <= DEFAULT_SPAWN_TRIGGER_CLEARANCE_M:
+            if trigger_clearance is not None and trigger_clearance <= trigger_clearance_m:
                 break
             stop_event.wait(DEFAULT_SPAWN_TRIGGER_POLL_PERIOD_SEC)
         else:
@@ -480,6 +507,7 @@ class HybridObstacleBenchmark(Node):
     # Run one benchmark iteration from precondition motion through cleanup and summary.
     def run_single_benchmark(self, args, run_index: int):
         case_spec, start_goal, benchmark_goal = resolve_benchmark_case(args.case)
+        spawn_config = _resolve_spawn_trigger_config(args)
 
         obstacle_name = str(BENCHMARK_OBSTACLE["name"])
         self._clear_obstacle(obstacle_name)
@@ -490,6 +518,7 @@ class HybridObstacleBenchmark(Node):
             self._clear_obstacle(obstacle_name)
             run_data = create_run_record(run_index, case_spec)
             run_data["precondition_start_state"] = precondition
+            run_data["obstacle"].update(spawn_config)
             run_data["obstacle"]["wait_reason"] = "precondition_failed"
             run_data["obstacle"]["service_message"] = "Run aborted because the start-state precondition failed."
             return summarize_run(run_data, None)
@@ -503,7 +532,7 @@ class HybridObstacleBenchmark(Node):
         stop_event = threading.Event()
         spawn_thread = threading.Thread(
             target=self._spawn_obstacle_on_clearance_trigger,
-            args=(run_index, stop_event),
+            args=(run_index, stop_event, spawn_config),
             daemon=True,
         )
         spawn_thread.start()
