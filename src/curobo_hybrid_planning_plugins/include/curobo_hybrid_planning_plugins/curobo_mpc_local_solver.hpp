@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include <moveit/local_planner/feedback_types.hpp>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.hpp>
 
+#include <moveit_msgs/msg/motion_plan_response.hpp>
 #include <curobo_msgs/srv/mpc_reset.hpp>
 #include <curobo_msgs/srv/mpc_step.hpp>
 
@@ -42,6 +44,11 @@ private:
                                const sensor_msgs::msg::JointState& current_state) const;
   moveit_msgs::action::LocalPlanner::Feedback makeFeedback(const std::string& feedback) const;
   bool callReset(bool restore_trajectory_controller) const;
+  bool waitingForUpdatedGlobalTrajectory() const;
+  void markWaitingForUpdatedGlobalTrajectory();
+  void clearGlobalTrajectoryWait();
+  void buildHoldPositionCommand(const sensor_msgs::msg::JointState& current_state,
+                                trajectory_msgs::msg::JointTrajectory& local_solution) const;
 
   template <typename FutureT>
   bool waitForFuture(FutureT& future, const std::chrono::milliseconds& timeout) const
@@ -64,6 +71,7 @@ private:
   rclcpp::CallbackGroup::SharedPtr service_callback_group_;
   rclcpp::Client<curobo_msgs::srv::MpcStep>::SharedPtr mpc_step_client_;
   rclcpp::Client<curobo_msgs::srv::MpcReset>::SharedPtr mpc_reset_client_;
+  rclcpp::Subscription<moveit_msgs::msg::MotionPlanResponse>::SharedPtr global_trajectory_sub_;
 
   std::string group_name_;
   std::string tip_link_;
@@ -72,5 +80,9 @@ private:
   double min_target_joint_delta_{ 0.01 };
   bool active_{ false };
   std::mutex solve_mutex_;
+  mutable std::mutex global_trajectory_mutex_;
+  std::uint64_t global_trajectory_version_{ 0 };
+  std::uint64_t invalidated_global_trajectory_version_{ 0 };
+  bool waiting_for_updated_global_trajectory_{ false };
 };
 }  // namespace curobo_hybrid_planning_plugins

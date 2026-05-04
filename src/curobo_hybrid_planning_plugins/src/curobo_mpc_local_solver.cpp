@@ -38,6 +38,15 @@ bool CuroboMpcLocalSolver::initialize(const rclcpp::Node::SharedPtr& node,
       "hybrid_mpc_step_service", "/unified_planner/mpc_step");
   const std::string reset_service_name = node_->declare_parameter<std::string>(
       "hybrid_mpc_reset_service", "/unified_planner/mpc_reset");
+  std::string global_solution_topic = "/global_trajectory";
+  if (node_->has_parameter("global_solution_topic"))
+  {
+    node_->get_parameter("global_solution_topic", global_solution_topic);
+  }
+  else
+  {
+    global_solution_topic = node_->declare_parameter<std::string>("global_solution_topic", global_solution_topic);
+  }
 
   // The local-planner timer callback blocks while waiting for the MPC step response.
   // Keep the service clients in a separate callback group so the response can be processed
@@ -49,6 +58,13 @@ bool CuroboMpcLocalSolver::initialize(const rclcpp::Node::SharedPtr& node,
   mpc_reset_client_ = node_->create_client<curobo_msgs::srv::MpcReset>(reset_service_name,
                                                                        rmw_qos_profile_services_default,
                                                                        service_callback_group_);
+  global_trajectory_sub_ = node_->create_subscription<moveit_msgs::msg::MotionPlanResponse>(
+      global_solution_topic,
+      rclcpp::QoS(10),
+      [this](const moveit_msgs::msg::MotionPlanResponse::SharedPtr) {
+        std::lock_guard<std::mutex> lock(global_trajectory_mutex_);
+        ++global_trajectory_version_;
+      });
 
   const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::duration<double>(service_timeout_sec_));
@@ -86,6 +102,18 @@ moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::solve(
     return makeFeedback(std::string(moveit::hybrid_planning::toString(
         moveit::hybrid_planning::LocalFeedbackEnum::LOCAL_PLANNER_STUCK)));
   }
+
+  if (waitingForUpdatedGlobalTrajectory())
+  {
+    buildHoldPositionCommand(current_state, local_solution);
+    active_ = false;
+    RCLCPP_DEBUG_THROTTLE(node_->get_logger(),
+                          *node_->get_clock(),
+                          1000,
+                          "Hybrid MPC holding current position while waiting for updated global trajectory.");
+    return makeFeedback("");
+  }
+  clearGlobalTrajectoryWait();
 
   geometry_msgs::msg::Pose target_pose;
   std::vector<double> target_joint_positions;
@@ -146,6 +174,7 @@ moveit_msgs::action::LocalPlanner::Feedback CuroboMpcLocalSolver::solve(
   if (response->path_invalidated)
   {
     RCLCPP_WARN(node_->get_logger(), "Hybrid MPC reported path invalidated.");
+    markWaitingForUpdatedGlobalTrajectory();
     active_ = false;
     return makeFeedback(std::string(moveit::hybrid_planning::toString(
         moveit::hybrid_planning::LocalFeedbackEnum::COLLISION_AHEAD)));
@@ -166,6 +195,7 @@ bool CuroboMpcLocalSolver::reset()
 {
   const bool success = callReset(true);
   active_ = false;
+  clearGlobalTrajectoryWait();
   return success;
 }
 
@@ -272,6 +302,39 @@ bool CuroboMpcLocalSolver::callReset(bool restore_trajectory_controller) const
   }
   const auto response = future.get();
   return response && response->success;
+}
+
+bool CuroboMpcLocalSolver::waitingForUpdatedGlobalTrajectory() const
+{
+  std::lock_guard<std::mutex> lock(global_trajectory_mutex_);
+  return waiting_for_updated_global_trajectory_ &&
+         global_trajectory_version_ <= invalidated_global_trajectory_version_;
+}
+
+void CuroboMpcLocalSolver::markWaitingForUpdatedGlobalTrajectory()
+{
+  std::lock_guard<std::mutex> lock(global_trajectory_mutex_);
+  waiting_for_updated_global_trajectory_ = true;
+  invalidated_global_trajectory_version_ = global_trajectory_version_;
+}
+
+void CuroboMpcLocalSolver::clearGlobalTrajectoryWait()
+{
+  std::lock_guard<std::mutex> lock(global_trajectory_mutex_);
+  waiting_for_updated_global_trajectory_ = false;
+}
+
+void CuroboMpcLocalSolver::buildHoldPositionCommand(
+    const sensor_msgs::msg::JointState& current_state,
+    trajectory_msgs::msg::JointTrajectory& local_solution) const
+{
+  local_solution.joint_names = current_state.name;
+  trajectory_msgs::msg::JointTrajectoryPoint point;
+  point.positions = current_state.position;
+  point.velocities.assign(current_state.position.size(), 0.0);
+  point.time_from_start = rclcpp::Duration::from_seconds(step_dt_);
+  local_solution.points.clear();
+  local_solution.points.push_back(point);
 }
 }  // namespace curobo_hybrid_planning_plugins
 

@@ -326,6 +326,8 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_best_error = None
         self._hybrid_mpc_step_index = 0
         self._hybrid_mpc_path_sentinel_baseline_world_version = None
+        self._hybrid_mpc_force_path_sentinel_check = False
+        self._hybrid_mpc_force_path_sentinel_world_version = None
         self.node_is_available = False
         self._startup_ready_logged = False
         self._startup_ready_deadline = None
@@ -1247,6 +1249,7 @@ class UnifiedPlannerNode(Node):
         self._hybrid_mpc_best_error = None
         self._hybrid_mpc_step_index = 0
         self._hybrid_mpc_path_sentinel_baseline_world_version = None
+        self._hybrid_mpc_force_path_sentinel_check = False
         self.set_mpc_execution_active(False)
 
     def _reset_hybrid_mpc_session(self, restore_trajectory_controller=True):
@@ -1385,9 +1388,13 @@ class UnifiedPlannerNode(Node):
         }
         if not bool(self.get_parameter('hybrid_path_sentinel_enabled').value):
             return result
-        if bool(self.get_parameter('hybrid_path_sentinel_only_after_world_update').value):
+        current_world_version = self._get_world_state_version()
+        force_check = bool(self._hybrid_mpc_force_path_sentinel_check)
+        if force_check:
+            self._hybrid_mpc_force_path_sentinel_check = False
+        if bool(self.get_parameter('hybrid_path_sentinel_only_after_world_update').value) and not force_check:
             baseline_version = self._hybrid_mpc_path_sentinel_baseline_world_version
-            if baseline_version is not None and self._get_world_state_version() <= baseline_version:
+            if baseline_version is not None and current_world_version <= baseline_version:
                 return result
 
         safety_margin = max(
@@ -1425,6 +1432,8 @@ class UnifiedPlannerNode(Node):
 
         if min_distance is not None:
             result['min_distance'] = float(min_distance)
+        if not result['blocked']:
+            self._hybrid_mpc_force_path_sentinel_check = False
         return result
 
     @staticmethod
@@ -1886,6 +1895,13 @@ class UnifiedPlannerNode(Node):
                         controller_current_positions,
                     )
                     self._clear_hybrid_mpc_state()
+                    blocked_world_version = self._get_world_state_version()
+                    if (
+                        response.path_sentinel_blocked_index > 0
+                        and self._hybrid_mpc_force_path_sentinel_world_version != blocked_world_version
+                    ):
+                        self._hybrid_mpc_force_path_sentinel_check = True
+                        self._hybrid_mpc_force_path_sentinel_world_version = blocked_world_version
                     self.publish_hybrid_mpc_telemetry(
                         step_index=step_index,
                         success=True,
