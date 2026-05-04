@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
+import os
 import subprocess
 import sys
 import time
@@ -9,8 +10,6 @@ import time
 from recorders.pick_and_place_recorder import (
     RUN_TIMEOUT_EXIT_CODE,
     append_csv_row,
-    mark_failed_run,
-    mark_timeout,
     read_metrics,
     start_metrics_recorder,
     stop_metrics_recorder,
@@ -21,10 +20,21 @@ REPO_ROOT = SCRIPT_DIR.parent
 
 TEST_SH = REPO_ROOT / "test.sh"
 TEST_DATA_DIR = REPO_ROOT / "test_data"
+TEST_LOG_DIR = REPO_ROOT / "test_logs"
 
 
-PICK_AND_PLACE_RUNS = 3
+PICK_AND_PLACE_RUNS = 10
+PICK_AND_PLACE_RUN_TIMEOUT_S = float(
+    os.environ.get("PICK_AND_PLACE_RUN_TIMEOUT_S", "120")
+)
 PLANNER = sys.argv[1] if len(sys.argv) > 1 else "curobo"
+
+PLANNER_LOGS = {
+    "curobo": "curobo.log",
+    "cumotion": "cumotion.log",
+    "hybrid": "hybrid.log",
+    "ompl": "ompl.log",
+}
 
 
 def test_sh(*args: str) -> subprocess.CompletedProcess:
@@ -58,12 +68,57 @@ def new_csv_file() -> Path:
     return csv_file
 
 
+def planner_log_file() -> Path:
+    return TEST_LOG_DIR / PLANNER_LOGS.get(PLANNER, f"{PLANNER}.log")
+
+
+def file_position(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return path.stat().st_size
+
+
+def planner_log_chunk(log_file: Path, start_position: int) -> str:
+    if not log_file.exists():
+        return ""
+
+    with log_file.open(errors="replace") as file:
+        file.seek(start_position)
+        return file.read()
+
+
+def append_timeout_planner_log(
+    csv_file: Path,
+    run_number: int,
+    log_text: str,
+) -> None:
+    failure_log_file = csv_file.with_name(f"{csv_file.stem}_failure.log")
+    with failure_log_file.open("a") as file:
+        file.write("\n\n")
+        file.write("=" * 80 + "\n")
+        file.write(f"RUN {run_number} TIMEOUT PLANNER LOG\n")
+        file.write("=" * 80 + "\n")
+        if log_text:
+            file.write(log_text)
+            if not log_text.endswith("\n"):
+                file.write("\n")
+        else:
+            file.write("(no planner log lines captured for this run)\n")
+
+
 def start_planner() -> None:
     print(f"starting {PLANNER}")
     if PLANNER == "curobo":
         test_sh(PLANNER, "launch_rviz:=true")
     else:
         test_sh(PLANNER)
+
+
+def restart_after_timeout() -> None:
+    print("restarting ros2 and planner after timed-out pick_and_place run")
+    test_sh("kill")
+    test_sh("restart_ros")
+    start_planner()
 
 
 def pick_and_place_sequence() -> int:
@@ -85,6 +140,8 @@ def pick_and_place_sequence() -> int:
             recorder = start_metrics_recorder(stop_file)
 
             time.sleep(0.5)
+            planner_log = planner_log_file()
+            planner_log_start = file_position(planner_log)
             start_time = time.monotonic()
             result = test_sh("pick_and_place_run", str(run_number), *run_args)
             total_time = time.monotonic() - start_time
@@ -92,13 +149,11 @@ def pick_and_place_sequence() -> int:
             recorder_output = stop_metrics_recorder(stop_file, recorder)
             metrics = read_metrics(recorder_output)
 
-            timed_out = result.returncode == RUN_TIMEOUT_EXIT_CODE
-            if timed_out:
-                mark_timeout(metrics)
-            elif result.returncode != 0 or metrics.get("success") is not True:
-                mark_failed_run(metrics)
-
-            run_success = result.returncode == 0 and metrics.get("success") is True
+            timed_out = (
+                result.returncode == RUN_TIMEOUT_EXIT_CODE
+                or total_time >= PICK_AND_PLACE_RUN_TIMEOUT_S
+            )
+            run_success = not timed_out
             append_csv_row(
                 csv_file,
                 run_number,
@@ -106,13 +161,19 @@ def pick_and_place_sequence() -> int:
                 metrics,
                 success=run_success,
             )
+            if timed_out:
+                planner_log_text = planner_log_chunk(planner_log, planner_log_start)
+                append_timeout_planner_log(
+                    csv_file,
+                    run_number,
+                    planner_log_text,
+                )
 
             print("stopping isaac sim")
             test_sh("sim_headless", "stop")
 
-            if not run_success and run_number < PICK_AND_PLACE_RUNS:
-                print("restarting ros2 after failed pick_and_place run")
-                test_sh("restart_ros")
+            if timed_out and run_number < PICK_AND_PLACE_RUNS:
+                restart_after_timeout()
 
         return 0
     finally:

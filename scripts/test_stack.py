@@ -51,7 +51,13 @@ MOVEIT_READY_CMD = (
 CUMOTION_READY_CMD = (
     MOVEIT_READY_CMD + " && "
     "ros2 action info /planner_attach_object 2>/dev/null "
-    '| grep -Eq "Action servers: +1"'
+    '| grep -Eq "Action servers: +1" && '
+    'grep -q "cuMotion is ready for planning queries" /ros2_ws/test_logs/cumotion.log'
+)
+
+OMPL_READY_CMD = (
+    MOVEIT_READY_CMD + " && "
+    'grep -q "You can start planning now!" /ros2_ws/test_logs/ompl.log'
 )
 
 HYBRID_READY_CMD = (
@@ -133,7 +139,7 @@ def wait_cumotion() -> int:
 
 
 def wait_ompl() -> int:
-    wait_until_ready("cumotion", MOVEIT_READY_CMD, "ompl started")
+    wait_until_ready("cumotion", OMPL_READY_CMD, "ompl started")
     return 0
 
 

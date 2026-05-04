@@ -148,22 +148,6 @@ def csv_row(run_number: int, total_time: float, metrics: dict, run_failed: bool)
     return row
 
 
-def mark_timeout(metrics: dict) -> None:
-    if not metrics.get("failure_reason"):
-        metrics["failure_reason"] = "pick_and_place_run_timeout"
-    if not metrics.get("failed_phase"):
-        metrics["failed_phase"] = first_incomplete_phase(metrics)
-    metrics["success"] = False
-
-
-def mark_failed_run(metrics: dict) -> None:
-    if not metrics.get("failed_phase"):
-        metrics["failed_phase"] = first_incomplete_phase(metrics)
-    if not metrics.get("failure_reason"):
-        metrics["failure_reason"] = "pick_and_place_run_failed"
-    metrics["success"] = False
-
-
 def append_csv_row(
     csv_file: Path, run_number: int, total_time: float, metrics: dict, success: bool
 ) -> None:

@@ -67,12 +67,14 @@ curobo() {
 
 cumotion() {
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
+  : > "${SCRIPT_DIR}/test_logs/cumotion.log"
   $COMPOSE_CMD exec -d cumotion bash -lc 'cd /ros2_ws && ./control.sh cumotion "$@" > test_logs/cumotion.log 2>&1' bash "$@"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" wait_cumotion
 }
 
 ompl() {
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
+  : > "${SCRIPT_DIR}/test_logs/ompl.log"
   $COMPOSE_CMD exec -d cumotion bash -lc 'cd /ros2_ws && ./control.sh ompl "$@" > test_logs/ompl.log 2>&1' bash "$@"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" wait_ompl
 }
