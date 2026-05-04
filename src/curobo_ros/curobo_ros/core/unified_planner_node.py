@@ -1312,7 +1312,9 @@ class UnifiedPlannerNode(Node):
         Return a compact world-collision summary for a joint configuration.
 
         The summary is based on robot collision-sphere distances against the
-        active world collision checker. Negative values indicate penetration.
+        active world collision checker. cuRobo's ESDF query returns positive
+        values inside obstacles and negative values outside; convert that to
+        signed clearance so negative values indicate penetration in logs.
         """
         checker = None
         robot_model = None
@@ -1363,12 +1365,12 @@ class UnifiedPlannerNode(Node):
                 env_query_idx,
                 compute_esdf=True,
             )
-            sphere_dist = torch.flatten(sphere_dist, start_dim=0)
-            if sphere_dist.numel() == 0:
+            signed_clearance = -torch.flatten(sphere_dist, start_dim=0)
+            if signed_clearance.numel() == 0:
                 return None
 
-            min_dist = float(torch.min(sphere_dist).item())
-            max_dist = float(torch.max(sphere_dist).item())
+            min_dist = float(torch.min(signed_clearance).item())
+            max_dist = float(torch.max(signed_clearance).item())
             return {
                 'min_sphere_dist': min_dist,
                 'max_sphere_dist': max_dist,

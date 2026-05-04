@@ -257,7 +257,9 @@ class ConfigWrapperMotion(ConfigWrapper):
         env_query_idx = torch.zeros((x_sph.shape[0]), device=tensor_args.device, dtype=torch.int32)
         sphere_dist = node.world_model.get_sphere_distance(x_sph, query_buffer, weight, act_distance, env_query_idx,
                                                            compute_esdf=True)
-        sphere_dist_ar = torch.flatten(sphere_dist, start_dim=0).tolist()
+        # cuRobo ESDF is positive inside obstacles and negative outside. Expose
+        # signed clearance to callers so negative values mean penetration.
+        sphere_dist_ar = (-torch.flatten(sphere_dist, start_dim=0)).tolist()
         response.nb_sphere = len(sphere_dist_ar)
         response.data = sphere_dist_ar
         return response
@@ -343,7 +345,9 @@ class ConfigWrapperIK(ConfigWrapper):
         env_query_idx = torch.zeros((x_sph.shape[0]), device=tensor_args.device, dtype=torch.int32)
         sphere_dist = node.world_model.get_sphere_distance(x_sph, query_buffer, weight, act_distance, env_query_idx,
                                                            compute_esdf=True)
-        sphere_dist_ar = torch.flatten(sphere_dist, start_dim=0).tolist()
+        # cuRobo ESDF is positive inside obstacles and negative outside. Expose
+        # signed clearance to callers so negative values mean penetration.
+        sphere_dist_ar = (-torch.flatten(sphere_dist, start_dim=0)).tolist()
         response.nb_sphere = len(sphere_dist_ar)
         response.data = sphere_dist_ar
         return response
