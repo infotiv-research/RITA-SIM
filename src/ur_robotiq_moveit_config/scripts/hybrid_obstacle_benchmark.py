@@ -25,7 +25,9 @@ from hybrid_benchmark.constants import (
     BENCHMARK_CASES,
     DEFAULT_BENCHMARK_CASE,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_SPAWN_TRIGGER_PROFILE,
     DEFAULT_SETTLE_TIME_SEC,
+    SPAWN_TRIGGER_PROFILES_M,
     json_safe,
 )
 from hybrid_benchmark.runner import HybridObstacleBenchmark
@@ -35,6 +37,18 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description="Run scripted hybrid-planner obstacle benchmarks.")
     parser.add_argument("--case", default=DEFAULT_BENCHMARK_CASE, choices=sorted(BENCHMARK_CASES.keys()))
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument(
+        "--spawn-profile",
+        default=DEFAULT_SPAWN_TRIGGER_PROFILE,
+        choices=sorted(SPAWN_TRIGGER_PROFILES_M.keys()),
+        help="Named TCP-to-wall clearance trigger profile.",
+    )
+    parser.add_argument(
+        "--spawn-clearance-m",
+        type=float,
+        default=None,
+        help="Override the selected spawn profile with an explicit TCP-to-wall clearance in meters.",
+    )
     return parser
 
 
@@ -67,12 +81,17 @@ def main() -> int:
     parser = build_arg_parser()
     args, ros_args = parser.parse_known_args()
     run_count = max(int(args.runs), 1)
+    if args.spawn_clearance_m is not None and float(args.spawn_clearance_m) <= 0.0:
+        parser.error("--spawn-clearance-m must be greater than zero")
     passed_runs = 0
 
     started_at = datetime.now()
+    spawn_label = args.spawn_profile
+    if args.spawn_clearance_m is not None:
+        spawn_label = f"custom{float(args.spawn_clearance_m):.3f}m".replace(".", "p")
     output_dir = (
         Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
-        / f"{started_at.strftime('%Y%m%d_%H%M%S')}_{args.case}_runs{run_count:02d}"
+        / f"{started_at.strftime('%Y%m%d_%H%M%S')}_{args.case}_{spawn_label}_runs{run_count:02d}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -90,7 +109,7 @@ def main() -> int:
 
         for run_index in range(1, run_count + 1):
             result = node.run_single_benchmark(args, run_index)
-            filename = f"hybrid_benchmark_{args.case}_run{run_index:02d}.json"
+            filename = f"hybrid_benchmark_{args.case}_{spawn_label}_run{run_index:02d}.json"
             output_path = output_dir / filename
             with output_path.open("w", encoding="utf-8") as handle:
                 json.dump(json_safe(result), handle, indent=2, sort_keys=True)
@@ -104,6 +123,7 @@ def main() -> int:
             print(
                 f"[run {run_index}] {'PASS' if passed else 'FAIL'} "
                 f"case={args.case} "
+                f"spawn_profile={args.spawn_profile} "
                 f"success={bool(result.get('success'))} "
                 f"replans={replanning.get('replan_count')} "
                 f"invalidations={replanning.get('path_invalidated_count')} "

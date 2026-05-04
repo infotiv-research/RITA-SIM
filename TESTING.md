@@ -31,6 +31,16 @@ To run the automated hybrid obstacle benchmark:
 ./test.sh hybrid_benchmark --case test_1 --runs 1
 ```
 
+The hybrid benchmark places the wall around the middle of the initial global
+trajectory and controls how early it appears with spawn profiles:
+
+```bash
+./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile early
+./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile medium
+./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile late
+./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile very_late
+```
+
 JSON results are written under a timestamped run folder in
 [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
 

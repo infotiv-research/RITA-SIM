@@ -49,6 +49,10 @@ def create_run_record(run_index: int, goal_spec: dict):
         "joint_state_summary": {"last_positions": None},
         "obstacle": {
             "planned_obstacle": None,
+            "trajectory_selection": None,
+            "spawn_trigger_profile": None,
+            "spawn_trigger_clearance_m": None,
+            "spawn_clearance_override_m": None,
             "spawned": False,
             "spawn_t_rel_sec": None,
             "spawn_tcp_to_obstacle_surface_distance_m": None,
@@ -151,10 +155,14 @@ def _summarize_obstacle(obstacle_state: dict):
 
     obstacle = {
         "spawned": bool(obstacle_state.get("spawned")),
+        "spawn_trigger_profile": obstacle_state.get("spawn_trigger_profile"),
+        "spawn_trigger_clearance_m": obstacle_state.get("spawn_trigger_clearance_m"),
+        "spawn_clearance_override_m": obstacle_state.get("spawn_clearance_override_m"),
         "spawn_time_after_goal_sent_sec": obstacle_state.get("spawn_t_rel_sec"),
         "position": list(planned.get("position") or []),
         "rotation_deg": list(planned.get("rotation_deg") or []),
         "size": list(planned.get("size") or []),
+        "trajectory_selection": obstacle_state.get("trajectory_selection"),
         "tcp_clearance_at_spawn_m": obstacle_state.get("spawn_tcp_to_obstacle_surface_distance_m"),
         "min_tcp_clearance_m": obstacle_state.get("min_tcp_clearance_m"),
         "min_robot_clearance_m": obstacle_state.get("min_robot_clearance_m"),
