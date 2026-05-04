@@ -385,7 +385,6 @@ class PickAndPlaceTargetObject(
 
         self._executed = False
         self._shutdown_requested = False
-        self._pending_shutdown_reason = None
         self.sequence_success = False
         self.sequence_failed = False
         if str(self.motion_backend).lower() == "curobo_ros":
@@ -560,8 +559,9 @@ class PickAndPlaceTargetObject(
 
     def _abort_sequence(self, reason: str) -> None:
         self.sequence_failed = True
-        if self._pending_shutdown_reason is None:
-            self._pending_shutdown_reason = f"Sequence failed: {reason}"
+        self.get_logger().info(
+            f"Sequence failed: {reason}. Waiting for external timeout."
+        )
 
     def _execute(self):
         """Main execution sequence."""
@@ -1167,8 +1167,6 @@ class PickAndPlaceTargetObject(
                 self.get_logger().warn(
                     "Pick-and-place could not restore the previous planner state."
                 )
-            if self._pending_shutdown_reason is not None:
-                self._request_shutdown(self._pending_shutdown_reason)
 
         if shutdown_reason is not None:
             self._request_shutdown(shutdown_reason)
