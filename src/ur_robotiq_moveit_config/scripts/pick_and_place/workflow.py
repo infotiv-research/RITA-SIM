@@ -26,15 +26,10 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
-from rclpy.duration import Duration
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-
 from .constants import (
     ARM_TRAJECTORY_ACTION,
     END_EFFECTOR_LINK,
     GRIPPER_TRAJECTORY_ACTION,
-    HOME_JOINT_VALUES,
-    JOINT_NAMES,
 )
 from .backend_curobo import CuroboMotionBackend
 from .backend_hybrid import HybridMotionBackend
@@ -482,54 +477,6 @@ class PickAndPlaceTargetObject(
         )
         return "precision_descent", planner_type, planning_time, num_attempts
 
-    def _initial_home_via_controller(self):
-        """Move robot to home configuration via direct joint trajectory.
-
-        Bypasses motion planning entirely by sending a FollowJointTrajectory
-        goal straight to the arm controller.  This is used when the planner
-        cannot plan from the initial robot pose (e.g. hybrid backend's cuRobo
-        considers the URDF-default all-zeros configuration to be in collision).
-        """
-        self.get_logger().info(
-            "Moving to home via direct joint trajectory (no collision avoidance)..."
-        )
-        if not self.arm_traj_client.wait_for_server(timeout_sec=30.0):
-            self.get_logger().error(
-                f"Arm trajectory action server not available after 30s: "
-                f"{ARM_TRAJECTORY_ACTION}"
-            )
-            return False
-
-        trajectory = JointTrajectory()
-        trajectory.joint_names = list(JOINT_NAMES)
-
-        point = JointTrajectoryPoint()
-        point.positions = [HOME_JOINT_VALUES[j] for j in JOINT_NAMES]
-        point.time_from_start = Duration(seconds=6.0).to_msg()
-        trajectory.points = [point]
-
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory = trajectory
-
-        future = self.arm_traj_client.send_goal_async(goal)
-        goal_handle = self._wait_future_result(future, timeout_sec=30.0)
-        if goal_handle is None or not goal_handle.accepted:
-            self.get_logger().error("Initial home trajectory goal was rejected!")
-            return False
-
-        result_future = goal_handle.get_result_async()
-        result = self._wait_future_result(result_future, timeout_sec=15.0)
-        if result is None:
-            self.get_logger().error(
-                "Initial home trajectory did not complete within timeout!"
-            )
-            return False
-
-        self.get_logger().info(
-            "Robot reached home configuration via direct trajectory."
-        )
-        return True
-
     def _delayed_execute(self):
         """Wait for wall-clock delay, then run the execution sequence."""
         time.sleep(3.0)
@@ -580,16 +527,6 @@ class PickAndPlaceTargetObject(
             if not self._motion_backend_adapter.wait_until_ready():
                 self._abort_sequence("motion_backend_not_ready")
                 return
-
-            if str(self.motion_backend).lower() == "hybrid":
-                if not self._initial_home_via_controller():
-                    self.get_logger().error(
-                        "Failed to move robot to home via direct trajectory. "
-                        "Aborting — the hybrid planner cannot plan from the "
-                        "default all-zeros configuration."
-                    )
-                    self._abort_sequence("hybrid_initial_home_failed")
-                    return
 
             self.get_logger().info(
                 f"{self.motion_backend} motion backend connected. Starting sequence..."

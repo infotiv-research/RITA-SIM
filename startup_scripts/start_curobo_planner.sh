@@ -121,9 +121,9 @@ fi
 set -u
 
 if [[ "${CUROBO_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
-  bootstrap_executable="${USER_WS}/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_home_bootstrap.py"
+  bootstrap_executable="${USER_WS}/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/home_bootstrap.py"
   if [[ ! -f "${bootstrap_executable}" ]]; then
-    bootstrap_executable="${USER_WS}/src/ur_robotiq_moveit_config/scripts/curobo/curobo_home_bootstrap.py"
+    bootstrap_executable="${USER_WS}/src/ur_robotiq_moveit_config/scripts/home_bootstrap.py"
   fi
   bootstrap_cmd=(
     python3

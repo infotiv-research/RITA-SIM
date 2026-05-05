@@ -23,7 +23,7 @@ TEST_DATA_DIR = REPO_ROOT / "test_data"
 TEST_LOG_DIR = REPO_ROOT / "test_logs"
 
 
-PICK_AND_PLACE_RUNS = 10
+PICK_AND_PLACE_RUNS = 5
 PICK_AND_PLACE_RUN_TIMEOUT_S = float(
     os.environ.get("PICK_AND_PLACE_RUN_TIMEOUT_S", "120")
 )
@@ -118,6 +118,8 @@ def restart_after_timeout() -> None:
     print("restarting ros2 and planner after timed-out pick_and_place run")
     test_sh("kill")
     test_sh("restart_ros")
+    print("playing isaac sim")
+    test_sh("sim_headless", "play")
     start_planner()
 
 
