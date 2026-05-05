@@ -165,6 +165,21 @@ else
 fi
 set -u
 
+if [[ "${CUMOTION_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
+  bootstrap_executable="${USER_WS}/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/home_bootstrap.py"
+  if [[ ! -f "${bootstrap_executable}" ]]; then
+    bootstrap_executable="${USER_WS}/src/ur_robotiq_moveit_config/scripts/home_bootstrap.py"
+  fi
+  bootstrap_cmd=(
+    python3
+    "${bootstrap_executable}"
+  )
+  printf '[start_cumotion_planner][%s] Bootstrap: ' "$(timestamp)"
+  printf '%q ' "${bootstrap_cmd[@]}"
+  echo
+  "${bootstrap_cmd[@]}" || true
+fi
+
 launch_cmd=(
   ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit_human.launch.py
   planning_pipeline:=cumotion

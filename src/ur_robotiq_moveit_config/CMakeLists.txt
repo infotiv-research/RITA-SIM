@@ -15,7 +15,7 @@ install(
   DESTINATION lib/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE
 )
-install(PROGRAMS scripts/curobo/curobo_home_bootstrap.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/home_bootstrap.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/curobo_collision_setup.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/curobo_collision_spheres_toggle.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/curobo/curobo_human_skeleton_collision_publisher.py DESTINATION lib/${PROJECT_NAME})

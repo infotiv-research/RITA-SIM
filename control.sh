@@ -210,11 +210,8 @@ ros() {
 }
 
 ompl() {
-    echo "---[ launching ur_robotiq_isaac_moveit ]---"
-    source_ws
-    ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py \
-        planning_pipeline:=ompl \
-        launch_cumotion_planner:=false
+    echo "---[ starting OMPL planner script ]---"
+    ./startup_scripts/start_ompl_planner.sh "$@"
 }
 
 isaac_sim() {
@@ -392,7 +389,8 @@ elif [[ "$1" == "sim_humanoid" ]]; then
 elif [[ "$1" == "build_gaussian_splats" ]]; then
     build_gaussian_splats
 elif [[ "$1" == "ompl" ]]; then
-    ompl
+    shift 1
+    ompl "$@"
 elif [[ "$1" == "cumotion" ]]; then
     shift 1
     cumotion "$@"

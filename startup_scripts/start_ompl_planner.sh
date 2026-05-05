@@ -10,18 +10,11 @@ timestamp() {
 }
 
 log() {
-  echo "[start_hybrid_planner][$(timestamp)] $*"
+  echo "[start_ompl_planner][$(timestamp)] $*"
 }
 
-log "Starting cuRobo hybrid planner launcher."
+log "Starting OMPL planner launcher."
 log "ROS_DISTRO=${ROS_DISTRO} USER_WS=${USER_WS}"
-
-if [ "${HYBRID_SKIP_BOOTSTRAP:-false}" != "true" ]; then
-  log "Running bootstrap/validation checks before launch."
-  "${SCRIPT_DIR}/bootstrap_cumotion_workspace.sh"
-else
-  log "Skipping bootstrap because HYBRID_SKIP_BOOTSTRAP=true."
-fi
 
 set +u
 if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
@@ -38,7 +31,7 @@ if [ -f "${USER_WS}/install/local_setup.bash" ]; then
 fi
 set -u
 
-if [[ "${HYBRID_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
+if [[ "${OMPL_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
   bootstrap_executable="${USER_WS}/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/home_bootstrap.py"
   if [[ ! -f "${bootstrap_executable}" ]]; then
     bootstrap_executable="${USER_WS}/src/ur_robotiq_moveit_config/scripts/home_bootstrap.py"
@@ -47,19 +40,20 @@ if [[ "${HYBRID_BOOTSTRAP_HOME_IF_ZERO:-1}" != "0" ]]; then
     python3
     "${bootstrap_executable}"
   )
-  printf '[start_hybrid_planner][%s] Bootstrap: ' "$(timestamp)"
+  printf '[start_ompl_planner][%s] Bootstrap: ' "$(timestamp)"
   printf '%q ' "${bootstrap_cmd[@]}"
   echo
   "${bootstrap_cmd[@]}" || true
 fi
 
 launch_cmd=(
-  ros2 launch curobo_hybrid_planning_plugins curobo_hybrid_planning.launch.py
+  ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
+  planning_pipeline:=ompl
+  launch_cumotion_planner:=false
   "$@"
 )
 
-log "Launching MoveIt + Hybrid Planning."
-printf '[start_hybrid_planner][%s] Command: ' "$(timestamp)"
+printf '[start_ompl_planner][%s] Command: ' "$(timestamp)"
 printf '%q ' "${launch_cmd[@]}"
 echo
 
