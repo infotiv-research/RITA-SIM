@@ -91,6 +91,23 @@ hybrid_benchmark_run() {
     > "${SCRIPT_DIR}/test_logs/hybrid_benchmark.log" 2>&1
 }
 
+simple_motion_run() {
+  run_number="${1:-1}"
+  shift
+  timeout_s="${SIMPLE_MOTION_RUN_TIMEOUT_S:-90}"
+  python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
+  $COMPOSE_CMD exec -T -e SIMPLE_MOTION_RUN_TIMEOUT_S="${timeout_s}" cumotion bash -lc '
+    cd /ros2_ws
+    timeout --kill-after=10s "${SIMPLE_MOTION_RUN_TIMEOUT_S}s" ./control.sh simple_motion "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      pkill -f "simple_motion_benchmark.py" 2>/dev/null || true
+    fi
+    exit "$status"
+  ' bash "$@" \
+    > "${SCRIPT_DIR}/test_logs/simple_motion_run_${run_number}.log" 2>&1
+}
+
 pick_and_place_run() {
   run_number="${1:-1}"
   shift
@@ -153,6 +170,14 @@ case "${1:-}" in
   hybrid_benchmark_run)
     shift
     hybrid_benchmark_run "$@"
+    ;;
+  simple_motion)
+    shift
+    python3 "${SCRIPT_DIR}/scripts/simple_motion_scenario.py" "$@"
+    ;;
+  simple_motion_run)
+    shift
+    simple_motion_run "$@"
     ;;
   pick_and_place)
     shift
