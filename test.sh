@@ -127,6 +127,7 @@ pick_and_place_run() {
 }
 
 kill() {
+  $COMPOSE_CMD exec -T ros2 bash -lc 'cd /ros2_ws && ./control.sh kill' || true
   $COMPOSE_CMD exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh kill' || true
 }
 

@@ -97,6 +97,19 @@ class CuroboMotionBackend(MotionBackendInterface):
         self._active_planner_id = None
         self._original_planner_type = None
         self._original_planner_id = None
+        self.last_failure = {}
+
+    def _clear_failure(self):
+        self.last_failure = {}
+
+    def _set_failure(self, reason, detail="", *, status_name="", error_code=None):
+        self.last_failure = {
+            "backend_name": self.name,
+            "backend_failure_reason": str(reason or "curobo_failure"),
+            "backend_failure_detail": str(detail or ""),
+            "backend_status_name": str(status_name or ""),
+            "backend_error_code": error_code,
+        }
 
     def _wait_future_result(self, future, timeout_sec=10.0, poll_period_sec=0.01):
         deadline = time.monotonic() + float(timeout_sec)
@@ -540,7 +553,12 @@ class CuroboMotionBackend(MotionBackendInterface):
         num_attempts=None,
         planner_type=None,
     ):
+        self._clear_failure()
         if not self._ensure_planner_type(requested=planner_type):
+            self._set_failure(
+                "curobo_planner_switch_failed",
+                f"Could not switch curobo planner to '{planner_type}'.",
+            )
             return None
         if not self._apply_runtime_parameters(
             planning_time=planning_time,
@@ -553,6 +571,10 @@ class CuroboMotionBackend(MotionBackendInterface):
 
         start_pose = self._current_joint_state()
         if start_pose is None:
+            self._set_failure(
+                "curobo_missing_current_joint_state",
+                "Could not read a recent current joint state before curobo pose planning.",
+            )
             return None
 
         request = TrajectoryGeneration.Request()
@@ -569,20 +591,28 @@ class CuroboMotionBackend(MotionBackendInterface):
         future = self.trajectory_client.call_async(request)
         response = self._wait_future_result(future, timeout_sec=30.0)
         if response is None:
-            self.node.get_logger().error("Timed out waiting for curobo trajectory response.")
+            detail = "Timed out waiting for curobo trajectory response."
+            self.node.get_logger().error(detail)
+            self._set_failure("curobo_planning_timeout", detail, status_name="TIMED_OUT")
             return None
         active_planner = str(self._active_planner_type or planner_type or "").strip().lower()
         if not response.success:
+            detail = f"curobo trajectory request failed: {response.message}"
             self.node.get_logger().warn(
-                f"curobo trajectory request failed: {response.message}"
+                detail
+            )
+            self._set_failure(
+                "curobo_planning_failed",
+                detail,
+                status_name="PLANNING_FAILED",
             )
             return None
         if active_planner == "mpc":
             return response
         if not response.trajectory:
-            self.node.get_logger().warn(
-                "curobo trajectory request succeeded but returned no waypoints."
-            )
+            detail = "curobo trajectory request succeeded but returned no waypoints."
+            self.node.get_logger().warn(detail)
+            self._set_failure("curobo_empty_trajectory", detail)
             return None
         return response
 
@@ -593,7 +623,12 @@ class CuroboMotionBackend(MotionBackendInterface):
         num_attempts=None,
         planner_type="joint_space",
     ):
+        self._clear_failure()
         if not self._ensure_planner_type(requested=planner_type):
+            self._set_failure(
+                "curobo_planner_switch_failed",
+                f"Could not switch curobo planner to '{planner_type}'.",
+            )
             return None
         if not self._apply_runtime_parameters(
             planning_time=planning_time,
@@ -606,6 +641,10 @@ class CuroboMotionBackend(MotionBackendInterface):
 
         start_pose = self._current_joint_state()
         if start_pose is None:
+            self._set_failure(
+                "curobo_missing_current_joint_state",
+                "Could not read a recent current joint state before curobo joint-space planning.",
+            )
             return None
 
         request = TrajectoryGeneration.Request()
@@ -614,29 +653,49 @@ class CuroboMotionBackend(MotionBackendInterface):
         future = self.trajectory_client.call_async(request)
         response = self._wait_future_result(future, timeout_sec=30.0)
         if response is None:
-            self.node.get_logger().error("Timed out waiting for curobo joint-space response.")
+            detail = "Timed out waiting for curobo joint-space response."
+            self.node.get_logger().error(detail)
+            self._set_failure("curobo_planning_timeout", detail, status_name="TIMED_OUT")
             return None
         if not response.success or not response.trajectory:
+            detail = f"curobo joint-space request failed: {response.message}"
             self.node.get_logger().warn(
-                f"curobo joint-space request failed: {response.message}"
+                detail
+            )
+            self._set_failure(
+                "curobo_planning_failed",
+                detail,
+                status_name="PLANNING_FAILED",
             )
             return None
         return response
 
     def _execute_response(self, response):
         if response is None or not getattr(response, "trajectory", None):
-            self.node.get_logger().error(
-                "curobo trajectory execution requested without trajectory waypoints."
-            )
+            detail = "curobo trajectory execution requested without trajectory waypoints."
+            self.node.get_logger().error(detail)
+            if not self.last_failure:
+                self._set_failure("curobo_empty_trajectory", detail)
             return False
         if not self._activate_trajectory_execution_controller():
+            self._set_failure(
+                "curobo_controller_switch_failed",
+                "Could not activate trajectory execution controller before curobo execution.",
+            )
             return False
-        return execute_arm_joint_trajectory(
+        success = execute_arm_joint_trajectory(
             self.node,
             self.node.arm_traj_client,
             response.trajectory,
             response.dt if response.dt > 0.0 else 0.03,
         )
+        if not success:
+            self._set_failure(
+                "curobo_execution_failed",
+                "Arm FollowJointTrajectory execution failed for curobo trajectory.",
+                status_name="EXECUTION_FAILED",
+            )
+        return success
 
     def move_to_pose(
         self,
