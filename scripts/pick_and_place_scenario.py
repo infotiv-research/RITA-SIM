@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import argparse
 from datetime import datetime
 from pathlib import Path
 import os
+import shutil
 import subprocess
-import sys
 import time
 
 from recorders.pick_and_place_recorder import (
@@ -27,7 +28,6 @@ PICK_AND_PLACE_RUNS = 5
 PICK_AND_PLACE_RUN_TIMEOUT_S = float(
     os.environ.get("PICK_AND_PLACE_RUN_TIMEOUT_S", "120")
 )
-PLANNER = sys.argv[1] if len(sys.argv) > 1 else "curobo"
 
 PLANNER_LOGS = {
     "curobo": "curobo.log",
@@ -35,6 +35,15 @@ PLANNER_LOGS = {
     "hybrid": "hybrid.log",
     "ompl": "ompl.log",
 }
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run automated pick-and-place scenarios.")
+    parser.add_argument("planner", nargs="?", default="curobo", choices=sorted(PLANNER_LOGS))
+    parser.add_argument("--runs", type=int, default=PICK_AND_PLACE_RUNS)
+    parser.add_argument("--csv-file", type=Path)
+    parser.add_argument("--log-dir", type=Path)
+    return parser
 
 
 def test_sh(*args: str) -> subprocess.CompletedProcess:
@@ -53,23 +62,31 @@ def pick_and_place_args(planner: str) -> tuple[str, ...]:
     return planner_args[planner]
 
 
-def new_csv_file() -> Path:
+def new_csv_file(planner: str, run_count: int) -> Path:
     TEST_DATA_DIR.mkdir(exist_ok=True)
     date = datetime.now().strftime("%Y%m%d")
-    csv_file = TEST_DATA_DIR / f"pick_and_place_{PLANNER}_{PICK_AND_PLACE_RUNS}_{date}.csv"
+    csv_file = TEST_DATA_DIR / f"pick_and_place_{planner}_{run_count}_{date}.csv"
 
     number = 1
     while csv_file.exists():
         csv_file = TEST_DATA_DIR / (
-            f"pick_and_place_{PLANNER}_{PICK_AND_PLACE_RUNS}_{date}_{number}.csv"
+            f"pick_and_place_{planner}_{run_count}_{date}_{number}.csv"
         )
         number += 1
 
     return csv_file
 
 
-def planner_log_file() -> Path:
-    return TEST_LOG_DIR / PLANNER_LOGS.get(PLANNER, f"{PLANNER}.log")
+def resolve_csv_file(args, run_count: int) -> Path:
+    if args.csv_file is None:
+        return new_csv_file(args.planner, run_count)
+
+    args.csv_file.parent.mkdir(parents=True, exist_ok=True)
+    return args.csv_file
+
+
+def planner_log_file(planner: str) -> Path:
+    return TEST_LOG_DIR / PLANNER_LOGS.get(planner, f"{planner}.log")
 
 
 def file_position(path: Path) -> int:
@@ -106,43 +123,69 @@ def append_timeout_planner_log(
             file.write("(no planner log lines captured for this run)\n")
 
 
-def start_planner() -> None:
-    print(f"starting {PLANNER}")
-    if PLANNER == "curobo":
-        test_sh(PLANNER, "launch_rviz:=true")
-    else:
-        test_sh(PLANNER)
+def start_planner(planner: str) -> int:
+    print(f"starting {planner}")
+    if planner == "curobo":
+        return test_sh(planner, "launch_rviz:=true").returncode
+    return test_sh(planner).returncode
 
 
-def restart_after_timeout() -> None:
-    print("restarting ros2 and planner after timed-out pick_and_place run")
-    test_sh("kill")
-    test_sh("restart_ros")
+def prepare_pick_and_place_run(planner: str, run_number: int) -> int:
+    print(f"resetting simulation and planner before pick_and_place run {run_number}")
+    stop = test_sh("sim_headless", "stop")
+    if stop.returncode != 0:
+        return stop.returncode
+
+    print("stopping ros2 and planner launch processes")
+    kill = test_sh("kill")
+    if kill.returncode != 0:
+        return kill.returncode
+
+    print("restarting ros2 before pick_and_place run")
+    restart = test_sh("restart_ros")
+    if restart.returncode != 0:
+        return restart.returncode
+
     print("playing isaac sim")
-    test_sh("sim_headless", "play")
-    start_planner()
+    play = test_sh("sim_headless", "play")
+    if play.returncode != 0:
+        return play.returncode
+
+    return start_planner(planner)
 
 
-def pick_and_place_sequence() -> int:
+def archive_run_logs(args, run_number: int) -> None:
+    if args.log_dir is None:
+        return
+
+    args.log_dir.mkdir(parents=True, exist_ok=True)
+    log_sources = (
+        (TEST_LOG_DIR / f"pick_and_place_run_{run_number}.log", f"pick_and_place_run_{run_number}.log"),
+        (planner_log_file(args.planner), f"{args.planner}_{run_number}.log"),
+        (TEST_LOG_DIR / "ros.log", f"ros_{run_number}.log"),
+    )
+    for source, destination_name in log_sources:
+        if source.exists():
+            shutil.copy2(source, args.log_dir / destination_name)
+
+
+def pick_and_place_sequence(args) -> int:
+    run_count = max(int(args.runs), 1)
     try:
-        print("playing isaac sim")
-        test_sh("sim_headless", "play")
+        csv_file = resolve_csv_file(args, run_count)
+        run_args = pick_and_place_args(args.planner)
 
-        start_planner()
-        csv_file = new_csv_file()
-        run_args = pick_and_place_args(PLANNER)
-
-        for run_number in range(1, PICK_AND_PLACE_RUNS + 1):
-            if run_number > 1:
-                print("playing isaac sim")
-                test_sh("sim_headless", "play")
+        for run_number in range(1, run_count + 1):
+            prepare_status = prepare_pick_and_place_run(args.planner, run_number)
+            if prepare_status != 0:
+                return prepare_status
 
             print(f"pick_and_place run {run_number}")
             stop_file = f"/tmp/pick_and_place_metrics_recorder_{run_number}.stop"
             recorder = start_metrics_recorder(stop_file)
 
             time.sleep(0.5)
-            planner_log = planner_log_file()
+            planner_log = planner_log_file(args.planner)
             planner_log_start = file_position(planner_log)
             start_time = time.monotonic()
             result = test_sh("pick_and_place_run", str(run_number), *run_args)
@@ -171,11 +214,10 @@ def pick_and_place_sequence() -> int:
                     planner_log_text,
                 )
 
+            archive_run_logs(args, run_number)
+
             print("stopping isaac sim")
             test_sh("sim_headless", "stop")
-
-            if timed_out and run_number < PICK_AND_PLACE_RUNS:
-                restart_after_timeout()
 
         return 0
     finally:
@@ -184,7 +226,9 @@ def pick_and_place_sequence() -> int:
 
 
 def main() -> int:
-    return pick_and_place_sequence()
+    parser = build_arg_parser()
+    args = parser.parse_args()
+    return pick_and_place_sequence(args)
 
 
 if __name__ == "__main__":

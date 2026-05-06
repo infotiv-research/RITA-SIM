@@ -37,6 +37,7 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description="Run scripted hybrid-planner obstacle benchmarks.")
     parser.add_argument("--case", default=DEFAULT_BENCHMARK_CASE, choices=sorted(BENCHMARK_CASES.keys()))
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--run-index-offset", type=int, default=0)
     parser.add_argument(
         "--spawn-profile",
         default=DEFAULT_SPAWN_TRIGGER_PROFILE,
@@ -48,6 +49,12 @@ def build_arg_parser():
         type=float,
         default=None,
         help="Override the selected spawn profile with an explicit TCP-to-wall clearance in meters.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory where run JSON files should be written.",
     )
     return parser
 
@@ -89,10 +96,13 @@ def main() -> int:
     spawn_label = args.spawn_profile
     if args.spawn_clearance_m is not None:
         spawn_label = f"custom{float(args.spawn_clearance_m):.3f}m".replace(".", "p")
-    output_dir = (
-        Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
-        / f"{started_at.strftime('%Y%m%d_%H%M%S')}_{args.case}_{spawn_label}_runs{run_count:02d}"
-    )
+    if args.output_dir is None:
+        output_dir = (
+            Path(DEFAULT_OUTPUT_DIR).expanduser().resolve()
+            / f"{started_at.strftime('%Y%m%d_%H%M%S')}_{args.case}_{spawn_label}_runs{run_count:02d}"
+        )
+    else:
+        output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rclpy.init(args=ros_args)
@@ -107,7 +117,9 @@ def main() -> int:
             print("FAIL: Hybrid benchmark dependencies are not ready.")
             return 1
 
-        for run_index in range(1, run_count + 1):
+        run_index_offset = max(int(args.run_index_offset), 0)
+        for local_run_index in range(1, run_count + 1):
+            run_index = run_index_offset + local_run_index
             result = node.run_single_benchmark(args, run_index)
             filename = f"hybrid_benchmark_{args.case}_{spawn_label}_run{run_index:02d}.json"
             output_path = output_dir / filename
@@ -131,7 +143,7 @@ def main() -> int:
                 + (f" failures={','.join(failures)}" if failures else "")
             )
 
-            if run_index < run_count:
+            if local_run_index < run_count:
                 time.sleep(float(DEFAULT_SETTLE_TIME_SEC))
 
         print(f"Hybrid benchmark summary: {passed_runs}/{run_count} runs passed")

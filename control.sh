@@ -100,7 +100,7 @@ UR10 cuMotion container commands:
   hybrid_benchmark
                   Run the scripted hybrid obstacle benchmark.
                   Usage:
-                    ./control.sh hybrid_benchmark --case test_1 --runs 1
+                    ./control.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile medium
   simple_motion
                   Run a generic one-move benchmark.
                   Usage:

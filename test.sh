@@ -167,6 +167,10 @@ case "${1:-}" in
     shift
     python3 "${SCRIPT_DIR}/scripts/hybrid_benchmark_scenario.py" "$@"
     ;;
+  benchmark_suite)
+    shift
+    python3 "${SCRIPT_DIR}/scripts/benchmark_suite.py" "$@"
+    ;;
   hybrid_benchmark_run)
     shift
     hybrid_benchmark_run "$@"
@@ -191,7 +195,7 @@ case "${1:-}" in
     kill
     ;;
   *)
-    echo "Usage: ./test.sh build | start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | hybrid_benchmark [--case test_1] [--runs 1] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
+    echo "Usage: ./test.sh build | start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | hybrid_benchmark [--case test_1] [--runs 1] [--spawn-profile early|medium|late|very_late] | benchmark_suite <simple_benchmark|hybrid_planner|pick_and_place|all> | simple_motion <curobo|cumotion|ompl [rrtStar|rrtConnect]|hybrid> [--case test_1] [--runs 1] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
     exit 1
     ;;
 esac
