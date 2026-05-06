@@ -125,6 +125,7 @@ class IsaacMoveItPublisher(Node):
         self.objects = {}
         self.published = set()
         self.suppressed_ids = set()
+        self._last_published_poses = {}
         # Re-ADD interval to handle late subscribers (e.g. move_group starting after us)
         self._readd_interval_sec = 2.0
         self._last_add_time = {}  # frame_name -> time of last ADD
@@ -281,6 +282,7 @@ class IsaacMoveItPublisher(Node):
                 for object_id in previously_suppressed:
                     self.published.discard(object_id)
                     self._last_add_time.pop(object_id, None)
+                    self._last_published_poses.pop(object_id, None)
                 self.get_logger().info(
                     "Cleared suppressed environment collision IDs."
                 )
@@ -304,6 +306,7 @@ class IsaacMoveItPublisher(Node):
                 self.suppressed_ids.add(object_id)
                 self.published.discard(object_id)
                 self._last_add_time.pop(object_id, None)
+                self._last_published_poses.pop(object_id, None)
                 self._publish_remove(object_id)
                 self.get_logger().info(f"Suppressed environment collision object '{object_id}'.")
             return
@@ -313,6 +316,7 @@ class IsaacMoveItPublisher(Node):
                 self.suppressed_ids.remove(object_id)
                 self.published.discard(object_id)
                 self._last_add_time.pop(object_id, None)
+                self._last_published_poses.pop(object_id, None)
                 self.get_logger().info(
                     f"Unsuppressed environment collision object '{object_id}'."
                 )
@@ -321,6 +325,27 @@ class IsaacMoveItPublisher(Node):
         self.get_logger().warn(
             f"Unknown control action '{action}' in command '{raw}'."
         )
+
+    @staticmethod
+    def _pose_changed(previous, current, position_tolerance=1e-4, orientation_tolerance=1e-4):
+        if previous is None:
+            return True
+
+        dp = (
+            abs(previous.position.x - current.position.x),
+            abs(previous.position.y - current.position.y),
+            abs(previous.position.z - current.position.z),
+        )
+        if any(delta > position_tolerance for delta in dp):
+            return True
+
+        dq = (
+            abs(previous.orientation.x - current.orientation.x),
+            abs(previous.orientation.y - current.orientation.y),
+            abs(previous.orientation.z - current.orientation.z),
+            abs(previous.orientation.w - current.orientation.w),
+        )
+        return any(delta > orientation_tolerance for delta in dq)
 
     def publish_poses(self):
         """Publish current object poses as world collision objects."""
@@ -344,11 +369,7 @@ class IsaacMoveItPublisher(Node):
                 or (now - last_add) >= self._readd_interval_sec
             )
 
-            obj = CollisionObject()
-            obj.id = frame_name
-            obj.header.frame_id = self.world_frame
-            obj.operation = CollisionObject.ADD if needs_add else CollisionObject.MOVE
-            obj.pose = Pose(
+            pose = Pose(
                 position=Point(
                     x=tf.transform.translation.x,
                     y=tf.transform.translation.y,
@@ -356,6 +377,15 @@ class IsaacMoveItPublisher(Node):
                 ),
                 orientation=tf.transform.rotation,
             )
+            previous_pose = self._last_published_poses.get(frame_name)
+            if not needs_add and not self._pose_changed(previous_pose, pose):
+                continue
+
+            obj = CollisionObject()
+            obj.id = frame_name
+            obj.header.frame_id = self.world_frame
+            obj.operation = CollisionObject.ADD if needs_add else CollisionObject.MOVE
+            obj.pose = pose
 
             if needs_add:
                 for geom_type, geom_value, geom_pose in collision_data:
@@ -378,6 +408,7 @@ class IsaacMoveItPublisher(Node):
                 scene.object_colors.append(obj_color)
 
             scene.world.collision_objects.append(obj)
+            self._last_published_poses[frame_name] = pose
 
         if scene.world.collision_objects:
             self.scene_pub.publish(scene)
