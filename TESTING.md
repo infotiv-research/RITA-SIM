@@ -41,7 +41,18 @@ trajectory and controls how early it appears with spawn profiles:
 ./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile very_late
 ```
 
-JSON results are written under a timestamped run folder in
+To run benchmark suites with results and archived logs collected under one
+timestamped folder:
+
+```bash
+./test.sh benchmark_suite simple_benchmark
+./test.sh benchmark_suite hybrid_planner
+./test.sh benchmark_suite pick_and_place
+./test.sh benchmark_suite all
+```
+
+Suite outputs are written under [`test_data/benchmark_suite/`](./test_data/benchmark_suite/).
+Direct `./test.sh hybrid_benchmark ...` runs still write JSON results under
 [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
 
 

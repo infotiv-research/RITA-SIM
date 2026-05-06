@@ -100,7 +100,11 @@ UR10 cuMotion container commands:
   hybrid_benchmark
                   Run the scripted hybrid obstacle benchmark.
                   Usage:
-                    ./control.sh hybrid_benchmark --case test_1 --runs 1
+                    ./control.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile medium
+  simple_motion
+                  Run a generic one-move benchmark.
+                  Usage:
+                    ./control.sh simple_motion --planner curobo --case test_1
   pick_and_place  Start pick-and-place node.
                   Usage:
                     ./control.sh pick_and_place
@@ -137,6 +141,7 @@ kill_processes() {
         "ur_robotiq_curobo_human.launch.py"
         "pick_and_place.launch.py"
         "pick_and_place_main.py"
+        "simple_motion_benchmark.py"
         "start_cumotion_planner.sh"
         "start_curobo_planner.sh"
         "start_hybrid_planner.sh"
@@ -335,6 +340,12 @@ hybrid_benchmark() {
     ros2 run ur_robotiq_moveit_config hybrid_obstacle_benchmark.py -- "$@"
 }
 
+simple_motion() {
+    echo "---[ running simple-motion benchmark ]---"
+    source_ws
+    ros2 run ur_robotiq_moveit_config simple_motion_benchmark.py -- "$@"
+}
+
 pick_and_place() {
     echo "---[ launching pick-and-place node ]---"
     source_ws
@@ -403,6 +414,9 @@ elif [[ "$1" == "hybrid" ]]; then
 elif [[ "$1" == "hybrid_benchmark" ]]; then
     shift 1
     hybrid_benchmark "$@"
+elif [[ "$1" == "simple_motion" ]]; then
+    shift 1
+    simple_motion "$@"
 elif [[ "$1" == "pick_and_place" ]]; then
     shift 1
     pick_and_place "$@"

@@ -527,7 +527,10 @@ def generate_launch_description():
             description="If true, mirror commands to states (fake hardware)."
         ),
         DeclareLaunchArgument("safety_limits", default_value="true"),
-        DeclareLaunchArgument("safety_pos_margin", default_value="0.15"),
+        # Default 0 in sim: the URDF <safety_controller> soft limits otherwise
+        # shrink wrist joints from ±2π to ±(2π−margin), causing START_STATE_INVALID
+        # when cuMotion winds a wrist past ±6.13319 rad. Set >0 only against real hardware.
+        DeclareLaunchArgument("safety_pos_margin", default_value="0.0"),
         DeclareLaunchArgument("safety_k_position", default_value="20"),
 
         # General

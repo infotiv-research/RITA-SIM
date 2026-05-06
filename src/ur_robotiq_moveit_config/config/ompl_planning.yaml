@@ -46,6 +46,7 @@ planner_configs:
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
   RRTstarkConfigDefault:
     type: geometric::RRTstar
+    termination_condition: CostConvergence[10,.1]
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
     goal_bias: 0.05  # When close to goal select goal, with this probability? default: 0.05
     delay_collision_checking: 1  # Stop collision checking as soon as C-free parent found. default 1
@@ -137,6 +138,7 @@ planner_configs:
     type: geometric::TrajOpt
 
 ur_manipulator:
+  default_planner_config: RRTstarkConfigDefault
   planner_configs:
     - SBLkConfigDefault
     - ESTkConfigDefault
