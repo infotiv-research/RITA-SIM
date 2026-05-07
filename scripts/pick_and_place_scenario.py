@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import argparse
-from datetime import datetime
 from pathlib import Path
 import os
 import shutil
@@ -9,22 +9,18 @@ import subprocess
 import time
 
 from recorders.pick_and_place_recorder import (
+    PickAndPlaceRecorder,
     RUN_TIMEOUT_EXIT_CODE,
-    append_csv_row,
-    read_metrics,
-    start_metrics_recorder,
-    stop_metrics_recorder,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 
 TEST_SH = REPO_ROOT / "test.sh"
-TEST_DATA_DIR = REPO_ROOT / "test_data"
 TEST_LOG_DIR = REPO_ROOT / "test_logs"
 
 
-PICK_AND_PLACE_RUNS = 5
+PICK_AND_PLACE_RUNS = 2
 PICK_AND_PLACE_RUN_TIMEOUT_S = float(
     os.environ.get("PICK_AND_PLACE_RUN_TIMEOUT_S", "120")
 )
@@ -60,29 +56,6 @@ def pick_and_place_args(planner: str) -> tuple[str, ...]:
     if planner not in planner_args:
         raise ValueError(f"Unknown planner: {planner}")
     return planner_args[planner]
-
-
-def new_csv_file(planner: str, run_count: int) -> Path:
-    TEST_DATA_DIR.mkdir(exist_ok=True)
-    date = datetime.now().strftime("%Y%m%d")
-    csv_file = TEST_DATA_DIR / f"pick_and_place_{planner}_{run_count}_{date}.csv"
-
-    number = 1
-    while csv_file.exists():
-        csv_file = TEST_DATA_DIR / (
-            f"pick_and_place_{planner}_{run_count}_{date}_{number}.csv"
-        )
-        number += 1
-
-    return csv_file
-
-
-def resolve_csv_file(args, run_count: int) -> Path:
-    if args.csv_file is None:
-        return new_csv_file(args.planner, run_count)
-
-    args.csv_file.parent.mkdir(parents=True, exist_ok=True)
-    return args.csv_file
 
 
 def planner_log_file(planner: str) -> Path:
@@ -172,7 +145,11 @@ def archive_run_logs(args, run_number: int) -> None:
 def pick_and_place_sequence(args) -> int:
     run_count = max(int(args.runs), 1)
     try:
-        csv_file = resolve_csv_file(args, run_count)
+        recorder = PickAndPlaceRecorder(
+            args.planner,
+            run_count,
+            csv_file=args.csv_file,
+        )
         run_args = pick_and_place_args(args.planner)
 
         for run_number in range(1, run_count + 1):
@@ -181,35 +158,27 @@ def pick_and_place_sequence(args) -> int:
                 return prepare_status
 
             print(f"pick_and_place run {run_number}")
-            stop_file = f"/tmp/pick_and_place_metrics_recorder_{run_number}.stop"
-            recorder = start_metrics_recorder(stop_file)
-
-            time.sleep(0.5)
+            recording = recorder.start_run(run_number)
             planner_log = planner_log_file(args.planner)
             planner_log_start = file_position(planner_log)
             start_time = time.monotonic()
             result = test_sh("pick_and_place_run", str(run_number), *run_args)
             total_time = time.monotonic() - start_time
 
-            recorder_output = stop_metrics_recorder(stop_file, recorder)
-            metrics = read_metrics(recorder_output)
-
             timed_out = (
                 result.returncode == RUN_TIMEOUT_EXIT_CODE
                 or total_time >= PICK_AND_PLACE_RUN_TIMEOUT_S
             )
             run_success = not timed_out
-            append_csv_row(
-                csv_file,
-                run_number,
+            recorder.finish_run(
+                recording,
                 total_time,
-                metrics,
                 success=run_success,
             )
             if timed_out:
                 planner_log_text = planner_log_chunk(planner_log, planner_log_start)
                 append_timeout_planner_log(
-                    csv_file,
+                    recorder.csv_file,
                     run_number,
                     planner_log_text,
                 )

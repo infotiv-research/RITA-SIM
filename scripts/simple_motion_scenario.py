@@ -7,24 +7,16 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 from recorders.simple_motion_recorder import (
-    RUN_TIMEOUT_EXIT_CODE,
-    append_csv_row,
-    mark_failed_run,
-    mark_timeout,
-    read_metrics,
-    start_metrics_recorder,
-    stop_metrics_recorder,
+    SimpleMotionRecorder,
 )
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 TEST_SH = REPO_ROOT / "test.sh"
-TEST_DATA_DIR = REPO_ROOT / "test_data"
 TEST_LOG_DIR = REPO_ROOT / "test_logs"
 
 PLANNERS = ("curobo", "cumotion", "ompl", "hybrid")
@@ -83,29 +75,6 @@ def planner_label(args) -> str:
     if args.planner != "ompl" or args.ompl_planner is None:
         return args.planner
     return f"{args.planner}_{args.ompl_planner}"
-
-
-def new_csv_file(planner: str, case_name: str, runs: int) -> Path:
-    TEST_DATA_DIR.mkdir(exist_ok=True)
-    date = datetime.now().strftime("%Y%m%d")
-    csv_file = TEST_DATA_DIR / f"simple_motion_{planner}_{case_name}_{runs}_{date}.csv"
-
-    number = 1
-    while csv_file.exists():
-        csv_file = TEST_DATA_DIR / (
-            f"simple_motion_{planner}_{case_name}_{runs}_{date}_{number}.csv"
-        )
-        number += 1
-
-    return csv_file
-
-
-def resolve_csv_file(args, run_count: int) -> Path:
-    if args.csv_file is None:
-        return new_csv_file(planner_label(args), args.case, run_count)
-
-    args.csv_file.parent.mkdir(parents=True, exist_ok=True)
-    return args.csv_file
 
 
 def start_planner(planner: str) -> int:
@@ -176,25 +145,21 @@ def prepare_simple_motion_run(planner: str, run_label: str) -> int:
     return 0
 
 
-def run_simple_motion_attempt(run_args: tuple[str, ...], run_label: str) -> tuple[bool, float, dict, int]:
-    stop_file = f"/tmp/simple_motion_metrics_recorder_{run_label}.stop"
-    recorder = start_metrics_recorder(stop_file)
-
-    time.sleep(0.5)
+def run_simple_motion_attempt(
+    run_args: tuple[str, ...],
+    run_label: str,
+    recorder: SimpleMotionRecorder,
+) -> tuple[bool, float, dict, int]:
+    recording = recorder.start_run(run_label)
     start_time = time.monotonic()
     result = test_sh("simple_motion_run", run_label, *run_args)
     total_time = time.monotonic() - start_time
 
-    recorder_output = stop_metrics_recorder(stop_file, recorder)
-    metrics = read_metrics(recorder_output)
-
-    timed_out = result.returncode == RUN_TIMEOUT_EXIT_CODE
-    if timed_out:
-        mark_timeout(metrics)
-    elif result.returncode != 0 or metrics.get("success") is not True:
-        mark_failed_run(metrics)
-
-    run_success = result.returncode == 0 and metrics.get("success") is True
+    run_success, metrics = recorder.finish_run(
+        recording,
+        total_time,
+        result.returncode,
+    )
     return run_success, total_time, metrics, result.returncode
 
 
@@ -221,7 +186,13 @@ def should_retry_setup_failure(metrics: dict, returncode: int) -> bool:
 
 def simple_motion_sequence(args) -> int:
     run_count = max(int(args.runs), 1)
-    csv_file = resolve_csv_file(args, run_count)
+    recorder = SimpleMotionRecorder(
+        args.planner,
+        planner_label(args),
+        args.case,
+        run_count,
+        csv_file=args.csv_file,
+    )
     failures = 0
 
     try:
@@ -235,6 +206,7 @@ def simple_motion_sequence(args) -> int:
             run_success, total_time, metrics, returncode = run_simple_motion_attempt(
                 run_args,
                 str(run_number),
+                recorder,
             )
             archive_attempt_logs(args, str(run_number))
 
@@ -249,16 +221,14 @@ def simple_motion_sequence(args) -> int:
                 run_success, total_time, metrics, returncode = run_simple_motion_attempt(
                     run_args,
                     f"{run_number}_retry_1",
+                    recorder,
                 )
                 archive_attempt_logs(args, f"{run_number}_retry_1")
 
             if not run_success:
                 failures += 1
 
-            append_csv_row(
-                csv_file,
-                args.case,
-                planner_label(args),
+            recorder.append_run(
                 run_number,
                 total_time,
                 metrics,
