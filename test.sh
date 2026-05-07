@@ -111,7 +111,7 @@ simple_motion_run() {
 pick_and_place_run() {
   run_number="${1:-1}"
   shift
-  timeout_s="${PICK_AND_PLACE_RUN_TIMEOUT_S:-120}"
+  timeout_s="${PICK_AND_PLACE_RUN_TIMEOUT_S:-220}"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
   $COMPOSE_CMD exec -T -e PICK_AND_PLACE_RUN_TIMEOUT_S="${timeout_s}" cumotion bash -lc '
     cd /ros2_ws

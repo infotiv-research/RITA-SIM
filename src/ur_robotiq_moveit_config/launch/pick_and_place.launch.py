@@ -181,7 +181,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "dropoff_relaxed_orientation_tolerance_rad",
-            default_value="0.8",
+            default_value="0.35",
             description="Relaxed orientation tolerance for dropoff fallback attempts (radians).",
         ),
         DeclareLaunchArgument(
@@ -191,7 +191,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "dropoff_use_current_orientation_fallback",
-            default_value="true",
+            default_value="false",
             description="Use current EE orientation as an additional dropoff fallback attempt.",
         ),
         DeclareLaunchArgument(

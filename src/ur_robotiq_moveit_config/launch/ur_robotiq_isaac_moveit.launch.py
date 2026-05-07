@@ -306,7 +306,7 @@ def launch_setup(context, *args, **kwargs):
         "moveit_manage_controllers": False,
         "trajectory_execution.allowed_execution_duration_scaling": 1.2,
         "trajectory_execution.allowed_goal_duration_margin": 0.5,
-        "trajectory_execution.allowed_start_tolerance": 0.01,
+        "trajectory_execution.allowed_start_tolerance": 0.05,
     }
     planning_scene_monitor_parameters = {
         "publish_planning_scene": True,
@@ -318,6 +318,27 @@ def launch_setup(context, *args, **kwargs):
         "warehouse_plugin": "warehouse_ros_sqlite::DatabaseConnection",
         "warehouse_host": warehouse_sqlite_path,
     }
+    bounded_joint_states_topic = "/moveit_bounded_joint_states"
+
+    # Clamp tiny Isaac joint-state overshoots before MoveIt consumes them.
+    # This keeps states like wrist_3=-6.28320 inside the URDF +/-2*pi bounds
+    # without wrapping by a full revolution and confusing the trajectory controller.
+    moveit_joint_state_bounds_filter_node = Node(
+        package="ur_robotiq_moveit_config",
+        executable="moveit_joint_state_bounds_filter.py",
+        name="moveit_joint_state_bounds_filter",
+        condition=IfCondition(enable_joint_state_filter),
+        output="screen",
+        parameters=[
+            {
+                "input_topic": raw_joint_states_topic,
+                "output_topic": bounded_joint_states_topic,
+                "limit_epsilon": 1e-5,
+                "max_correction": 1e-2,
+            },
+            {"use_sim_time": False},
+        ],
+    )
 
     # Filter raw Isaac joint states so mimic joints are reconstructed from finger_joint.
     # This avoids malformed gripper poses in MoveIt/RViz when Isaac publishes explicit mimic joints.
@@ -344,7 +365,7 @@ def launch_setup(context, *args, **kwargs):
             {"use_sim_time": False},
         ],
         remappings=[
-            ("raw_joint_states", raw_joint_states_topic),
+            ("raw_joint_states", bounded_joint_states_topic),
             ("joint_states", moveit_joint_states_topic),
         ],
     )
@@ -423,7 +444,13 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
-    nodes = [moveit_joint_state_filter_node, move_group_node, environment_collision_node, rviz_node]
+    nodes = [
+        moveit_joint_state_bounds_filter_node,
+        moveit_joint_state_filter_node,
+        move_group_node,
+        environment_collision_node,
+        rviz_node,
+    ]
     launch_cumotion_enabled = launch_cumotion_planner.perform(context).lower() == "true"
     use_patched_cumotion = cumotion_use_patched_node.perform(context).lower() == "true"
     if selected_planning_pipeline == "cumotion" and launch_cumotion_enabled:

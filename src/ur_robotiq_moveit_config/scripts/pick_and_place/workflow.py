@@ -111,9 +111,9 @@ class PickAndPlaceTargetObject(
         self.declare_parameter("dropoff_position_tolerance_m", 0.015)
         self.declare_parameter("dropoff_orientation_tolerance_rad", 0.35)
         self.declare_parameter("dropoff_orientation_z_tolerance_rad", 2.5)
-        self.declare_parameter("dropoff_relaxed_orientation_tolerance_rad", 0.8)
+        self.declare_parameter("dropoff_relaxed_orientation_tolerance_rad", 0.35)
         self.declare_parameter("dropoff_relaxed_orientation_z_tolerance_rad", 3.14)
-        self.declare_parameter("dropoff_use_current_orientation_fallback", True)
+        self.declare_parameter("dropoff_use_current_orientation_fallback", False)
         self.declare_parameter("dropoff_max_pose_retries", 3)
         self.declare_parameter("dropoff_debug_diagnostics", True)
         self.declare_parameter("verify_attached_in_scene", True)
@@ -373,9 +373,14 @@ class PickAndPlaceTargetObject(
         self._finger_joint_history = deque(maxlen=400)
         self._last_joint_positions = {}
         self._last_joint_positions_msg_time = 0.0
+        self._last_raw_arm_joint_positions = {}
+        self._last_raw_arm_joint_positions_msg_time = 0.0
 
         self.joint_state_sub = self.create_subscription(
             JointState, "/joint_states", self._on_joint_states, 20
+        )
+        self.moveit_joint_state_sub = self.create_subscription(
+            JointState, "/moveit_joint_states", self._on_moveit_joint_states, 20
         )
 
         self._executed = False
@@ -1081,6 +1086,11 @@ class PickAndPlaceTargetObject(
             self._target_object_suppressed = False
 
             # 12. Return to home
+            self.get_logger().info(
+                "Settling planning scene and /moveit_joint_states before HOME..."
+            )
+            self._wait_for_recent_joint_positions(timeout_sec=0.5, max_age_sec=0.5)
+            time.sleep(0.5)
             self.get_logger().info("Returning to home joint state...")
             self._start_metrics_phase("return_home")
             success = self._motion_backend_adapter.move_to_home()

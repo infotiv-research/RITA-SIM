@@ -140,6 +140,26 @@ class MoveGroupOpsMixin:
             return 0
         return len(points)
 
+    def _log_home_result_classification(
+        self,
+        classification,
+        error_name=None,
+        status_name=None,
+        planned_points=None,
+        executed_points=None,
+    ):
+        """Log the HOME failure stage in terms of MoveGroup's result surface."""
+        details = [f"classification={classification}"]
+        if error_name is not None:
+            details.append(f"error={error_name}")
+        if status_name is not None:
+            details.append(f"status={status_name}")
+        if planned_points is not None:
+            details.append(f"planned_points={planned_points}")
+        if executed_points is not None:
+            details.append(f"executed_points={executed_points}")
+        self.get_logger().error("HOME failure classification: " + ", ".join(details))
+
     def _extract_pose_goal_debug_summary(self, goal):
         """Extract target pose/tolerances from a pose goal for diagnostics."""
         summary = {
@@ -426,6 +446,8 @@ class MoveGroupOpsMixin:
         goal_handle = self._wait_future_result(future, timeout_sec=30.0)
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().error(f"MoveGroup goal [{context}] was rejected!")
+            if context == "home_joint_goal_ompl":
+                self._log_home_result_classification("move_group_goal_rejected")
             return False
 
         self.get_logger().info(
@@ -435,6 +457,8 @@ class MoveGroupOpsMixin:
         result = self._wait_future_result(result_future, timeout_sec=120.0)
         if result is None:
             self.get_logger().error(f"MoveGroup returned no result for [{context}]!")
+            if context == "home_joint_goal_ompl":
+                self._log_home_result_classification("move_group_crash_or_timeout")
             return False
 
         error_code = int(result.result.error_code.val)
@@ -471,6 +495,20 @@ class MoveGroupOpsMixin:
             f"status={status_name}, planned_points={planned_points}, "
             f"executed_points={executed_points}."
         )
+        if context == "home_joint_goal_ompl":
+            if planned_points <= 0:
+                classification = "planning_failed_or_move_group_crashed"
+            elif executed_points <= 0:
+                classification = "moveit_validation_rejected_before_controller_execution"
+            else:
+                classification = "controller_execution_failed_or_aborted"
+            self._log_home_result_classification(
+                classification,
+                error_name=error_name,
+                status_name=status_name,
+                planned_points=planned_points,
+                executed_points=executed_points,
+            )
         if run_failure_diagnostics:
             meta = dict(debug_meta or {})
             meta.setdefault("stage", "unknown")
@@ -495,7 +533,7 @@ class MoveGroupOpsMixin:
         positions = self._wait_for_recent_joint_positions(timeout_sec=0.5)
         if not positions:
             self.get_logger().warn(
-                "No recent /joint_states available — start_state will be empty. "
+                "No recent /moveit_joint_states available - start_state will be empty. "
                 "The planner will fall back to its own joint state subscription."
             )
             return
@@ -645,12 +683,15 @@ class MoveGroupOpsMixin:
         planning_time=None,
         num_attempts=None,
         pipeline_override=None,
+        planner_id=None,
     ):
         """Build a MoveGroup.Goal for a joint-space target."""
         request = MotionPlanRequest()
         request.group_name = PLANNING_GROUP
         self._populate_start_state(request)
         self._configure_request_pipeline(request, pipeline_override=pipeline_override)
+        if planner_id is not None:
+            request.planner_id = str(planner_id)
         request.num_planning_attempts = num_attempts or self.num_planning_attempts
         request.allowed_planning_time = planning_time or self.planning_time
         request.max_velocity_scaling_factor = self.max_velocity_scaling
@@ -695,26 +736,105 @@ class MoveGroupOpsMixin:
         return abs(wrapped)
 
     def _wait_for_recent_joint_positions(self, timeout_sec=1.0, max_age_sec=0.5):
-        """Wait briefly for a fresh joint-state snapshot and return name->position."""
+        """Wait briefly for a fresh MoveIt joint-state snapshot and return name->position.
+
+        For the curobo backend we additionally accept a fresh raw /joint_states
+        snapshot (arm joints only) when /moveit_joint_states is unavailable —
+        curobo doesn't need the mimic-reconstructed gripper state for arm planning.
+        """
         deadline = time.monotonic() + float(timeout_sec)
+        curobo_fallback_allowed = (
+            str(getattr(self, "motion_backend", "")).lower() == "curobo_ros"
+        )
         while time.monotonic() < deadline:
             latest = getattr(self, "_last_joint_positions", None)
             latest_time = float(getattr(self, "_last_joint_positions_msg_time", 0.0))
             age = time.monotonic() - latest_time
             if latest and age <= float(max_age_sec):
                 return dict(latest)
+            if curobo_fallback_allowed:
+                raw_latest = getattr(self, "_last_raw_arm_joint_positions", None)
+                raw_time = float(
+                    getattr(self, "_last_raw_arm_joint_positions_msg_time", 0.0)
+                )
+                raw_age = time.monotonic() - raw_time
+                if raw_latest and raw_age <= float(max_age_sec):
+                    return dict(raw_latest)
             time.sleep(0.05)
         latest = getattr(self, "_last_joint_positions", None)
         if latest:
             return dict(latest)
+        if curobo_fallback_allowed:
+            raw_latest = getattr(self, "_last_raw_arm_joint_positions", None)
+            if raw_latest:
+                return dict(raw_latest)
         return None
+
+    def _format_home_joint_deltas(self, measured, target):
+        """Return compact HOME target delta details for diagnostics."""
+        if not measured:
+            return "no MoveIt-visible joint sample"
+
+        details = []
+        missing = []
+        for joint_name in JOINT_NAMES:
+            if joint_name not in measured:
+                missing.append(joint_name)
+                continue
+            target_value = float(target[joint_name])
+            measured_value = float(measured[joint_name])
+            if joint_name == "gantry_joint":
+                delta = measured_value - target_value
+            else:
+                raw_delta = measured_value - target_value
+                delta = (raw_delta + math.pi) % (2.0 * math.pi) - math.pi
+            details.append(
+                f"{joint_name}: current={measured_value:.4f}, "
+                f"target={target_value:.4f}, delta={delta:.4f}"
+            )
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        return "; ".join(details) if details else "no manipulator joints in sample"
+
+    def _format_home_joint_target(self, target):
+        """Return compact HOME joint target details for diagnostics."""
+        return ", ".join(
+            f"{joint_name}={float(target[joint_name]):.4f}" for joint_name in JOINT_NAMES
+        )
+
+    def _log_home_request_diagnostics(self, target, planner_id):
+        """Log current HOME planning inputs before sending MoveGroup."""
+        measured = self._wait_for_recent_joint_positions(timeout_sec=1.0, max_age_sec=0.5)
+        self.get_logger().info(
+            "HOME request diagnostics: "
+            f"pipeline=ompl, planner_id={planner_id}, "
+            f"target=[{self._format_home_joint_target(target)}]"
+        )
+        self.get_logger().info(
+            "HOME /moveit_joint_states deltas: "
+            f"{self._format_home_joint_deltas(measured, target)}"
+        )
+
+    def _log_home_failure_diagnostics(self, goal):
+        """Classify the HOME failure based on the MoveGroup result surface."""
+        request = getattr(goal, "request", None)
+        planner_id = getattr(request, "planner_id", "") if request is not None else ""
+        pipeline_id = getattr(request, "pipeline_id", "") if request is not None else ""
+        start_names = []
+        if request is not None:
+            start_names = list(getattr(request.start_state.joint_state, "name", []) or [])
+        self.get_logger().error(
+            "HOME request diagnostics after failure: stage=return_home, request_pipeline="
+            f"{pipeline_id or 'unset'}, planner_id={planner_id or 'unset'}, "
+            f"start_state_joints={len(start_names)}."
+        )
 
     def _verify_home_joint_result_warn_only(self):
         """Compare achieved joints to HOME target and only warn on mismatch."""
         measured = self._wait_for_recent_joint_positions(timeout_sec=1.0, max_age_sec=0.5)
         if measured is None:
             self.get_logger().warn(
-                "HOME verification skipped: no recent /joint_states sample available."
+                "HOME verification skipped: no recent /moveit_joint_states sample available."
             )
             return
 
@@ -750,13 +870,13 @@ class MoveGroupOpsMixin:
 
         if missing_joints:
             self.get_logger().warn(
-                "HOME verification: missing joints in latest /joint_states: "
+                "HOME verification: missing joints in latest /moveit_joint_states: "
                 f"{', '.join(missing_joints)}"
             )
 
         if not per_joint_errors:
             self.get_logger().warn(
-                "HOME verification skipped: no manipulator joints were present in /joint_states."
+                "HOME verification skipped: no manipulator joints were present in /moveit_joint_states."
             )
             return
 
@@ -805,15 +925,26 @@ class MoveGroupOpsMixin:
             }
 
         self.get_logger().info(
-            "Planning HOME with OMPL pipeline for exact joint-target behavior."
+            "Planning HOME with OMPL pipeline and RRTConnect for exact joint-target behavior."
         )
+        planning_time = max(float(getattr(self, "planning_time", 10.0)), 15.0)
+        num_attempts = max(int(getattr(self, "num_planning_attempts", 10)), 12)
+        planner_id = "RRTConnectkConfigDefault"
+        self._log_home_request_diagnostics(self._home_joint_values, planner_id)
+
         goal = self._build_joint_goal(
             self._home_joint_values,
+            planning_time=planning_time,
+            num_attempts=num_attempts,
             pipeline_override="ompl",
+            planner_id=planner_id,
         )
         success = self._send_move_group_goal(goal, context_label="home_joint_goal_ompl")
         if success:
+            time.sleep(0.5)
             self._verify_home_joint_result_warn_only()
+        else:
+            self._log_home_failure_diagnostics(goal)
         return success
 
     def _move_to_pose(

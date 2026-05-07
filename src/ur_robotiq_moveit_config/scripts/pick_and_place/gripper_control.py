@@ -3,6 +3,7 @@ Gripper action and finger-state helper mixin.
 
 Responsibilities:
 - Track latest finger joint samples from /joint_states.
+- Track latest MoveIt-visible arm joint samples from /moveit_joint_states.
 - Execute gripper FollowJointTrajectory goals.
 - Apply blocked-close heuristics to detect likely successful grasps.
 """
@@ -13,7 +14,7 @@ from control_msgs.action import FollowJointTrajectory
 from rclpy.duration import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from .constants import GRIPPER_JOINT
+from .constants import GRIPPER_JOINT, JOINT_NAMES
 
 
 class GripperControlMixin:
@@ -31,13 +32,22 @@ class GripperControlMixin:
         return None
 
     def _on_joint_states(self, msg):
-        """Track latest finger joint state for grasp-close fallback logic."""
+        """Track latest finger joint state for grasp-close fallback logic.
+
+        Also captures raw arm joint positions so the curobo backend can plan
+        without depending on the MoveIt-filtered /moveit_joint_states topic.
+        """
+        now = time.monotonic()
+
         if len(msg.name) == len(msg.position):
-            self._last_joint_positions = {
-                joint_name: float(joint_position)
-                for joint_name, joint_position in zip(msg.name, msg.position)
+            arm_snapshot = {
+                name: float(position)
+                for name, position in zip(msg.name, msg.position)
+                if name in JOINT_NAMES
             }
-            self._last_joint_positions_msg_time = time.monotonic()
+            if arm_snapshot:
+                self._last_raw_arm_joint_positions = arm_snapshot
+                self._last_raw_arm_joint_positions_msg_time = now
 
         try:
             idx = msg.name.index(GRIPPER_JOINT)
@@ -46,11 +56,19 @@ class GripperControlMixin:
         if idx >= len(msg.position):
             return
 
-        now = time.monotonic()
         finger_pos = float(msg.position[idx])
         self._last_finger_joint_position = finger_pos
         self._last_finger_joint_msg_time = now
         self._finger_joint_history.append((now, finger_pos))
+
+    def _on_moveit_joint_states(self, msg):
+        """Track MoveIt-visible arm state for planning start-state population."""
+        if len(msg.name) == len(msg.position):
+            self._last_joint_positions = {
+                joint_name: float(joint_position)
+                for joint_name, joint_position in zip(msg.name, msg.position)
+            }
+            self._last_joint_positions_msg_time = time.monotonic()
 
     def _wait_for_finger_joint_state(self, timeout_sec=1.0):
         """Wait briefly for a recent finger_joint sample and return its position."""

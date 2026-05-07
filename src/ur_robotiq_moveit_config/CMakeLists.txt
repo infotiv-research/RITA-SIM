@@ -32,6 +32,7 @@ install(PROGRAMS scripts/curobo/cumotion_planner_upstream_framefix.py DESTINATIO
 install(PROGRAMS scripts/hybrid_move_action_bridge.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/hybrid_obstacle_benchmark.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/human_skeleton_collision_publisher.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/moveit_joint_state_bounds_filter.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pick_and_place_main.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/simple_motion_benchmark.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/spawn_test_obstacle.py DESTINATION lib/${PROJECT_NAME})
