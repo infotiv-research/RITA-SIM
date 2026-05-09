@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints,
@@ -20,6 +22,41 @@ DEFAULT_ALLOWED_PLANNING_TIME_SEC = 10.0
 DEFAULT_NUM_PLANNING_ATTEMPTS = 10
 DEFAULT_MAX_VELOCITY_SCALING = 0.3
 DEFAULT_MAX_ACCELERATION_SCALING = 0.3
+PERIODIC_JOINT_NAMES = {
+    "shoulder_pan_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
+}
+
+
+def nearest_equivalent_joint_position(joint_name: str, target: float, reference: float) -> float:
+    """Return the 2*pi-equivalent target nearest to a reference joint angle."""
+    target = float(target)
+    reference = float(reference)
+    if joint_name not in PERIODIC_JOINT_NAMES:
+        return target
+    return reference + math.atan2(math.sin(target - reference), math.cos(target - reference))
+
+
+def normalize_periodic_joint_targets(
+    joint_targets: dict[str, float],
+    current_joint_positions: dict[str, float] | None,
+) -> dict[str, float]:
+    if not current_joint_positions:
+        return {joint_name: float(position) for joint_name, position in joint_targets.items()}
+
+    normalized = {}
+    for joint_name, target in joint_targets.items():
+        if joint_name in current_joint_positions:
+            normalized[joint_name] = nearest_equivalent_joint_position(
+                joint_name,
+                target,
+                current_joint_positions[joint_name],
+            )
+        else:
+            normalized[joint_name] = float(target)
+    return normalized
 
 
 def _configure_pipeline(request: MotionPlanRequest, planning_pipeline: str | None) -> None:
@@ -41,7 +78,16 @@ def build_joint_goal(
     planner_id: str | None = None,
     joint_tolerance: float = 0.02,
     replan_attempts: int = 1,
+    normalize_periodic_targets: bool = True,
 ) -> MoveGroup.Goal:
+    if normalize_periodic_targets:
+        joint_targets = normalize_periodic_joint_targets(joint_targets, current_joint_positions)
+    else:
+        joint_targets = {
+            joint_name: float(position)
+            for joint_name, position in joint_targets.items()
+        }
+
     request = MotionPlanRequest()
     request.group_name = PLANNING_GROUP
     request.allowed_planning_time = DEFAULT_ALLOWED_PLANNING_TIME_SEC

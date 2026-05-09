@@ -126,7 +126,11 @@ class HybridMotionBackend(MotionBackendInterface):
         )
 
     def move_to_home(self):
-        return self.node._move_to_home()
+        self.node.get_logger().info(
+            "Hybrid return-home: using direct cuRobo joint-space home planner "
+            "for periodic joint normalization."
+        )
+        return self._precision_backend.move_to_home()
 
     def move_to_release_pose_with_retries(self):
         return self.node._move_to_release_pose_with_retries()

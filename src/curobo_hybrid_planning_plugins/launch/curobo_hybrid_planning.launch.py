@@ -417,7 +417,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("launch_move_group", default_value="true"),
-            DeclareLaunchArgument("launch_rviz", default_value="true"),
+            DeclareLaunchArgument("launch_rviz", default_value="false"),
             DeclareLaunchArgument("launch_servo", default_value="false"),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("planning_pipeline", default_value="ompl"),

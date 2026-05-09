@@ -218,6 +218,7 @@ class SimpleMotionBenchmark(Node):
             planning_pipeline=self._planning_pipeline(),
             planner_id=self._moveit_planner_id(),
             joint_tolerance=self.joint_tolerance,
+            normalize_periodic_targets=self.planner == "ompl",
         )
 
         self.get_logger().info(f"Sending MoveGroup joint goal [{label}]...")

@@ -2032,11 +2032,13 @@ class UnifiedPlannerNode(Node):
                     else math.nan
                 )
                 if joint_goal_active:
+                    progress_convergence_threshold = float(planner.joint_convergence_threshold)
                     response.goal_reached = (
                         cspace_error is not None
-                        and cspace_error < float(planner.joint_convergence_threshold)
+                        and cspace_error < progress_convergence_threshold
                     )
                 else:
+                    progress_convergence_threshold = float(planner.position_convergence_threshold)
                     response.goal_reached = (
                         position_error is not None
                         and rotation_error is not None
@@ -2048,8 +2050,21 @@ class UnifiedPlannerNode(Node):
                     >= max(int(self.get_parameter('mpc_infeasible_abort_steps').value), 1)
                 )
                 stall_steps = max(int(self.get_parameter('hybrid_mpc_stall_steps').value), 1)
-                stall_invalidated = self._hybrid_mpc_stall_count >= stall_steps
-                path_invalidated = infeasible_invalidated or stall_invalidated
+                near_progress_threshold = (
+                    current_error is not None
+                    and current_error <= progress_convergence_threshold
+                ) or (
+                    self._hybrid_mpc_best_error is not None
+                    and self._hybrid_mpc_best_error <= progress_convergence_threshold
+                )
+                stall_invalidated = (
+                    self._hybrid_mpc_stall_count >= stall_steps
+                    and not near_progress_threshold
+                )
+                path_invalidated = (
+                    not response.goal_reached
+                    and (infeasible_invalidated or stall_invalidated)
+                )
                 telemetry_infeasible_streak = int(self._hybrid_mpc_infeasible_streak)
                 telemetry_stall_count = int(self._hybrid_mpc_stall_count)
                 telemetry_best_error = self._hybrid_mpc_best_error
@@ -2059,7 +2074,13 @@ class UnifiedPlannerNode(Node):
                 ) and path_invalidated
                 response.success = True
 
-                if response.path_invalidated:
+                if response.goal_reached:
+                    response.message = (
+                        'Local MPC joint goal reached'
+                        if joint_goal_active
+                        else 'Local MPC goal reached'
+                    )
+                elif response.path_invalidated:
                     invalidation_reason = (
                         f"progress stall ({self._hybrid_mpc_stall_count} steps, "
                         f"best_error={self._hybrid_mpc_best_error:.4f})"
@@ -2074,12 +2095,10 @@ class UnifiedPlannerNode(Node):
                         controller_current_positions,
                     )
                     self._clear_hybrid_mpc_state()
-                    response.message = 'Collision ahead'
-                elif response.goal_reached:
                     response.message = (
-                        'Local MPC joint goal reached'
-                        if joint_goal_active
-                        else 'Local MPC goal reached'
+                        'MPC progress stalled; requesting a new global path'
+                        if stall_invalidated
+                        else 'MPC infeasible streak; requesting a new global path'
                     )
                 elif not command_valid:
                     response.message = 'MPC step produced no valid command; holding current position'

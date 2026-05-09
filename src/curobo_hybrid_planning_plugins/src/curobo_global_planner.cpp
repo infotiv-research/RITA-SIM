@@ -137,9 +137,6 @@ moveit_msgs::msg::MotionPlanResponse CuroboGlobalPlanner::plan(
     return response;
   }
 
-  auto request = std::make_shared<curobo_msgs::srv::TrajectoryGeneration::Request>();
-  request->start_pose = start_state_msg;
-
   if (motion_request.goal_constraints.empty())
   {
     RCLCPP_ERROR(node_->get_logger(), "MoveIt request did not include any goal constraints.");
@@ -148,20 +145,21 @@ moveit_msgs::msg::MotionPlanResponse CuroboGlobalPlanner::plan(
   }
 
   const auto& goal_constraints = motion_request.goal_constraints.front();
+  auto request = std::make_shared<curobo_msgs::srv::TrajectoryGeneration::Request>();
+  request->start_pose = start_state_msg;
   std::vector<double> goal_joint_positions;
   bool use_joint_space_planner = false;
+  bool use_pose_planner = false;
   if (extractGoalJointPositions(goal_constraints, ordered_joint_names, goal_joint_positions))
   {
     request->target_joint_positions = goal_joint_positions;
     use_joint_space_planner = true;
   }
-  else if (computeGoalJointPositionsFromIk(group_name, start_state_msg, ordered_joint_names,
-                                           goal_constraints, goal_joint_positions))
+  else if (extractGoalPose(goal_constraints, request->target_pose))
   {
-    request->target_joint_positions = goal_joint_positions;
-    use_joint_space_planner = true;
+    use_pose_planner = true;
   }
-  else if (!extractGoalPose(goal_constraints, request->target_pose))
+  else
   {
     RCLCPP_ERROR(node_->get_logger(),
                  "MoveIt goal constraints for planning group '%s' could not be translated into a cuRobo goal.",
@@ -170,33 +168,69 @@ moveit_msgs::msg::MotionPlanResponse CuroboGlobalPlanner::plan(
     return response;
   }
 
+  const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::duration<double>(service_timeout_sec_));
+  auto send_curobo_request =
+      [&](const std::shared_ptr<curobo_msgs::srv::TrajectoryGeneration::Request>& trajectory_request,
+          std::uint8_t planner_type, const std::string& planner_label,
+          curobo_msgs::srv::TrajectoryGeneration::Response::SharedPtr& service_response_out,
+          int& error_code_out) -> bool {
+    if (!setPlanner(planner_type))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "Failed to switch cuRobo into %s planning mode.",
+                   planner_label.c_str());
+      error_code_out = MoveItErrorCodes::FAILURE;
+      return false;
+    }
+
+    auto future = trajectory_client_->async_send_request(trajectory_request);
+    if (!waitForFuture(future, timeout))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "Timed out waiting for cuRobo %s trajectory generation.",
+                   planner_label.c_str());
+      error_code_out = MoveItErrorCodes::TIMED_OUT;
+      return false;
+    }
+
+    service_response_out = future.get();
+    if (!service_response_out || !service_response_out->success)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "cuRobo %s global planning failed: %s",
+                   planner_label.c_str(),
+                   service_response_out ? service_response_out->message.c_str() : "no response");
+      error_code_out = MoveItErrorCodes::PLANNING_FAILED;
+      return false;
+    }
+    return true;
+  };
+
+  curobo_msgs::srv::TrajectoryGeneration::Response::SharedPtr service_response;
+  int curobo_error_code = MoveItErrorCodes::FAILURE;
   const std::uint8_t planner_type = use_joint_space_planner
                                         ? curobo_msgs::srv::SetPlanner::Request::JOINT_SPACE
                                         : curobo_msgs::srv::SetPlanner::Request::CLASSIC;
-  if (!setPlanner(planner_type))
+  const std::string planner_label = use_joint_space_planner ? "joint-space" : "classic pose";
+  bool planned = send_curobo_request(
+      request, planner_type, planner_label, service_response, curobo_error_code);
+
+  if (!planned && use_pose_planner &&
+      computeGoalJointPositionsFromIk(group_name, start_state_msg, ordered_joint_names,
+                                      goal_constraints, goal_joint_positions))
   {
-    RCLCPP_ERROR(node_->get_logger(), "Failed to switch cuRobo into %s planning mode.",
-                 use_joint_space_planner ? "joint-space" : "classic");
-    response.error_code.val = MoveItErrorCodes::FAILURE;
-    return response;
+    auto ik_request = std::make_shared<curobo_msgs::srv::TrajectoryGeneration::Request>();
+    ik_request->start_pose = start_state_msg;
+    ik_request->target_joint_positions = goal_joint_positions;
+    RCLCPP_WARN(node_->get_logger(),
+                "cuRobo pose planning failed for planning group '%s'; retrying via MoveIt IK joint-space fallback.",
+                group_name.c_str());
+    planned = send_curobo_request(
+        ik_request, curobo_msgs::srv::SetPlanner::Request::JOINT_SPACE,
+        "joint-space IK fallback", service_response, curobo_error_code);
   }
 
-  auto future = trajectory_client_->async_send_request(request);
-  const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::duration<double>(service_timeout_sec_));
-  if (!waitForFuture(future, timeout))
+  if (!planned)
   {
-    RCLCPP_ERROR(node_->get_logger(), "Timed out waiting for cuRobo trajectory generation.");
-    response.error_code.val = MoveItErrorCodes::TIMED_OUT;
-    return response;
-  }
-
-  const auto service_response = future.get();
-  if (!service_response || !service_response->success)
-  {
-    RCLCPP_ERROR(node_->get_logger(), "cuRobo global planning failed: %s",
-                 service_response ? service_response->message.c_str() : "no response");
-    response.error_code.val = MoveItErrorCodes::PLANNING_FAILED;
+    response.error_code.val = curobo_error_code;
     return response;
   }
 
@@ -426,7 +460,7 @@ bool CuroboGlobalPlanner::computeGoalJointPositionsFromIk(
   {
     RCLCPP_WARN(node_->get_logger(),
                 "MoveIt IK fallback failed for planning group '%s' link '%s' at pose "
-                "[%.3f, %.3f, %.3f | %.3f, %.3f, %.3f, %.3f]. Falling back to cuRobo pose planning.",
+                "[%.3f, %.3f, %.3f | %.3f, %.3f, %.3f, %.3f].",
                 group_name.c_str(), ik_link_name.c_str(),
                 goal_pose.position.x, goal_pose.position.y, goal_pose.position.z,
                 goal_pose.orientation.x, goal_pose.orientation.y,
@@ -446,7 +480,7 @@ bool CuroboGlobalPlanner::computeGoalJointPositionsFromIk(
   }
 
   RCLCPP_INFO(node_->get_logger(),
-              "Converted RViz pose goal for planning group '%s' into a joint-space cuRobo request via MoveIt IK.",
+              "Converted pose goal for planning group '%s' into a joint-space cuRobo fallback request via MoveIt IK.",
               group_name.c_str());
   return true;
 }

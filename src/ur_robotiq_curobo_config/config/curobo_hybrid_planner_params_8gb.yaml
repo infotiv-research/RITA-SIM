@@ -45,7 +45,7 @@
     convergence_threshold: 0.02
     mpc_position_convergence_threshold: 0.01
     mpc_rotation_convergence_threshold: 0.1
-    mpc_joint_convergence_threshold: 0.05
+    mpc_joint_convergence_threshold: 0.07
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
@@ -61,8 +61,8 @@
     controller_manager_switch_service: /controller_manager/switch_controller
     mpc_infeasible_abort_steps: 5
     hybrid_mpc_report_path_invalidated: true
-    hybrid_mpc_stall_steps: 25
-    hybrid_mpc_stall_threshold: 0.01
+    hybrid_mpc_stall_steps: 50
+    hybrid_mpc_stall_threshold: 0.003
     hybrid_path_sentinel_enabled: true
     hybrid_path_sentinel_safety_margin_m: 0.08
     hybrid_path_sentinel_only_after_world_update: true
