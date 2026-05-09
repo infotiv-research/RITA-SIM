@@ -1,6 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterFile, ParameterValue
@@ -37,7 +38,6 @@ def launch_setup(context, *args, **kwargs):
     description_package = LaunchConfiguration("description_package")
     ur_description_package = LaunchConfiguration("ur_description_package")
     tf_prefix = LaunchConfiguration("tf_prefix")
-    controller_spawner_timeout = LaunchConfiguration("controller_spawner_timeout")
     controller_manager_update_rate = LaunchConfiguration("controller_manager_update_rate")
     initial_joint_controller = LaunchConfiguration("initial_joint_controller")
     activate_joint_controller = LaunchConfiguration("activate_joint_controller")
@@ -156,36 +156,16 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
     )
 
-    if activate_joint_controller.perform(context).lower() in ["true", "1"]:
-        joint_controller_spawner = Node(
-            package="controller_manager",
-            executable="spawner",
-            arguments=[
-                initial_joint_controller,
-                "-c",
-                "/controller_manager",
-                "--controller-manager-timeout",
-                controller_spawner_timeout,
-            ],
-        )
-    else:
-        joint_controller_spawner = Node(
-            package="controller_manager",
-            executable="spawner",
-            arguments=[
-                initial_joint_controller,
-                "-c",
-                "/controller_manager",
-                "--controller-manager-timeout",
-                controller_spawner_timeout,
-                "--inactive",
-            ],
-        )
-
-    controller_spawner_nodes = [
+    joint_state_broadcaster_spawner = controller_spawner("joint_state_broadcaster", active=True)
+    joint_controller_spawner = controller_spawner(
+        initial_joint_controller,
+        active=activate_joint_controller.perform(context).lower() in ["true", "1"],
+    )
+    forward_position_controller_spawner = controller_spawner(
+        "forward_position_controller", active=False
+    )
+    gripper_controller_spawners = [
         controller_spawner("robotiq_gripper_joint_trajectory_controller", active=True),
-        controller_spawner("joint_state_broadcaster", active=False),
-        controller_spawner("forward_position_controller", active=False),
         controller_spawner("forward_gripper_position_controller", active=False),
         controller_spawner("robotiq_activation_controller", active=False),
     ]
@@ -194,8 +174,25 @@ def launch_setup(context, *args, **kwargs):
         control_node,
         robot_state_publisher,
         rviz_node,
-        joint_controller_spawner,
-        *controller_spawner_nodes,
+        joint_state_broadcaster_spawner,
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[joint_controller_spawner],
+            )
+        ),
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=joint_controller_spawner,
+                on_exit=[forward_position_controller_spawner],
+            )
+        ),
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=forward_position_controller_spawner,
+                on_exit=gripper_controller_spawners,
+            )
+        ),
     ]
 
 
@@ -210,7 +207,7 @@ def generate_launch_description():
         DeclareLaunchArgument("description_package", default_value="ur_robotiq_description"),
         DeclareLaunchArgument("ur_description_package", default_value="ur_description"),
         DeclareLaunchArgument("tf_prefix", default_value=""),
-        DeclareLaunchArgument("controller_spawner_timeout", default_value="10"),
+        DeclareLaunchArgument("controller_spawner_timeout", default_value="45"),
         DeclareLaunchArgument("controller_manager_update_rate", default_value="250"),
         DeclareLaunchArgument("initial_joint_controller", default_value="joint_trajectory_controller"),
         DeclareLaunchArgument("activate_joint_controller", default_value="true"),

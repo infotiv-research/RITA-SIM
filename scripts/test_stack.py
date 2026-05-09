@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -75,6 +76,15 @@ OMPL_READY_CMD = (
     'grep -q "You can start planning now!" /ros2_ws/test_logs/ompl.log'
 )
 
+HYBRID_CONTROLLER_READY_CMD = (
+    "ros2 control list_controllers 2>/dev/null "
+    "| grep -Eq '^joint_trajectory_controller[[:space:]].*[[:space:]]active' && "
+    "ros2 control list_controllers 2>/dev/null "
+    "| grep -Eq '^forward_position_controller[[:space:]].*[[:space:]](inactive|active)' && "
+    "! ros2 control list_controllers 2>/dev/null "
+    "| grep -Eq '^forward_position_controller[[:space:]].*[[:space:]]unconfigured'"
+)
+
 HYBRID_READY_CMD = (
     CUROBO_READY_CMD + " && "
     "ros2 action info /move_action 2>/dev/null "
@@ -82,7 +92,8 @@ HYBRID_READY_CMD = (
     "ros2 action info /run_hybrid_planning 2>/dev/null "
     '| grep -Eq "Action servers: +1" && '
     "ros2 service type /plan_kinematic_path 2>/dev/null "
-    '| grep -Eq "^moveit_msgs/srv/GetMotionPlan$"'
+    '| grep -Eq "^moveit_msgs/srv/GetMotionPlan$" && '
+    f"{HYBRID_CONTROLLER_READY_CMD}"
 )
 
 
@@ -97,10 +108,27 @@ def compose_quiet(*args: str) -> bool:
     return result.returncode == 0
 
 
-def wait_until_ready(service: str, command: str, message: str) -> None:
+DEFAULT_WAIT_TIMEOUT_S = float(os.environ.get("TEST_STACK_WAIT_TIMEOUT_S", "240"))
+
+
+def wait_until_ready(
+    service: str,
+    command: str,
+    message: str,
+    timeout_s: float = DEFAULT_WAIT_TIMEOUT_S,
+) -> bool:
+    deadline = time.monotonic() + float(timeout_s)
     while not compose_quiet("exec", "-T", service, "bash", "-lc", command):
+        if time.monotonic() >= deadline:
+            print(
+                f"timeout waiting for {service}: {message} "
+                f"after {float(timeout_s):.1f}s",
+                flush=True,
+            )
+            return False
         time.sleep(2)
     print(message, flush=True)
+    return True
 
 
 def prepare_logs() -> int:
@@ -122,45 +150,45 @@ def prepare_start() -> int:
 
 
 def wait_start() -> int:
+    results = {"ros2": False, "isaacsim": False}
+
+    def wait_and_store(key: str, service: str, command: str, message: str) -> None:
+        results[key] = wait_until_ready(service, command, message)
+
     ros_thread = threading.Thread(
-        target=wait_until_ready,
-        args=("ros2", ROS_READY_CMD, "ros2 started"),
+        target=wait_and_store,
+        args=("ros2", "ros2", ROS_READY_CMD, "ros2 started"),
     )
     isaac_thread = threading.Thread(
-        target=wait_until_ready,
-        args=("isaacsim", ISAAC_READY_CMD, "isaac sim started"),
+        target=wait_and_store,
+        args=("isaacsim", "isaacsim", ISAAC_READY_CMD, "isaac sim started"),
     )
 
     ros_thread.start()
     isaac_thread.start()
     ros_thread.join()
     isaac_thread.join()
-    return 0
+    return 0 if all(results.values()) else 1
 
 
 def wait_ros() -> int:
-    wait_until_ready("ros2", ROS_READY_CMD, "ros2 restarted")
-    return 0
+    return 0 if wait_until_ready("ros2", ROS_READY_CMD, "ros2 restarted") else 1
 
 
 def wait_curobo() -> int:
-    wait_until_ready("cumotion", CUROBO_READY_CMD, "done")
-    return 0
+    return 0 if wait_until_ready("cumotion", CUROBO_READY_CMD, "done") else 1
 
 
 def wait_cumotion() -> int:
-    wait_until_ready("cumotion", CUMOTION_READY_CMD, "cumotion started")
-    return 0
+    return 0 if wait_until_ready("cumotion", CUMOTION_READY_CMD, "cumotion started") else 1
 
 
 def wait_ompl() -> int:
-    wait_until_ready("cumotion", OMPL_READY_CMD, "ompl started")
-    return 0
+    return 0 if wait_until_ready("cumotion", OMPL_READY_CMD, "ompl started") else 1
 
 
 def wait_hybrid() -> int:
-    wait_until_ready("cumotion", HYBRID_READY_CMD, "hybrid started")
-    return 0
+    return 0 if wait_until_ready("cumotion", HYBRID_READY_CMD, "hybrid started") else 1
 
 
 def main(argv: list[str]) -> int:
