@@ -81,12 +81,13 @@ def append_timeout_planner_log(
     csv_file: Path,
     run_number: int,
     log_text: str,
+    title: str = "TIMEOUT PLANNER LOG",
 ) -> None:
     failure_log_file = csv_file.with_name(f"{csv_file.stem}_failure.log")
     with failure_log_file.open("a") as file:
         file.write("\n\n")
         file.write("=" * 80 + "\n")
-        file.write(f"RUN {run_number} TIMEOUT PLANNER LOG\n")
+        file.write(f"RUN {run_number} {title}\n")
         file.write("=" * 80 + "\n")
         if log_text:
             file.write(log_text)
@@ -99,7 +100,7 @@ def append_timeout_planner_log(
 def start_planner(planner: str) -> int:
     print(f"starting {planner}")
     if planner == "curobo":
-        return test_sh(planner, "launch_rviz:=true").returncode
+        return test_sh(planner, "launch_rviz:=false").returncode
     return test_sh(planner).returncode
 
 
@@ -144,6 +145,7 @@ def archive_run_logs(args, run_number: int) -> None:
 
 def pick_and_place_sequence(args) -> int:
     run_count = max(int(args.runs), 1)
+    failures = 0
     try:
         recorder = PickAndPlaceRecorder(
             args.planner,
@@ -169,18 +171,31 @@ def pick_and_place_sequence(args) -> int:
                 result.returncode == RUN_TIMEOUT_EXIT_CODE
                 or total_time >= PICK_AND_PLACE_RUN_TIMEOUT_S
             )
-            run_success = not timed_out
-            recorder.finish_run(
+            run_success = result.returncode == 0 and not timed_out
+            metrics = recorder.finish_run(
                 recording,
                 total_time,
                 success=run_success,
             )
-            if timed_out:
+            if not run_success:
+                failures += 1
                 planner_log_text = planner_log_chunk(planner_log, planner_log_start)
+                title = (
+                    "TIMEOUT PLANNER LOG"
+                    if timed_out
+                    else f"FAILED PLANNER LOG exit={result.returncode}"
+                )
                 append_timeout_planner_log(
                     recorder.csv_file,
                     run_number,
                     planner_log_text,
+                    title=title,
+                )
+                failure_reason = metrics.get("failure_reason") or metrics.get("failed_phase") or ""
+                print(
+                    f"pick_and_place run {run_number} failed: "
+                    f"exit={result.returncode}, timed_out={timed_out}, "
+                    f"failure={failure_reason or 'unknown'}"
                 )
 
             archive_run_logs(args, run_number)
@@ -188,7 +203,7 @@ def pick_and_place_sequence(args) -> int:
             print("stopping isaac sim")
             test_sh("sim_headless", "stop")
 
-        return 0
+        return 0 if failures == 0 else 1
     finally:
         test_sh("sim_headless", "stop")
         test_sh("kill")

@@ -86,15 +86,24 @@ hybrid() {
 }
 
 hybrid_benchmark_run() {
+  timeout_s="${HYBRID_BENCHMARK_RUN_TIMEOUT_S:-150}"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
-  $COMPOSE_CMD exec -T cumotion bash -lc 'cd /ros2_ws && ./control.sh hybrid_benchmark "$@"' bash "$@" \
+  $COMPOSE_CMD exec -T -e HYBRID_BENCHMARK_RUN_TIMEOUT_S="${timeout_s}" cumotion bash -lc '
+    cd /ros2_ws
+    timeout --kill-after=10s "${HYBRID_BENCHMARK_RUN_TIMEOUT_S}s" ./control.sh hybrid_benchmark "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      pkill -f "hybrid_obstacle_benchmark.py" 2>/dev/null || true
+    fi
+    exit "$status"
+  ' bash "$@" \
     > "${SCRIPT_DIR}/test_logs/hybrid_benchmark.log" 2>&1
 }
 
 simple_motion_run() {
   run_number="${1:-1}"
   shift
-  timeout_s="${SIMPLE_MOTION_RUN_TIMEOUT_S:-90}"
+  timeout_s="${SIMPLE_MOTION_RUN_TIMEOUT_S:-150}"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_logs
   $COMPOSE_CMD exec -T -e SIMPLE_MOTION_RUN_TIMEOUT_S="${timeout_s}" cumotion bash -lc '
     cd /ros2_ws
@@ -124,6 +133,25 @@ pick_and_place_run() {
     exit "$status"
   ' bash "$@" \
     > "${SCRIPT_DIR}/test_logs/pick_and_place_run_${run_number}.log" 2>&1
+}
+
+spawn_test_obstacle() {
+  preset="${1:-wall}"
+  $COMPOSE_CMD exec -T cumotion bash -lc '
+    cd /ros2_ws
+    source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash
+    source install/local_setup.bash 2>/dev/null || true
+    ros2 run ur_robotiq_moveit_config spawn_test_obstacle.py -- --preset "$1"
+  ' bash "$preset"
+}
+
+remove_test_obstacle() {
+  $COMPOSE_CMD exec -T cumotion bash -lc '
+    cd /ros2_ws
+    source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash
+    source install/local_setup.bash 2>/dev/null || true
+    ros2 run ur_robotiq_moveit_config remove_test_obstacle.py
+  '
 }
 
 kill() {
@@ -192,11 +220,19 @@ case "${1:-}" in
     shift
     pick_and_place_run "$@"
     ;;
+  spawn_test_obstacle)
+    shift
+    spawn_test_obstacle "$@"
+    ;;
+  remove_test_obstacle)
+    shift
+    remove_test_obstacle "$@"
+    ;;
   kill)
     kill
     ;;
   *)
-    echo "Usage: ./test.sh build | start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [args...] | hybrid [args...] | hybrid_benchmark [--case test_1] [--runs 1] [--spawn-profile early|medium|late|very_late] | benchmark_suite <simple_benchmark|hybrid_planner|pick_and_place|all> | simple_motion <curobo|cumotion|ompl [rrtStar|rrtConnect]|hybrid> [--case test_1] [--runs 1] | pick_and_place <curobo|cumotion|ompl|hybrid> | kill" >&2
+    echo "Usage: ./test.sh build | start | stop | restart_ros | sim_headless <play|stop> | curobo [args...] | cumotion [args...] | ompl [rrtStar|rrtConnect] | hybrid [args...] | hybrid_benchmark [--case test_1] [--runs 1] [--spawn-profile early|medium|late|very_late] | benchmark_suite <simple_benchmark|hybrid_planner|pick_and_place|all> | simple_motion <curobo|cumotion|ompl [rrtStar|rrtConnect]|hybrid> [--case test_1] [--runs 1] | pick_and_place <curobo|cumotion|ompl|hybrid> | spawn_test_obstacle [wall|wall_p_p] | remove_test_obstacle | kill" >&2
     exit 1
     ;;
 esac

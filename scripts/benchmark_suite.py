@@ -30,11 +30,11 @@ SIMPLE_MOTION_PLANNER_CASES = (
     ("hybrid", ("hybrid",)),
 )
 PICK_AND_PLACE_PLANNERS = ("curobo", "cumotion", "ompl", "hybrid")
-SIMPLE_MOTION_RUNS_PER_CASE = 2
-PICK_AND_PLACE_RUNS_PER_PLANNER = 2
-HYBRID_BENCHMARK_PROFILES = ("very_late","early", "medium", "late" )
+SIMPLE_MOTION_RUNS_PER_CASE = 3
+PICK_AND_PLACE_RUNS_PER_PLANNER = 3
+HYBRID_BENCHMARK_PROFILES = ("early", "medium", "late","very_late")
 HYBRID_BENCHMARK_CASES = ("test_1", "test_2")
-HYBRID_BENCHMARK_RUNS_PER_CASE_PROFILE = 2
+HYBRID_BENCHMARK_RUNS_PER_CASE_PROFILE = 3
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -251,18 +251,23 @@ def run_selected_suites(args) -> int:
     write_manifest(suite_dir, suites)
     print(f"benchmark_suite output_dir={suite_dir}")
 
+    failures = 0
     for suite_name in suites:
         if suite_name == "simple_benchmark":
-            run_simple_benchmark_suite(suite_dir)
+            failures += run_simple_benchmark_suite(suite_dir)
         elif suite_name == "hybrid_planner":
-            run_hybrid_planner_suite(suite_dir)
+            failures += run_hybrid_planner_suite(suite_dir)
         elif suite_name == "pick_and_place":
-            run_pick_and_place_suite(
+            failures += run_pick_and_place_suite(
                 suite_dir,
                 getattr(args, "runs", PICK_AND_PLACE_RUNS_PER_PLANNER),
             )
         else:
             raise ValueError(f"Unknown suite: {suite_name}")
+
+    if failures:
+        print(f"benchmark_suite completed with {failures} failed suite(s)")
+        return 1
 
     print("benchmark_suite completed successfully")
     return 0

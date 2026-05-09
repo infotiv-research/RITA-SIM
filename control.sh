@@ -142,6 +142,8 @@ kill_processes() {
         "pick_and_place.launch.py"
         "pick_and_place_main.py"
         "simple_motion_benchmark.py"
+        "spawn_test_obstacle.py"
+        "remove_test_obstacle.py"
         "start_cumotion_planner.sh"
         "start_curobo_planner.sh"
         "start_hybrid_planner.sh"
