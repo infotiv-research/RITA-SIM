@@ -50,14 +50,21 @@ def create_run_record(run_index: int, goal_spec: dict):
         "obstacle": {
             "planned_obstacle": None,
             "trajectory_selection": None,
+            "spawn_trigger_source": None,
             "spawn_trigger_profile": None,
             "spawn_trigger_clearance_m": None,
             "spawn_clearance_override_m": None,
             "spawned": False,
             "spawn_t_rel_sec": None,
             "spawn_tcp_to_obstacle_surface_distance_m": None,
+            "spawn_robot_to_obstacle_surface_distance_m": None,
+            "spawn_robot_closest_sphere": None,
+            "latest_robot_clearance_m": None,
+            "latest_robot_clearance_t_rel_sec": None,
+            "latest_robot_closest_sphere": None,
             "min_tcp_clearance_m": None,
             "min_robot_clearance_m": None,
+            "min_robot_closest_sphere": None,
             "distance_sampling_active": True,
             "service_message": None,
             "wait_reason": None,
@@ -155,6 +162,7 @@ def _summarize_obstacle(obstacle_state: dict):
 
     obstacle = {
         "spawned": bool(obstacle_state.get("spawned")),
+        "spawn_trigger_source": obstacle_state.get("spawn_trigger_source"),
         "spawn_trigger_profile": obstacle_state.get("spawn_trigger_profile"),
         "spawn_trigger_clearance_m": obstacle_state.get("spawn_trigger_clearance_m"),
         "spawn_clearance_override_m": obstacle_state.get("spawn_clearance_override_m"),
@@ -164,8 +172,11 @@ def _summarize_obstacle(obstacle_state: dict):
         "size": list(planned.get("size") or []),
         "trajectory_selection": obstacle_state.get("trajectory_selection"),
         "tcp_clearance_at_spawn_m": obstacle_state.get("spawn_tcp_to_obstacle_surface_distance_m"),
+        "robot_clearance_at_spawn_m": obstacle_state.get("spawn_robot_to_obstacle_surface_distance_m"),
+        "robot_closest_sphere_at_spawn": obstacle_state.get("spawn_robot_closest_sphere"),
         "min_tcp_clearance_m": obstacle_state.get("min_tcp_clearance_m"),
         "min_robot_clearance_m": obstacle_state.get("min_robot_clearance_m"),
+        "min_robot_closest_sphere": obstacle_state.get("min_robot_closest_sphere"),
         "distance_sampling_status": distance_sampling_status,
     }
     if obstacle_state.get("wait_reason"):

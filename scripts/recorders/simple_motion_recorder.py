@@ -199,7 +199,7 @@ def start_ros_json_recorder(
         [*DOCKER_COMPOSE, "exec", "-T", "cumotion", "bash", "-lc", recorder_command],
         cwd=ROOT,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
         text=True,
     )
 
@@ -269,6 +269,8 @@ def csv_fieldnames() -> list[str]:
                 f"{phase}_planning_time_s",
                 f"{phase}_execution_time_s",
                 f"{phase}_tcp_movement_cm",
+                f"{phase}_min_collision_clearance_m",
+                f"{phase}_collision_distance_status",
                 f"{phase}_success",
             ]
         )
@@ -284,6 +286,8 @@ def csv_fieldnames() -> list[str]:
             "planner_gpu_memory_min_mib",
             "planner_gpu_memory_avg_mib",
             "planner_gpu_memory_max_mib",
+            "min_collision_clearance_m",
+            "collision_distance_status",
             "success",
             "failure_reason",
             "failure_detail",
@@ -363,6 +367,12 @@ def csv_row(
         "movement_tcp_movement_cm": format_float(
             movement.get("tcp_movement_cm"), 2
         ),
+        "movement_min_collision_clearance_m": format_float(
+            movement.get("min_collision_clearance_m"), 4
+        ),
+        "movement_collision_distance_status": str(
+            movement.get("collision_distance_status") or ""
+        ),
         "movement_success": (
             str(bool(movement["success"])).lower()
             if "success" in movement
@@ -374,6 +384,15 @@ def csv_row(
         "planner_gpu_memory_min_mib": format_float(nested_metric(gpu_memory, "min"), 1),
         "planner_gpu_memory_avg_mib": format_float(nested_metric(gpu_memory, "avg"), 1),
         "planner_gpu_memory_max_mib": format_float(nested_metric(gpu_memory, "max"), 1),
+        "min_collision_clearance_m": format_float(
+            totals.get("min_collision_clearance_m", movement.get("min_collision_clearance_m")),
+            4,
+        ),
+        "collision_distance_status": str(
+            totals.get("collision_distance_status")
+            or movement.get("collision_distance_status")
+            or ""
+        ),
         "success": str(bool(success)).lower(),
         "failure_reason": str(metadata_value(metrics, movement, "failure_reason") or ""),
         "failure_detail": str(metadata_value(metrics, movement, "failure_detail") or ""),

@@ -64,6 +64,36 @@ def _move_group_failure(accepted: bool, timed_out: bool, status=GoalStatus.STATU
     return {"accepted": accepted, "timed_out": timed_out, "status": status, "error_code": None}
 
 
+CUROBO_LIVE_SPHERE_LINK_RANGES = (
+    (0, 12, "gantry_beam_link"),
+    (13, 14, "shoulder_link"),
+    (15, 28, "upper_arm_link"),
+    (29, 44, "forearm_link"),
+    (45, 48, "wrist_1_link"),
+    (49, 51, "wrist_2_link"),
+    (52, 54, "wrist_3_link"),
+    (55, 56, "robotiq_base_link"),
+    (57, 58, "left_outer_finger"),
+    (59, 61, "left_inner_finger_pad"),
+    (62, 64, "left_inner_knuckle"),
+    (65, 65, "left_inner_finger"),
+    (66, 67, "left_outer_knuckle"),
+    (68, 69, "right_outer_finger"),
+    (70, 72, "right_inner_finger_pad"),
+    (73, 75, "right_inner_knuckle"),
+    (76, 76, "right_inner_finger"),
+    (77, 78, "right_outer_knuckle"),
+)
+
+
+def _lookup_curobo_live_sphere_link(marker_id: int):
+    marker_id = int(marker_id)
+    for start_id, end_id, link_name in CUROBO_LIVE_SPHERE_LINK_RANGES:
+        if start_id <= marker_id <= end_id:
+            return link_name, marker_id - start_id
+    return None, None
+
+
 def _resolve_spawn_trigger_config(args) -> dict:
     profile = str(getattr(args, "spawn_profile", DEFAULT_SPAWN_TRIGGER_PROFILE))
     if profile not in SPAWN_TRIGGER_PROFILES_M:
@@ -72,6 +102,7 @@ def _resolve_spawn_trigger_config(args) -> dict:
     override = getattr(args, "spawn_clearance_m", None)
     clearance_m = SPAWN_TRIGGER_PROFILES_M[profile] if override is None else float(override)
     return {
+        "spawn_trigger_source": "robot_collision_spheres",
         "spawn_trigger_profile": profile,
         "spawn_trigger_clearance_m": float(clearance_m),
         "spawn_clearance_override_m": float(override) if override is not None else None,
@@ -196,6 +227,28 @@ class HybridObstacleBenchmark(Node):
                 if current is None or clearance < float(current):
                     obstacle[value_key] = clearance
 
+    # Store the current robot-body clearance from live cuRobo collision spheres.
+    def _record_robot_clearance(
+        self,
+        clearance_m: float,
+        sphere_info: dict | None,
+        now_monotonic: float,
+    ):
+        with self._lock:
+            if self._active_run is None:
+                return
+            obstacle = self._active_run["obstacle"]
+            clearance = float(clearance_m)
+            obstacle["latest_robot_clearance_m"] = clearance
+            obstacle["latest_robot_clearance_t_rel_sec"] = self._relative_time(
+                self._active_run, now_monotonic
+            )
+            obstacle["latest_robot_closest_sphere"] = deepcopy(sphere_info)
+            current = obstacle.get("min_robot_clearance_m")
+            if current is None or clearance < float(current):
+                obstacle["min_robot_clearance_m"] = clearance
+                obstacle["min_robot_closest_sphere"] = deepcopy(sphere_info)
+
     # Remove the benchmark obstacle from the planner and RViz.
     def _clear_obstacle(self, name: str) -> None:
         self._call_remove_obstacle(name, timeout_sec=5.0)
@@ -304,6 +357,7 @@ class HybridObstacleBenchmark(Node):
             return
 
         min_clearance = None
+        closest_sphere = None
         for marker in msg.markers:
             if int(marker.action) != Marker.ADD or int(marker.type) != Marker.SPHERE:
                 continue
@@ -320,12 +374,16 @@ class HybridObstacleBenchmark(Node):
             clearance = sphere_clearance_to_obstacle(center, radius, obstacle)
             if min_clearance is None or clearance < min_clearance:
                 min_clearance = float(clearance)
+                link_name, link_sphere_index = _lookup_curobo_live_sphere_link(marker.id)
+                closest_sphere = {
+                    "marker_id": int(marker.id),
+                    "link_name": link_name,
+                    "link_sphere_index": link_sphere_index,
+                    "radius_m": float(radius),
+                }
 
         if min_clearance is not None:
-            self._update_clearance_minimum(
-                "min_robot_clearance_m",
-                min_clearance,
-            )
+            self._record_robot_clearance(min_clearance, closest_sphere, time.monotonic())
 
     # Record hybrid MPC telemetry such as path invalidation events.
     def _on_hybrid_mpc_telemetry(self, msg: String):
@@ -399,7 +457,26 @@ class HybridObstacleBenchmark(Node):
                     obstacle_state["min_tcp_clearance_m"] = float(clearance)
             return t_rel_sec, float(clearance)
 
-    # Spawn the benchmark obstacle once the TCP reaches the configured clearance trigger.
+    # Return the freshest robot collision-sphere clearance recorded for this obstacle.
+    def _measure_current_robot_clearance(self, max_age_sec: float = 0.5):
+        with self._lock:
+            if self._active_run is None:
+                return None, None, None
+            obstacle_state = self._active_run.get("obstacle") or {}
+            clearance = obstacle_state.get("latest_robot_clearance_m")
+            sample_t = obstacle_state.get("latest_robot_clearance_t_rel_sec")
+            if clearance is None or sample_t is None:
+                return None, None, None
+            now_t = self._relative_time(self._active_run, time.monotonic())
+            if now_t - float(sample_t) > float(max_age_sec):
+                return None, None, None
+            return (
+                float(sample_t),
+                float(clearance),
+                deepcopy(obstacle_state.get("latest_robot_closest_sphere")),
+            )
+
+    # Spawn the benchmark obstacle once the robot body reaches the configured clearance trigger.
     def _spawn_obstacle_on_clearance_trigger(
         self,
         run_index: int,
@@ -443,14 +520,22 @@ class HybridObstacleBenchmark(Node):
         )
 
         trigger_clearance = None
+        saw_robot_clearance = False
         while not stop_event.is_set():
-            _, trigger_clearance = self._measure_current_tcp_clearance(obstacle, timeout_sec=0.25)
+            _, trigger_clearance, _ = self._measure_current_robot_clearance()
+            if trigger_clearance is not None:
+                saw_robot_clearance = True
             if trigger_clearance is not None and trigger_clearance <= trigger_clearance_m:
                 break
             stop_event.wait(DEFAULT_SPAWN_TRIGGER_POLL_PERIOD_SEC)
         else:
-            self._update_obstacle_state(wait_reason="spawn_trigger_not_reached")
-            print(f"[run {run_index}] obstacle spawn trigger not reached before run ended")
+            wait_reason = (
+                "spawn_trigger_not_reached"
+                if saw_robot_clearance
+                else "robot_collision_spheres_unavailable"
+            )
+            self._update_obstacle_state(wait_reason=wait_reason)
+            print(f"[run {run_index}] obstacle spawn trigger failed: {wait_reason}")
             return
 
         success, message = self._call_add_obstacle(obstacle, timeout_sec=10.0)
@@ -468,6 +553,9 @@ class HybridObstacleBenchmark(Node):
             updates["spawn_t_rel_sec"] = spawn_t
             _, clearance = self._measure_current_tcp_clearance(obstacle, timeout_sec=0.5)
             updates["spawn_tcp_to_obstacle_surface_distance_m"] = clearance
+            _, robot_clearance, closest_sphere = self._measure_current_robot_clearance()
+            updates["spawn_robot_to_obstacle_surface_distance_m"] = robot_clearance
+            updates["spawn_robot_closest_sphere"] = closest_sphere
         self._update_obstacle_state(**updates)
 
         if success:

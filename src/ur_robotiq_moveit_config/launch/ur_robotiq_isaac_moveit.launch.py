@@ -1,5 +1,6 @@
 import os
 import hashlib
+import importlib.util
 import shutil
 import subprocess
 import tempfile
@@ -54,6 +55,61 @@ def merge_csv_values(raw_value, required_values):
         if value not in merged_values:
             merged_values.append(value)
     return ",".join(merged_values)
+
+
+def load_module_from_file(module_name, file_path):
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load launch file: {file_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_live_collision_spheres_node(context):
+    curobo_launch_path = os.path.join(
+        get_package_share_directory("ur_robotiq_curobo_config"),
+        "launch",
+        "ur_robotiq_curobo.launch.py",
+    )
+    curobo_launch_module = load_module_from_file(
+        "ur_robotiq_curobo_launch_for_moveit_spheres",
+        curobo_launch_path,
+    )
+    xrdf_path = os.path.join(
+        get_package_share_directory("ur_robotiq_moveit_config"),
+        GANTRY_CUMOTION_XRDF_FILE,
+    )
+    override_path = os.path.join(
+        get_package_share_directory("ur_robotiq_curobo_config"),
+        "config",
+        "ur10e_robotiq_gantry_curobo.overrides.yaml",
+    )
+    runtime_urdf_path = curobo_launch_module._generate_runtime_urdf(context)
+    runtime_yaml, arm_joint_names = curobo_launch_module._generate_runtime_robot_config(
+        xrdf_path,
+        runtime_urdf_path,
+        override_path,
+        float(LaunchConfiguration("gripper_collision_buffer").perform(context)),
+    )
+
+    return Node(
+        package="ur_robotiq_moveit_config",
+        executable="curobo_live_collision_spheres.py",
+        output="screen",
+        parameters=[
+            {
+                "robot_config_file": runtime_yaml,
+                "joint_state_topic": LaunchConfiguration("raw_joint_states_topic"),
+                "joint_names": arm_joint_names,
+                "base_link": "gantry_base_link",
+                "marker_topic": LaunchConfiguration("robot_collision_sphere_topic"),
+                "marker_alpha": LaunchConfiguration("robot_collision_sphere_alpha"),
+                "publish_rate_hz": LaunchConfiguration("robot_collision_sphere_rate_hz"),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            }
+        ],
+    )
 
 
 def generate_runtime_urdf(
@@ -164,6 +220,7 @@ def launch_setup(context, *args, **kwargs):
     exclude_collision_objects = LaunchConfiguration("exclude_collision_objects")
     simlan_assets_root = LaunchConfiguration("simlan_assets_root")
     static_assets_root = LaunchConfiguration("static_assets_root")
+    publish_live_collision_spheres = LaunchConfiguration("publish_live_collision_spheres")
 
     # Packages / files
     ur_description_package = "ur_description"
@@ -514,6 +571,8 @@ def launch_setup(context, *args, **kwargs):
             nodes.append(cumotion_planner_node_patched)
         else:
             nodes.append(cumotion_planner_node_upstream)
+    if publish_live_collision_spheres.perform(context).lower() == "true":
+        nodes.append(build_live_collision_spheres_node(context))
     return nodes
 
 
@@ -568,7 +627,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("prefix", default_value='""'),
-        DeclareLaunchArgument("launch_rviz", default_value="true"),
+        DeclareLaunchArgument("launch_rviz", default_value="false"),
         DeclareLaunchArgument("launch_servo", default_value="true"),
         DeclareLaunchArgument(
             "planning_pipeline",
@@ -718,6 +777,31 @@ def generate_launch_description():
             "static_assets_root",
             default_value=default_static_assets_root,
             description="Path to assets/static_collisions directory containing hand-maintained URDF collision models.",
+        ),
+        DeclareLaunchArgument(
+            "publish_live_collision_spheres",
+            default_value="false",
+            description="Publish cuRobo robot collision spheres for planner-agnostic benchmark metrics.",
+        ),
+        DeclareLaunchArgument(
+            "robot_collision_sphere_topic",
+            default_value="/curobo_live_collision_spheres",
+            description="MarkerArray topic for live robot collision spheres.",
+        ),
+        DeclareLaunchArgument(
+            "robot_collision_sphere_alpha",
+            default_value="0.5",
+            description="Alpha for live robot collision sphere markers.",
+        ),
+        DeclareLaunchArgument(
+            "robot_collision_sphere_rate_hz",
+            default_value="10.0",
+            description="Publish rate for live robot collision sphere markers.",
+        ),
+        DeclareLaunchArgument(
+            "gripper_collision_buffer",
+            default_value="0.0",
+            description="Gripper collision sphere buffer used by generated cuRobo robot config.",
         ),
 
         # Xbox / joy

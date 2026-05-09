@@ -14,6 +14,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from geometry_msgs.msg import Pose, Point, Vector3
+from moveit_msgs.msg import CollisionObject, PlanningScene
+from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 from curobo_msgs.srv import AddObject
@@ -46,6 +48,7 @@ DEFAULT_PRESET = "wall"
 MARKER_TOPIC = "/test_obstacle_markers"
 WORLD_FRAME = "world"
 MARKER_REPUBLISH_PERIOD_SEC = 0.25
+PLANNING_SCENE_REPUBLISH_PERIOD_SEC = 0.5
 
 
 def _stable_marker_id(name):
@@ -108,7 +111,7 @@ def _print_available_presets():
 def spawn_in_curobo_and_publish_marker(
     name, position, size, color, rotation_deg, ros_args=None
 ):
-    """Add the obstacle to cuRobo's collision world and publish an RViz marker."""
+    """Add the obstacle to available planner worlds and publish an RViz marker."""
     rclpy.init(args=ros_args)
     node = Node("spawn_test_obstacle")
     quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler_deg(rotation_deg)
@@ -119,6 +122,7 @@ def spawn_in_curobo_and_publish_marker(
         reliability=ReliabilityPolicy.RELIABLE,
     )
     marker_pub = node.create_publisher(MarkerArray, MARKER_TOPIC, qos)
+    planning_scene_pub = node.create_publisher(PlanningScene, "/planning_scene", 10)
 
     marker = Marker()
     marker.header.frame_id = WORLD_FRAME
@@ -146,6 +150,32 @@ def spawn_in_curobo_and_publish_marker(
     # subscribes late, reconnects, or uses volatile QoS.
     node.create_timer(MARKER_REPUBLISH_PERIOD_SEC, _publish_marker)
 
+    collision_object = CollisionObject()
+    collision_object.header.frame_id = WORLD_FRAME
+    collision_object.id = str(name)
+    collision_object.operation = CollisionObject.ADD
+    primitive = SolidPrimitive()
+    primitive.type = SolidPrimitive.BOX
+    primitive.dimensions = [float(size[0]), float(size[1]), float(size[2])]
+    collision_object.primitives.append(primitive)
+    primitive_pose = Pose()
+    primitive_pose.position = Point(x=position[0], y=position[1], z=position[2])
+    primitive_pose.orientation.x = quat_x
+    primitive_pose.orientation.y = quat_y
+    primitive_pose.orientation.z = quat_z
+    primitive_pose.orientation.w = quat_w
+    collision_object.primitive_poses.append(primitive_pose)
+
+    planning_scene = PlanningScene()
+    planning_scene.is_diff = True
+    planning_scene.world.collision_objects.append(collision_object)
+
+    def _publish_planning_scene():
+        collision_object.header.stamp = node.get_clock().now().to_msg()
+        planning_scene_pub.publish(planning_scene)
+
+    node.create_timer(PLANNING_SCENE_REPUBLISH_PERIOD_SEC, _publish_planning_scene)
+
     def _delete_marker():
         delete_marker = Marker()
         delete_marker.header.frame_id = WORLD_FRAME
@@ -158,54 +188,48 @@ def spawn_in_curobo_and_publish_marker(
     # -- cuRobo service call --
     client = node.create_client(AddObject, "/unified_planner/add_object")
 
-    if not client.wait_for_service(timeout_sec=5.0):
-        print("[cuRobo] Service /unified_planner/add_object not available")
-        node.destroy_node()
-        rclpy.shutdown()
-        return False
-
     # Publish immediately so RViz does not wait for the service round-trip
     # or the first timer tick before showing the obstacle.
     _publish_marker()
+    _publish_planning_scene()
     print(f"[RViz] Published marker immediately on {MARKER_TOPIC}")
+    print("[MoveIt] Published obstacle on /planning_scene")
 
-    request = AddObject.Request()
-    request.type = AddObject.Request.CUBOID
-    request.name = name
-    request.pose = Pose()
-    request.pose.position = Point(x=position[0], y=position[1], z=position[2])
-    request.pose.orientation.x = quat_x
-    request.pose.orientation.y = quat_y
-    request.pose.orientation.z = quat_z
-    request.pose.orientation.w = quat_w
-    request.dimensions = Vector3(x=size[0], y=size[1], z=size[2])
-    request.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
+    if client.wait_for_service(timeout_sec=5.0):
+        request = AddObject.Request()
+        request.type = AddObject.Request.CUBOID
+        request.name = name
+        request.pose = Pose()
+        request.pose.position = Point(x=position[0], y=position[1], z=position[2])
+        request.pose.orientation.x = quat_x
+        request.pose.orientation.y = quat_y
+        request.pose.orientation.z = quat_z
+        request.pose.orientation.w = quat_w
+        request.dimensions = Vector3(x=size[0], y=size[1], z=size[2])
+        request.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
 
-    future = client.call_async(request)
-    rclpy.spin_until_future_complete(node, future, timeout_sec=10.0)
+        future = client.call_async(request)
+        rclpy.spin_until_future_complete(node, future, timeout_sec=10.0)
 
-    if future.result() is not None:
-        resp = future.result()
-        if resp.success:
-            print(f"[cuRobo] Added obstacle '{name}' to collision world")
+        if future.result() is not None:
+            resp = future.result()
+            if resp.success:
+                print(f"[cuRobo] Added obstacle '{name}' to collision world")
+            else:
+                print(f"[cuRobo] Failed: {resp.message}")
         else:
-            print(f"[cuRobo] Failed: {resp.message}")
-            _delete_marker()
-            node.destroy_node()
-            rclpy.shutdown()
-            return False
+            print("[cuRobo] Service call timed out")
     else:
-        print("[cuRobo] Service call timed out")
-        _delete_marker()
-        node.destroy_node()
-        rclpy.shutdown()
-        return False
+        print(
+            "[cuRobo] Service /unified_planner/add_object not available; "
+            "continuing with MoveIt/RViz only"
+        )
 
-    # Keep the publisher alive and republish so RViz can recover from
-    # missed initial samples or subscriber reconnects.
+    # Keep publishers alive and republish so late subscribers recover.
     print(
-        f"[RViz] Republishing marker on {MARKER_TOPIC} every "
-        f"{MARKER_REPUBLISH_PERIOD_SEC:.1f}s (Ctrl+C to stop)"
+        f"[RViz/MoveIt] Republishing obstacle every "
+        f"{MARKER_REPUBLISH_PERIOD_SEC:.1f}/{PLANNING_SCENE_REPUBLISH_PERIOD_SEC:.1f}s "
+        "(Ctrl+C to stop)"
     )
     rclpy.spin(node)
 

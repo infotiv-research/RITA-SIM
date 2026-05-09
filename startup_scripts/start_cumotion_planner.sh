@@ -185,6 +185,7 @@ launch_cmd=(
   planning_pipeline:=cumotion
   launch_move_group:=true
   launch_cumotion_planner:=true
+  publish_live_collision_spheres:=true
   cumotion_use_patched_node:=true
   collision_cache_cuboid:=${collision_cache_cuboid_value}
   collision_cache_mesh:=${collision_cache_mesh_value}

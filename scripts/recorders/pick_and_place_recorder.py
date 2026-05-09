@@ -181,7 +181,7 @@ def start_ros_json_recorder(
         [*DOCKER_COMPOSE, "exec", "-T", "cumotion", "bash", "-lc", recorder_command],
         cwd=ROOT,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
         text=True,
     )
 
@@ -251,6 +251,8 @@ def csv_fieldnames() -> list[str]:
         "total_planning_time_s",
         "total_execution_time_s",
         "total_tcp_movement_cm",
+        "total_min_collision_clearance_m",
+        "total_collision_distance_status",
     ]
     for phase in PICK_AND_PLACE_PHASES:
         fields.extend(
@@ -258,6 +260,8 @@ def csv_fieldnames() -> list[str]:
                 f"{phase}_planning_time_s",
                 f"{phase}_execution_time_s",
                 f"{phase}_tcp_movement_cm",
+                f"{phase}_min_collision_clearance_m",
+                f"{phase}_collision_distance_status",
                 f"{phase}_success",
             ]
         )
@@ -293,6 +297,12 @@ def csv_row(run_number: int, total_time: float, metrics: dict, run_failed: bool)
         "total_planning_time_s": format_float(totals.get("planning_time_s"), 3),
         "total_execution_time_s": format_float(totals.get("execution_time_s"), 3),
         "total_tcp_movement_cm": format_float(totals.get("tcp_movement_cm"), 2),
+        "total_min_collision_clearance_m": format_float(
+            totals.get("min_collision_clearance_m"), 4
+        ),
+        "total_collision_distance_status": str(
+            totals.get("collision_distance_status") or ""
+        ),
     }
     for phase in PICK_AND_PLACE_PHASES:
         segment = segments.get(phase, {})
@@ -304,6 +314,12 @@ def csv_row(run_number: int, total_time: float, metrics: dict, run_failed: bool)
         )
         row[f"{phase}_tcp_movement_cm"] = format_float(
             segment.get("tcp_movement_cm"), 2
+        )
+        row[f"{phase}_min_collision_clearance_m"] = format_float(
+            segment.get("min_collision_clearance_m"), 4
+        )
+        row[f"{phase}_collision_distance_status"] = str(
+            segment.get("collision_distance_status") or ""
         )
         if "success" in segment:
             row[f"{phase}_success"] = str(bool(segment["success"])).lower()

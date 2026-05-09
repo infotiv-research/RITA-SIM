@@ -42,13 +42,13 @@ def build_arg_parser():
         "--spawn-profile",
         default=DEFAULT_SPAWN_TRIGGER_PROFILE,
         choices=sorted(SPAWN_TRIGGER_PROFILES_M.keys()),
-        help="Named TCP-to-wall clearance trigger profile.",
+        help="Named robot-body-to-wall clearance trigger profile.",
     )
     parser.add_argument(
         "--spawn-clearance-m",
         type=float,
         default=None,
-        help="Override the selected spawn profile with an explicit TCP-to-wall clearance in meters.",
+        help="Override the selected spawn profile with an explicit robot-body-to-wall clearance in meters.",
     )
     parser.add_argument(
         "--output-dir",

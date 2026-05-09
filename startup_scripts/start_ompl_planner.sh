@@ -50,6 +50,7 @@ launch_cmd=(
   ros2 launch ur_robotiq_moveit_config ur_robotiq_isaac_moveit.launch.py
   planning_pipeline:=ompl
   launch_cumotion_planner:=false
+  publish_live_collision_spheres:=true
   "$@"
 )
 

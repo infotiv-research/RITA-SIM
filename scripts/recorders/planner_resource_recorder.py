@@ -63,7 +63,10 @@ class PlannerResourceRecorder:
 
     def record_until_stopped(self) -> None:
         while not self.stop_event.is_set():
-            self.record_one_sample()
+            try:
+                self.record_one_sample()
+            except Exception:
+                pass
             self.stop_event.wait(self.sample_interval_s)
 
     def record_one_sample(self) -> None:
@@ -76,29 +79,40 @@ class PlannerResourceRecorder:
 
     def find_planner_processes(self) -> list[PlannerProcess]:
         container_id = self.get_cumotion_container_id()
+        if not container_id:
+            return []
         docker_top_output = self.get_container_process_table(container_id)
         planner_patterns = PLANNER_PROCESS_PATTERNS[self.planner]
 
         planner_processes = []
         for process_line in docker_top_output.splitlines()[1:]:
-            process = self.parse_process_line(process_line)
+            try:
+                process = self.parse_process_line(process_line)
+            except ValueError:
+                continue
             if process_matches_any_pattern(process, planner_patterns):
                 planner_processes.append(process)
 
         return planner_processes
 
     def get_cumotion_container_id(self) -> str:
-        return subprocess.check_output(
-            [*self.docker_compose, "ps", "-q", "cumotion"],
-            cwd=self.root,
-            text=True,
-        ).strip()
+        try:
+            return subprocess.check_output(
+                [*self.docker_compose, "ps", "-q", "cumotion"],
+                cwd=self.root,
+                text=True,
+            ).strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
 
     def get_container_process_table(self, container_id: str) -> str:
-        return subprocess.check_output(
-            ["docker", "top", container_id, "-eo", "pid,rss,args"],
-            text=True,
-        )
+        try:
+            return subprocess.check_output(
+                ["docker", "top", container_id, "-eo", "pid,rss,args"],
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
 
     def parse_process_line(self, process_line: str) -> PlannerProcess:
         pid_text, ram_kib_text, command = process_line.split(None, 2)
@@ -124,20 +138,26 @@ class PlannerResourceRecorder:
         return total_gpu_memory_mib
 
     def get_gpu_memory_by_pid_mib(self) -> dict[int, float]:
-        nvidia_smi_output = subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--query-compute-apps=pid,used_memory",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-        )
+        try:
+            nvidia_smi_output = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-compute-apps=pid,used_memory",
+                    "--format=csv,noheader,nounits",
+                ],
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {}
 
         gpu_memory_by_pid = {}
         for memory_line in nvidia_smi_output.splitlines():
-            pid_text, gpu_memory_mib_text = memory_line.split(",", 1)
-            pid = int(pid_text)
-            gpu_memory_mib = float(gpu_memory_mib_text.strip())
+            try:
+                pid_text, gpu_memory_mib_text = memory_line.split(",", 1)
+                pid = int(pid_text)
+                gpu_memory_mib = float(gpu_memory_mib_text.strip())
+            except ValueError:
+                continue
             gpu_memory_by_pid[pid] = gpu_memory_by_pid.get(pid, 0.0) + gpu_memory_mib
 
         return gpu_memory_by_pid
@@ -152,7 +172,9 @@ def process_matches_any_pattern(
     return False
 
 
-def summarize(samples: list[float]) -> dict[str, float]:
+def summarize(samples: list[float]) -> dict[str, float | None]:
+    if not samples:
+        return {"min": None, "avg": None, "max": None}
     return {
         "min": min(samples),
         "avg": sum(samples) / len(samples),
