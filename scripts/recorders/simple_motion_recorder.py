@@ -57,8 +57,10 @@ class ActiveSimpleMotionRunRecording:
     run_label: str
     trajectory_stop_file: str
     joint_stop_file: str
+    tcp_stop_file: str
     trajectory_recorder: subprocess.Popen
     joint_movement_recorder: subprocess.Popen
+    tcp_recorder: subprocess.Popen
     resource_recorder: PlannerResourceRecorder
 
 
@@ -82,8 +84,12 @@ class SimpleMotionRecorder:
     def start_run(self, run_label: str) -> ActiveSimpleMotionRunRecording:
         trajectory_stop_file = f"/tmp/simple_motion_trajectory_metrics_{run_label}.stop"
         joint_stop_file = f"/tmp/simple_motion_joint_movement_{run_label}.stop"
+        tcp_stop_file = f"/tmp/simple_motion_tcp_trajectory_{run_label}.stop"
+        
         trajectory_recorder = start_trajectory_metrics_recorder(trajectory_stop_file)
         joint_movement_recorder = start_joint_movement_recorder(joint_stop_file)
+        tcp_recorder = start_tcp_trajectory_recorder(tcp_stop_file)
+        
         time.sleep(0.5)
         resource_recorder = start_planner_resource_recorder(
             self.planner, DOCKER_COMPOSE, ROOT
@@ -92,8 +98,10 @@ class SimpleMotionRecorder:
             run_label=run_label,
             trajectory_stop_file=trajectory_stop_file,
             joint_stop_file=joint_stop_file,
+            tcp_stop_file=tcp_stop_file,
             trajectory_recorder=trajectory_recorder,
             joint_movement_recorder=joint_movement_recorder,
+            tcp_recorder=tcp_recorder,
             resource_recorder=resource_recorder,
         )
 
@@ -112,10 +120,17 @@ class SimpleMotionRecorder:
             recording.joint_stop_file,
             recording.joint_movement_recorder,
         )
+        tcp_output = stop_ros_json_recorder(
+            recording.tcp_stop_file,
+            recording.tcp_recorder,
+        )
 
         metrics = read_metrics(trajectory_output)
         metrics["joint_movement"] = read_metrics(joint_output)
         metrics["resource_usage"] = resource_usage
+
+        tcp_points = read_metrics_list(tcp_output)
+        self.save_tcp_json(recording.run_label, tcp_points)
 
         timed_out = returncode == RUN_TIMEOUT_EXIT_CODE
         if timed_out:
@@ -125,6 +140,21 @@ class SimpleMotionRecorder:
 
         run_success = returncode == 0 and metrics.get("success") is True
         return run_success, metrics
+
+    def save_tcp_json(self, run_label: str, points: list) -> None:
+        if not points:
+            return
+            
+        # Target: test_data/tcp_trajectories/<planner>/<planner>_<case>_run_<label>_<date>_<time>_tcp.json
+        now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dir_path = self.data_dir / "tcp_trajectories" / self.planner_label
+        dir_path.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"{self.planner_label}_{self.case_name}_run_{run_label}_{now}_tcp.json"
+        file_path = dir_path / filename
+        
+        with open(file_path, "w") as f:
+            json.dump(points, f, indent=2)
 
     def append_run(
         self,
@@ -178,6 +208,17 @@ def read_metrics(recorder_output: str) -> dict:
     else:
         print("recorder produced no output", file=sys.stderr)
     return {"segments": {}, "totals": {}, "success": False}
+
+
+def read_metrics_list(recorder_output: str) -> list:
+    for line in reversed(recorder_output.strip().splitlines()):
+        try:
+            data = json.loads(line)
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            continue
+    return []
 
 
 def start_ros_json_recorder(
@@ -245,6 +286,18 @@ def start_joint_movement_recorder(stop_file: str) -> subprocess.Popen:
         "movement_end",
         "phase",
         SIMPLE_MOTION_PHASE,
+    )
+
+
+def start_tcp_trajectory_recorder(stop_file: str) -> subprocess.Popen:
+    return start_ros_json_recorder(
+        stop_file,
+        "scripts/recorders/tcp_trajectory_recorder.py",
+        METRICS_EVENT_TOPIC,
+        WORLD_FRAME,
+        TCP_FRAME,
+        "movement_start",
+        "movement_end",
     )
 
 

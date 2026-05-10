@@ -62,8 +62,10 @@ class ActivePickAndPlaceRunRecording:
     run_number: int
     metrics_stop_file: str
     joint_stop_file: str
+    tcp_stop_file: str
     metrics_recorder: subprocess.Popen
     joint_movement_recorder: subprocess.Popen
+    tcp_recorder: subprocess.Popen
     resource_recorder: PlannerResourceRecorder
 
 
@@ -83,8 +85,12 @@ class PickAndPlaceRecorder:
     def start_run(self, run_number: int) -> ActivePickAndPlaceRunRecording:
         metrics_stop_file = f"/tmp/trajectory_metrics_recorder_{run_number}.stop"
         joint_stop_file = f"/tmp/joint_movement_recorder_{run_number}.stop"
+        tcp_stop_file = f"/tmp/tcp_trajectory_recorder_{run_number}.stop"
+
         metrics_recorder = start_metrics_recorder(metrics_stop_file)
         joint_movement_recorder = start_joint_movement_recorder(joint_stop_file)
+        tcp_recorder = start_tcp_trajectory_recorder(tcp_stop_file)
+
         time.sleep(0.5)
         resource_recorder = start_planner_resource_recorder(
             self.planner, DOCKER_COMPOSE, ROOT
@@ -93,8 +99,10 @@ class PickAndPlaceRecorder:
             run_number=run_number,
             metrics_stop_file=metrics_stop_file,
             joint_stop_file=joint_stop_file,
+            tcp_stop_file=tcp_stop_file,
             metrics_recorder=metrics_recorder,
             joint_movement_recorder=joint_movement_recorder,
+            tcp_recorder=tcp_recorder,
             resource_recorder=resource_recorder,
         )
 
@@ -113,9 +121,18 @@ class PickAndPlaceRecorder:
             recording.joint_stop_file,
             recording.joint_movement_recorder,
         )
+        tcp_output = stop_tcp_trajectory_recorder(
+            recording.tcp_stop_file,
+            recording.tcp_recorder,
+        )
+        
         metrics = read_metrics(recorder_output)
         metrics["joint_movement"] = read_metrics(joint_output)
         metrics["resource_usage"] = resource_usage
+        
+        tcp_points = read_metrics_list(tcp_output)
+        self.save_tcp_json(recording.run_number, tcp_points)
+        
         append_csv_row(
             self.csv_file,
             recording.run_number,
@@ -124,6 +141,21 @@ class PickAndPlaceRecorder:
             success=success,
         )
         return metrics
+
+    def save_tcp_json(self, run_number: int, points: list) -> None:
+        if not points:
+            return
+            
+        # Target: test_data/tcp_trajectories/<planner>/<planner>_pick_and_place_run_<num>_<date>_<time>_tcp.json
+        now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dir_path = self.data_dir / "tcp_trajectories" / self.planner
+        dir_path.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"{self.planner}_pick_and_place_run_{run_number}_{now}_tcp.json"
+        file_path = dir_path / filename
+        
+        with open(file_path, "w") as f:
+            json.dump(points, f, indent=2)
 
     def new_csv_file(self) -> Path:
         self.data_dir.mkdir(exist_ok=True)
@@ -160,6 +192,17 @@ def read_metrics(recorder_output: str) -> dict:
     else:
         print("recorder produced no output", file=sys.stderr)
     return {"segments": {}, "totals": {}}
+
+
+def read_metrics_list(recorder_output: str) -> list:
+    for line in reversed(recorder_output.strip().splitlines()):
+        try:
+            data = json.loads(line)
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            continue
+    return []
 
 
 def start_ros_json_recorder(
@@ -227,6 +270,22 @@ def start_joint_movement_recorder(stop_file: str) -> subprocess.Popen:
 
 
 def stop_joint_movement_recorder(stop_file: str, recorder: subprocess.Popen) -> str:
+    return stop_ros_json_recorder(stop_file, recorder)
+
+
+def start_tcp_trajectory_recorder(stop_file: str) -> subprocess.Popen:
+    return start_ros_json_recorder(
+        stop_file,
+        "scripts/recorders/tcp_trajectory_recorder.py",
+        METRICS_EVENT_TOPIC,
+        WORLD_FRAME,
+        TCP_FRAME,
+        "phase_start",
+        "phase_end",
+    )
+
+
+def stop_tcp_trajectory_recorder(stop_file: str, recorder: subprocess.Popen) -> str:
     return stop_ros_json_recorder(stop_file, recorder)
 
 
