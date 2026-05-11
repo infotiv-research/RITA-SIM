@@ -23,18 +23,18 @@ from simple_motion.cases import SIMPLE_MOTION_CASES
 
 
 SIMPLE_MOTION_PLANNER_CASES = (
-    ("curobo", ("curobo",)),
     ("cumotion", ("cumotion",)),
+    ("curobo", ("curobo",)),
     ("ompl_rrtStar", ("ompl", "rrtStar")),
     ("ompl_rrtConnect", ("ompl", "rrtConnect")),
     ("hybrid", ("hybrid",)),
 )
 PICK_AND_PLACE_PLANNERS = ("curobo", "cumotion", "ompl", "hybrid")
-SIMPLE_MOTION_RUNS_PER_CASE = 3
-PICK_AND_PLACE_RUNS_PER_PLANNER = 3
+SIMPLE_MOTION_RUNS_PER_CASE = 2
+PICK_AND_PLACE_RUNS_PER_PLANNER = 2
 HYBRID_BENCHMARK_PROFILES = ("early", "medium", "late","very_late")
 HYBRID_BENCHMARK_CASES = ("test_1", "test_2")
-HYBRID_BENCHMARK_RUNS_PER_CASE_PROFILE = 3
+HYBRID_BENCHMARK_RUNS_PER_CASE_PROFILE = 2
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

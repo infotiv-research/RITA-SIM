@@ -682,22 +682,22 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "cumotion_max_attempts",
-            default_value="28",
+            default_value="12",
             description="Maximum cuMotion planning attempts per query.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_graph_seeds",
-            default_value="14",
+            default_value="12",
             description="Number of graph seeds for cuMotion planning.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_trajopt_seeds",
-            default_value="10",
+            default_value="12",
             description="Number of trajopt seeds for cuMotion planning.",
         ),
         DeclareLaunchArgument(
             "cumotion_num_trajopt_time_steps",
-            default_value="48",
+            default_value="32",
             description="Number of trajectory optimization time steps for cuMotion.",
         ),
         DeclareLaunchArgument(

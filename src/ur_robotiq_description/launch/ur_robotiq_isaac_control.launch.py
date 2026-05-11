@@ -156,7 +156,7 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
     )
 
-    joint_state_broadcaster_spawner = controller_spawner("joint_state_broadcaster", active=True)
+    joint_state_broadcaster_spawner = controller_spawner("joint_state_broadcaster", active=False)
     joint_controller_spawner = controller_spawner(
         initial_joint_controller,
         active=activate_joint_controller.perform(context).lower() in ["true", "1"],

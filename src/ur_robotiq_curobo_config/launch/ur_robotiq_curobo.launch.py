@@ -308,10 +308,12 @@ def launch_setup(context, *args, **kwargs):
         package="robot_state_publisher",
         executable="robot_state_publisher",
         output="screen",
+        condition=IfCondition(LaunchConfiguration("publish_live_robot_state")),
         parameters=[
             {
                 "robot_description": runtime_urdf_content,
-            }
+            },
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
     )
 
@@ -512,6 +514,14 @@ def generate_launch_description():
             DeclareLaunchArgument("ur_type", default_value="ur10e"),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "publish_live_robot_state",
+                default_value="false",
+                description=(
+                    "Publish an unprefixed robot_state_publisher from the cuRobo launch. "
+                    "Keep false when the ROS control stack is already publishing robot TF."
+                ),
+            ),
             DeclareLaunchArgument("world_frame", default_value="world"),
             DeclareLaunchArgument("assets_root", default_value=default_assets_root),
             DeclareLaunchArgument("static_assets_root", default_value=default_static_assets_root),
