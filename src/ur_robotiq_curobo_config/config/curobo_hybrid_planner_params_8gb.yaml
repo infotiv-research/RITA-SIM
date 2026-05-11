@@ -6,18 +6,18 @@
     time_dilation_factor: 0.9
     voxel_size: 0.05
     collision_activation_distance: 0.04
-    trajopt_tsteps: 16
-    use_cuda_graph: false
-    num_trajopt_seeds: 4
-    num_graph_seeds: 2
-    interpolation_steps: 2000
+    trajopt_tsteps: 24
+    use_cuda_graph: true
+    num_trajopt_seeds: 8
+    num_graph_seeds: 8
+    interpolation_steps: 4000
     interpolation_dt: 0.03
     acceleration_scale: 1.0
     self_collision_check: true
     maximum_trajectory_dt: 0.35
     finetune_dt_scale: 1.05
     fixed_iters_trajopt: true
-    finetune_trajopt_iters: 150
+    finetune_trajopt_iters: 220
     minimize_jerk: true
 
     curobo_configure_collision_cache: true
@@ -49,7 +49,7 @@
     mpc_classic_handoff_enabled: true
     mpc_classic_handoff_distance: 0.05
     mpc_step_dt: 0.03
-    mpc_horizon_steps: 12
+    mpc_horizon_steps: 16
     mpc_force_shift_steps_one: true
     mpc_command_speed_scale: 0.9
     max_mpc_iterations: 1000
