@@ -1,9 +1,9 @@
 # Issues
 
-
 ### xhost issue
 
 Getting these errors:
+
 ```
 2026-02-26 08:04:48 [23,151ms] [Error] [omni.kit.window.drop_support.drop_support] Cannot setup ExternalDragDrop without a default window
 2026-02-26 08:04:48 [23,154ms] [Error] [omni.kit.window.drop_support.drop_support] Cannot setup ExternalDragDrop without a default window
@@ -13,7 +13,6 @@ Getting these errors:
 ```
 
 solution: `xhost + `
-
 
 ### Issac sim issue
 
@@ -29,6 +28,7 @@ docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 ### Multi display issue
 
 If you get the error below, one simple solution is to disable your other display.
+
 ```
 Traceback (most recent call last):
   File "/opt/ros/humble/bin/ros2", line 33, in <module>
@@ -105,9 +105,11 @@ Loading user config located at: '/root/.local/share/ov/data/Kit/Isaac-Sim Full/4
 2026-03-05 16:32:32 [3,008ms] [Fatal] [carb.crashreporter-breakpad.plugin] 023: kit!_start+0x29 (??:?)
 ./control.sh: line 187:  1219 Segmentation fault      (core dumped) ./startup_scripts/post_install_ros2_isaac_start.sh
 ```
+
 ### Out of vram
 
-When running `./control.sh curobo` you might get the following error. Try to change it to `./control.sh cumotion`
+When running `./control.sh curobo` you might get the following error. Try to change it to
+`./control.sh cumotion`
 
 ```
 [ERROR] [curobo_preview_joint_states.py-3]: process has died [pid 21330, exit code 1, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_preview_joint_states.py --ros-args --params-file /tmp/launch_params_pwboze99'].
@@ -117,30 +119,30 @@ When running `./control.sh curobo` you might get the following error. Try to cha
 [ERROR] [curobo_live_collision_spheres.py-7]: process has died [pid 21338, exit code -2, cmd '/ros2_ws/install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_live_collision_spheres.py --ros-args --params-file /tmp/launch_params_slpn0k2l'].
 ```
 
-
 ### curobo_human_skeleton_collision_publisher.py not executed
 
 `chmod +x ./install/ur_robotiq_moveit_config/lib/ur_robotiq_moveit_config/curobo_human_skeleton_collision_publisher.py`
 
-
-
 ### [cumotion_planner_upstream_framefix.py-6] torch.OutOfMemoryError: CUDA out of memory.
 
-It is recomended by Isaac sim to have a GPU with 16gb vram. If you want to run it on a 8gb, it may work with the following adjustment:
+It is recomended by Isaac sim to have a GPU with 16gb vram. If you want to run it on a 8gb, it may
+work with the following adjustment:
 
 ```
       cumotion_num_graph_seeds_value=5
       cumotion_num_trajopt_seeds_value=5
 ```
-If you have two GPUs (2*8 gm), both isaac-sim and cumotion use the same GPU and you get this error message as well. You can fix it by specifying which GPU to be used as below:
+
+If you have two GPUs (2\*8 gm), both isaac-sim and cumotion use the same GPU and you get this error
+message as well. You can fix it by specifying which GPU to be used as below:
+
 ```
 CUDA_VISIBLE_DEVICES=1 ./control.sh cumotion
 ```
 
-### [Error] [omni.kit.app._impl] [py stderr]
+### [Error] [omni.kit.app.\_impl] [py stderr]
 
 Can be ignored
-
 
 ### No 3D sensor plugin(s) defined for octomap updates
 
@@ -148,8 +150,9 @@ Can be ignored
 [move_group-2] [ERROR] [move_group.moveit.moveit.ros.occupancy_map_monitor]: No 3D sensor plugin(s) defined for octomap updates
 ```
 
-Can be ignored. MoveIt's occupancy_map_monitor expects a depth-sensor plugin to feed an Octomap. We don't use Octomap-based collision. cuRobo handles the planning scene itself, so the monitor has nothing to do and just logs this once.
-
+Can be ignored. MoveIt's occupancy_map_monitor expects a depth-sensor plugin to feed an Octomap. We
+don't use Octomap-based collision. cuRobo handles the planning scene itself, so the monitor has
+nothing to do and just logs this once.
 
 ### Action server: /recognize_objects not available
 
@@ -157,15 +160,14 @@ Can be ignored. MoveIt's occupancy_map_monitor expects a depth-sensor plugin to 
 [rviz2-4] [ERROR] [rviz2_moveit.moveit.ros.motion_planning_frame]: Action server: /recognize_objects not available
 ```
 
-Can be ignored. The MoveIt MotionPlanning RViz panel has an optional "Object Recognition" tab that connects to an ORK-style perception action server. We don't run one, so the connection attempt fails at panel init. The rest of the panel works normally.
-
-
-
-
+Can be ignored. The MoveIt MotionPlanning RViz panel has an optional "Object Recognition" tab that
+connects to an ORK-style perception action server. We don't run one, so the connection attempt fails
+at panel init. The rest of the panel works normally.
 
 ### ./test.sh : `pick_and_place curobo` exits immediately
 
 The scenario runner expects:
+
 - `ros2`, `cumotion`, and `isaacsim` containers to already be running
 - Isaac Sim headless to already be running
 

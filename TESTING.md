@@ -4,7 +4,8 @@ We don't want to open all the vscode windows, instead we automate the process in
 
 ## Prerequisites
 
-- Before using `test.sh`, make sure the normal project prerequisites from [README.md](./README.md) are already satisfied.
+- Before using `test.sh`, make sure the normal project prerequisites from [README.md](./README.md)
+  are already satisfied.
 - Run all commands from the repository root on the host machine.
 
 Start the stack by running the following command:
@@ -31,8 +32,8 @@ To run the automated hybrid obstacle benchmark:
 ./test.sh hybrid_benchmark --case test_1 --runs 1
 ```
 
-The hybrid benchmark places the wall around the middle of the initial global
-trajectory and controls how early it appears with spawn profiles:
+The hybrid benchmark places the wall around the middle of the initial global trajectory and controls
+how early it appears with spawn profiles:
 
 ```bash
 ./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile early
@@ -41,8 +42,7 @@ trajectory and controls how early it appears with spawn profiles:
 ./test.sh hybrid_benchmark --case test_1 --runs 1 --spawn-profile very_late
 ```
 
-To run benchmark suites with results and archived logs collected under one
-timestamped folder:
+To run benchmark suites with results and archived logs collected under one timestamped folder:
 
 ```bash
 ./test.sh benchmark_suite simple_benchmark
@@ -51,10 +51,9 @@ timestamped folder:
 ./test.sh benchmark_suite all
 ```
 
-Suite outputs are written under [`test_data/benchmark_suite/`](./test_data/benchmark_suite/).
-Direct `./test.sh hybrid_benchmark ...` runs still write JSON results under
+Suite outputs are written under [`test_data/benchmark_suite/`](./test_data/benchmark_suite/). Direct
+`./test.sh hybrid_benchmark ...` runs still write JSON results under
 [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
-
 
 to stop the stack
 
@@ -66,7 +65,8 @@ Logs are written under [`test_logs/`](./test_logs/):
 
 ## Change Camera View in RViz
 
-To change the camera point of view during headless tests, set the image topic to `/rgb`, `/rgb_gripper`, or `/rgb_overhead`.
+To change the camera point of view during headless tests, set the image topic to `/rgb`,
+`/rgb_gripper`, or `/rgb_overhead`.
 
 For `ompl`, `cumotion`, and `hybrid`:
 
