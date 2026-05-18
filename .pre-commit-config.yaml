@@ -1,0 +1,56 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-xml
+        exclude: &upstream ^src/(Universal_Robots_ROS2_Description|Universal_Robots_ROS2_Driver|ros2_robotiq_gripper|cartesian_controllers|serial|servo_keyboard)/
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=5120']
+      - id: check-ast
+        exclude: *upstream
+      - id: debug-statements
+        exclude: *upstream
+      - id: check-builtin-literals
+      - id: check-docstring-first
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix, --extend-select, "I,UP,RUF013"]
+        exclude: *upstream
+      - id: ruff-format
+        exclude: *upstream
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/hukkin/mdformat
+    rev: 0.7.22
+    hooks:
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-gfm
+        args: [--wrap, "100"]
+        types: [markdown]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports]
+        exclude: *upstream
+        additional_dependencies: []
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.2.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]

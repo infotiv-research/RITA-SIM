@@ -220,7 +220,23 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 ```
 
 ## Automated testing
+
 For the automated test workflow, see [TESTING.md](./TESTING.md).
+
+## Code quality
+
+Install the pre-commit hooks once on the host:
+
+```bash
+sudo apt install pre-commit
+pre-commit install              # runs on git commit
+```
+
+Run all hooks manually against the full repo:
+
+```bash
+pre-commit run --all-files
+```
 
 # Credits
 
