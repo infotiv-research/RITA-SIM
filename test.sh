@@ -33,12 +33,24 @@ build() {
   echo "---[ build complete ]---"
 }
 
+last_gpu_index() {
+  local count
+  count=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+  if [ "${count:-0}" -gt 0 ]; then
+    echo $((count - 1))
+  else
+    echo 0
+  fi
+}
+
 start() {
   $COMPOSE_CMD up -d --build
   $COMPOSE_CMD start ros2 cumotion isaacsim
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" prepare_start
   $COMPOSE_CMD exec -d ros2 bash -lc 'cd /ros2_ws && ./control.sh ros > test_logs/ros.log 2>&1'
-  $COMPOSE_CMD exec -d isaacsim bash -lc 'cd /ros2_ws && ./control.sh sim_headless > test_logs/isaac_headless.log 2>&1'
+  local isaac_gpu
+  isaac_gpu=$(last_gpu_index)
+  $COMPOSE_CMD exec -d isaacsim bash -lc "cd /ros2_ws && CUDA_VISIBLE_DEVICES=${isaac_gpu} ./control.sh sim_headless > test_logs/isaac_headless.log 2>&1"
   python3 "${SCRIPT_DIR}/scripts/test_stack.py" wait_start
 }
 
