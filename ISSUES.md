@@ -163,7 +163,7 @@ Can be ignored. The MoveIt MotionPlanning RViz panel has an optional "Object Rec
 
 
 
-### ./automate.sh : `pick_and_place curobo` exits immediately
+### ./test.sh : `pick_and_place curobo` exits immediately
 
 The scenario runner expects:
 - `ros2`, `cumotion`, and `isaacsim` containers to already be running
@@ -172,10 +172,10 @@ The scenario runner expects:
 Start the stack first:
 
 ```bash
-./automate.sh start
+./test.sh start
 ```
 
-### ./automate.sh : RViz does not open
+### ./test.sh : RViz does not open
 
 RViz requires a working `DISPLAY` inside the `cumotion` container. On Linux hosts, run:
 

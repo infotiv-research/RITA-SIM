@@ -7,6 +7,7 @@ This repository has three components:
 - Isaac Sim container for simulation.
 - cuMotion container planning.
 
+
 [![Isaac sim pick and place with table placement](https://img.youtube.com/vi/JSuB3DH42jI/0.jpg)](https://www.youtube.com/watch?v=JSuB3DH42jI)
 
 
