@@ -6,6 +6,7 @@ import subprocess
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import ComposableNodeContainer, Node
@@ -192,7 +193,23 @@ def _build_curobo_planner_nodes(context):
         ],
     )
 
-    return [curobo_planner, world_bridge, live_collision_spheres]
+    curobo_human_collisions = Node(
+        package="ur_robotiq_moveit_config",
+        executable="curobo_human_skeleton_collision_publisher.py",
+        name="curobo_human_skeleton_collision_publisher",
+        condition=IfCondition(LaunchConfiguration("publish_human_collisions")),
+        output="screen",
+        parameters=[
+            {
+                "world_frame": LaunchConfiguration("world_frame"),
+                "publish_rate_hz": environment_publish_rate_hz,
+                "marker_topic": "/curobo_human_collision_markers",
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            }
+        ],
+    )
+
+    return [curobo_planner, world_bridge, live_collision_spheres, curobo_human_collisions]
 
 
 def _build_hybrid_container(context, *_args, **_kwargs):

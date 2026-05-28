@@ -261,7 +261,7 @@ std::vector<sensor_msgs::msg::JointState> CuroboMpcLocalSolver::buildPathSentine
   const std::size_t waypoint_count = local_trajectory.getWayPointCount();
   sentinel_states.reserve(waypoint_count);
 
-  for (std::size_t index = 0; index < waypoint_count; ++index)
+  for (std::size_t index = 1; index < waypoint_count; ++index)
   {
     std::vector<double> waypoint_positions;
     local_trajectory.getWayPoint(index).copyJointGroupPositions(joint_model_group_, waypoint_positions);

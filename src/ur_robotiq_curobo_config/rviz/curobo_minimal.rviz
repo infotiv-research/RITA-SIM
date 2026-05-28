@@ -418,7 +418,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /curobo_human_collision_markers
       Value: true
-      Class: rviz_default_plugins/Image
+    - Class: rviz_default_plugins/Image
       Enabled: true
       Name: Workspace Overview
       Namespaces:

@@ -297,6 +297,7 @@ class UnifiedPlannerNode(Node):
         self.declare_parameter('hybrid_mpc_stall_threshold', 0.01)
         self.declare_parameter('hybrid_path_sentinel_enabled', True)
         self.declare_parameter('hybrid_path_sentinel_safety_margin_m', 0.08)
+        self.declare_parameter('hybrid_path_sentinel_collision_epsilon_m', 0.001)
         self.declare_parameter('hybrid_path_sentinel_only_after_world_update', True)
         self.declare_parameter('mpc_classic_handoff_enabled', True)
         self.declare_parameter('mpc_classic_handoff_distance', 0.015)
@@ -1399,8 +1400,8 @@ class UnifiedPlannerNode(Node):
             if baseline_version is not None and current_world_version <= baseline_version:
                 return result
 
-        safety_margin = max(
-            float(self.get_parameter('hybrid_path_sentinel_safety_margin_m').value),
+        collision_epsilon = max(
+            float(self.get_parameter('hybrid_path_sentinel_collision_epsilon_m').value),
             0.0,
         )
         min_distance = None
@@ -1414,10 +1415,7 @@ class UnifiedPlannerNode(Node):
 
             collision_debug = self.get_state_collision_debug(
                 positions,
-                activation_distance_m=max(
-                    safety_margin,
-                    float(self.get_parameter('collision_activation_distance').value),
-                ),
+                activation_distance_m=float(self.get_parameter('collision_activation_distance').value),
             )
             if collision_debug is None:
                 continue
@@ -1427,7 +1425,7 @@ class UnifiedPlannerNode(Node):
             if min_distance is None or waypoint_min_distance < min_distance:
                 min_distance = waypoint_min_distance
 
-            if waypoint_min_distance < safety_margin:
+            if waypoint_min_distance < -collision_epsilon:
                 result['blocked'] = True
                 result['blocked_index'] = int(waypoint_index)
                 break
