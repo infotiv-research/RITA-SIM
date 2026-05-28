@@ -65,4 +65,5 @@
     hybrid_mpc_stall_threshold: 0.003
     hybrid_path_sentinel_enabled: true
     hybrid_path_sentinel_safety_margin_m: 0.08
+    hybrid_path_sentinel_collision_epsilon_m: 0.001
     hybrid_path_sentinel_only_after_world_update: true

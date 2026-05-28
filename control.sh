@@ -295,7 +295,7 @@ humanoid_action() {
     source_ws
 
     if [ "$1" == "stop" ]; then
-        ros2 topic pub --once /humanoid/play_anim std_msgs/msg/Bool "{data: false}" || return 1
+        ros2 topic pub --times 3 --rate 20 /humanoid/play_anim std_msgs/msg/Bool "{data: false}" || return 1
         echo "---[ Humanoid animation stopped ]---"
 
     elif [ "$1" == "play" ]; then
@@ -306,7 +306,7 @@ humanoid_action() {
 
         case "$2" in
             dab|pick)
-                ros2 topic pub --once /humanoid/select_anim std_msgs/msg/String "{data: '$2'}" || return 1
+                ros2 topic pub --times 3 --rate 20 /humanoid/select_anim std_msgs/msg/String "{data: '$2'}" || return 1
                 echo "---[ Humanoid animation selected: $2 ]---"
                 ;;
             *)

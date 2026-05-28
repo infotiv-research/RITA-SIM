@@ -15,6 +15,7 @@ from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import Pose
 from moveit_msgs.srv import GetMotionPlan, GetPositionFK
 from moveit_msgs.action import HybridPlanner, MoveGroup
+from moveit_msgs.msg import MotionSequenceItem, MotionSequenceRequest
 from moveit_msgs.msg import MoveItErrorCodes, RobotState
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
@@ -68,6 +69,42 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--joint-tolerance", type=float, default=0.02)
     parser.add_argument("--setup-settle-time", type=float, default=1.0)
+    parser.add_argument(
+        "--hybrid-retry-timeout",
+        type=float,
+        default=60.0,
+        help="Seconds to keep retrying transient hybrid planning failures before failing.",
+    )
+    parser.add_argument(
+        "--hybrid-retry-delay",
+        type=float,
+        default=2.0,
+        help="Seconds to wait between hybrid planning retries.",
+    )
+    parser.add_argument(
+        "--hybrid-retry-observe-timeout",
+        type=float,
+        default=30.0,
+        help="Seconds to watch joint motion after a hybrid abort before retrying.",
+    )
+    parser.add_argument(
+        "--hybrid-retry-initial-grace",
+        type=float,
+        default=2.0,
+        help="Seconds to allow a delayed hybrid replan/execution to start after an abort.",
+    )
+    parser.add_argument(
+        "--hybrid-retry-stationary-time",
+        type=float,
+        default=1.5,
+        help="Seconds of no joint motion before considering the robot blocked and retrying.",
+    )
+    parser.add_argument(
+        "--hybrid-retry-motion-epsilon",
+        type=float,
+        default=0.001,
+        help="Largest joint delta treated as no motion while observing hybrid retries.",
+    )
     return parser
 
 
@@ -133,14 +170,82 @@ class SimpleMotionBenchmark(Node):
             return dict(self._last_joint_positions)
         return None
 
+    def _current_joints_match(self, joint_targets: dict[str, float]) -> bool:
+        current = self._wait_for_recent_joint_positions(timeout_sec=1.0)
+        if not current:
+            return False
+        for joint_name in JOINT_NAMES:
+            if joint_name not in current:
+                return False
+            if abs(float(current[joint_name]) - float(joint_targets[joint_name])) > self.joint_tolerance:
+                return False
+        return True
+
+    def _max_joint_delta(self, lhs: dict[str, float], rhs: dict[str, float]) -> float | None:
+        deltas = []
+        for joint_name in JOINT_NAMES:
+            if joint_name not in lhs or joint_name not in rhs:
+                return None
+            deltas.append(abs(float(lhs[joint_name]) - float(rhs[joint_name])))
+        return max(deltas) if deltas else None
+
+    def _wait_for_hybrid_retry_observation(
+        self,
+        joint_targets: dict[str, float],
+        label: str,
+        started_at: float,
+        retry_timeout_sec: float,
+    ) -> bool:
+        remaining_retry_time = max(float(retry_timeout_sec) - (time.monotonic() - float(started_at)), 0.0)
+        observe_timeout_sec = min(
+            max(float(self.args.hybrid_retry_observe_timeout), 0.0),
+            remaining_retry_time,
+        )
+        if observe_timeout_sec <= 0.0:
+            return False
+
+        initial_grace_sec = max(float(self.args.hybrid_retry_initial_grace), 0.0)
+        stationary_time_sec = max(float(self.args.hybrid_retry_stationary_time), 0.0)
+        motion_epsilon = max(float(self.args.hybrid_retry_motion_epsilon), 0.0)
+        observed_at = time.monotonic()
+        deadline = observed_at + observe_timeout_sec
+        last_positions = None
+        last_motion_time = observed_at
+
+        self.get_logger().info(
+            f"Observing hybrid goal [{label}] after aborted action before retrying."
+        )
+
+        while time.monotonic() < deadline:
+            if self._current_joints_match(joint_targets):
+                self.get_logger().warn(
+                    f"Hybrid goal [{label}] reached the target after an aborted action. Treating it as success."
+                )
+                return True
+
+            current = self._wait_for_recent_joint_positions(timeout_sec=0.2, max_age_sec=0.5)
+            now = time.monotonic()
+            if current:
+                if last_positions is not None:
+                    max_delta = self._max_joint_delta(current, last_positions)
+                    if max_delta is not None and max_delta > motion_epsilon:
+                        last_motion_time = now
+
+                last_positions = current
+
+            if (
+                now - observed_at >= initial_grace_sec
+                and now - last_motion_time >= stationary_time_sec
+            ):
+                return False
+
+            time.sleep(0.1)
+
+        return self._current_joints_match(joint_targets)
+
     def wait_until_ready(self) -> bool:
         if self._curobo_backend is not None:
             return bool(self._curobo_backend.wait_until_ready())
-
-        self.get_logger().info("Waiting for MoveGroup action server (/move_action)...")
-        if not self.move_group_client.wait_for_server(timeout_sec=30.0):
-            self.get_logger().error("MoveGroup action server not available after 30s.")
-            return False
 
         if self.planner == "hybrid":
             self.get_logger().info("Waiting for HybridPlanner action server (/run_hybrid_planning)...")
@@ -148,10 +253,12 @@ class SimpleMotionBenchmark(Node):
                 self.get_logger().error("HybridPlanner action server not available after 30s.")
                 return False
 
-            self.get_logger().info("Waiting for motion-plan service (/plan_kinematic_path)...")
-            if not self.motion_plan_client.wait_for_service(timeout_sec=30.0):
-                self.get_logger().error("Motion-plan service not available after 30s.")
-                return False
+            return True
+
+        self.get_logger().info("Waiting for MoveGroup action server (/move_action)...")
+        if not self.move_group_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error("MoveGroup action server not available after 30s.")
+            return False
 
         return True
 
@@ -257,6 +364,13 @@ class SimpleMotionBenchmark(Node):
         if error_code == MoveItErrorCodes.SUCCESS and status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info(f"MoveGroup joint goal [{label}] succeeded.")
             return MotionResult(True, total_time_s=total_time_s)
+
+        if self._current_joints_match(joint_targets):
+            self.get_logger().warn(
+                f"MoveGroup joint goal [{label}] reported {error_name}({error_code}) / "
+                f"{status_name}, but the final joints match the target. Treating it as success."
+            )
+            return MotionResult(True, total_time_s=total_time_s, backend_name=self.planner)
 
         self.get_logger().error(
             f"MoveGroup joint goal [{label}] failed: "
@@ -433,6 +547,161 @@ class SimpleMotionBenchmark(Node):
             backend_name="curobo_ros",
         )
 
+    def _send_hybrid_goal_once(self, move_group_goal: MoveGroup.Goal, label: str, joint_targets: dict[str, float] | None = None) -> MotionResult:
+        hybrid_goal = HybridPlanner.Goal()
+        hybrid_goal.planning_group = move_group_goal.request.group_name
+        sequence_item = MotionSequenceItem()
+        sequence_item.req = move_group_goal.request
+        sequence_item.blend_radius = 0.0
+        sequence_request = MotionSequenceRequest()
+        sequence_request.items = [sequence_item]
+        hybrid_goal.motion_sequence = sequence_request
+
+        self.get_logger().info(f"Sending direct hybrid goal [{label}]...")
+        movement_start_time = time.monotonic()
+        goal_handle = self._wait_future_result(
+            self.hybrid_planner_client.send_goal_async(hybrid_goal),
+            timeout_sec=30.0,
+        )
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error(f"Hybrid goal [{label}] was rejected.")
+            return MotionResult(
+                False,
+                total_time_s=time.monotonic() - movement_start_time,
+                failure_reason="hybrid_goal_rejected",
+                failure_detail=f"Hybrid goal [{label}] was rejected.",
+            )
+
+        wrapped = self._wait_future_result(
+            goal_handle.get_result_async(),
+            timeout_sec=120.0,
+        )
+        total_time_s = time.monotonic() - movement_start_time
+        if wrapped is None or getattr(wrapped, 'result', None) is None:
+            self.get_logger().error(f"Hybrid planner returned no result for [{label}].")
+            return MotionResult(
+                False,
+                total_time_s=total_time_s,
+                failure_reason="hybrid_goal_no_result",
+                failure_detail=f"Hybrid planner returned no result for goal [{label}].",
+            )
+
+        hybrid_result = wrapped.result
+        error_code = int(hybrid_result.error_code.val)
+        status = int(getattr(wrapped, "status", GoalStatus.STATUS_UNKNOWN))
+        error_name = self._moveit_error_name(error_code)
+        status_name = self._goal_status_name(status)
+        if error_code == MoveItErrorCodes.SUCCESS:
+            self.get_logger().info(f"Hybrid goal [{label}] succeeded.")
+            return MotionResult(True, total_time_s=total_time_s, backend_name=self.planner)
+
+        if joint_targets is not None and self._current_joints_match(joint_targets):
+            self.get_logger().warn(
+                f"Hybrid goal [{label}] reported {error_name}({error_code}) / {status_name}, but the final joints match the target. Treating it as success."
+            )
+            return MotionResult(True, total_time_s=total_time_s, backend_name=self.planner)
+
+        self.get_logger().error(
+            f"Hybrid goal [{label}] failed: error={error_name}({error_code}), status={status_name}."
+        )
+        return MotionResult(
+            False,
+            total_time_s=total_time_s,
+            failure_reason=self._moveit_failure_reason(error_name, status_name),
+            failure_detail=(
+                f"Hybrid goal [{label}] failed: error={error_name}({error_code}), status={status_name}."
+            ),
+            moveit_error_code=error_code,
+            moveit_error_name=error_name,
+            action_status_code=status,
+            action_status_name=status_name,
+            backend_name=self.planner,
+            backend_failure_reason=self._moveit_failure_reason(error_name, status_name),
+            backend_failure_detail=(
+                f"Hybrid goal [{label}] failed: error={error_name}({error_code}), status={status_name}."
+            ),
+            backend_error_code=error_code,
+            backend_status_name=status_name,
+        )
+
+    def _is_retryable_hybrid_failure(self, result: MotionResult) -> bool:
+        return (
+            self.planner == "hybrid"
+            and not result.success
+            and result.moveit_error_name == "PLANNING_FAILED"
+            and result.action_status_name == "STATUS_ABORTED"
+        )
+
+    def _send_hybrid_goal(
+        self,
+        move_group_goal: MoveGroup.Goal,
+        label: str,
+        joint_targets: dict[str, float] | None = None,
+        retry_goal_builder=None,
+    ) -> MotionResult:
+        retry_timeout_sec = max(float(self.args.hybrid_retry_timeout), 0.0)
+        retry_delay_sec = max(float(self.args.hybrid_retry_delay), 0.0)
+        started_at = time.monotonic()
+        attempt = 1
+
+        while True:
+            goal = move_group_goal if attempt == 1 or retry_goal_builder is None else retry_goal_builder()
+            result = self._send_hybrid_goal_once(goal, label, joint_targets=joint_targets)
+            result = MotionResult(
+                success=result.success,
+                planning_time_s=result.planning_time_s,
+                execution_time_s=result.execution_time_s,
+                total_time_s=time.monotonic() - started_at,
+                failure_reason=result.failure_reason,
+                failure_detail=result.failure_detail,
+                moveit_error_code=result.moveit_error_code,
+                moveit_error_name=result.moveit_error_name,
+                action_status_code=result.action_status_code,
+                action_status_name=result.action_status_name,
+                backend_name=result.backend_name,
+                backend_failure_reason=result.backend_failure_reason,
+                backend_failure_detail=result.backend_failure_detail,
+                backend_error_code=result.backend_error_code,
+                backend_status_name=result.backend_status_name,
+            )
+            if result.success:
+                if attempt > 1:
+                    self.get_logger().info(
+                        f"Hybrid goal [{label}] succeeded after {attempt} attempts."
+                    )
+                return result
+
+            elapsed = time.monotonic() - started_at
+            if (
+                retry_goal_builder is None
+                or not self._is_retryable_hybrid_failure(result)
+                or elapsed >= retry_timeout_sec
+            ):
+                return result
+
+            if joint_targets is not None and self._wait_for_hybrid_retry_observation(
+                joint_targets,
+                label,
+                started_at,
+                retry_timeout_sec,
+            ):
+                return MotionResult(
+                    True,
+                    total_time_s=time.monotonic() - started_at,
+                    backend_name=self.planner,
+                )
+
+            elapsed = time.monotonic() - started_at
+            if elapsed >= retry_timeout_sec:
+                return result
+
+            attempt += 1
+            self.get_logger().warn(
+                f"Hybrid goal [{label}] planning failed while blocked; retrying "
+                f"attempt {attempt} for up to {retry_timeout_sec:.1f}s."
+            )
+            time.sleep(retry_delay_sec)
+
     def _send_curobo_pose_goal(self, target_pose, label: str) -> MotionResult:
         position = target_pose.position
         orientation = target_pose.orientation
@@ -478,6 +747,26 @@ class SimpleMotionBenchmark(Node):
         if missing:
             self.get_logger().error(f"Joint target [{label}] is missing: {', '.join(missing)}")
             return MotionResult(False)
+        if self._current_joints_match(joint_targets):
+            self.get_logger().info(f"Joint target [{label}] already reached; skipping motion.")
+            return MotionResult(True, total_time_s=0.0)
+        if self.planner == "hybrid":
+            def build_hybrid_joint_goal():
+                return build_joint_goal(
+                    joint_targets,
+                    current_joint_positions=self._wait_for_recent_joint_positions(timeout_sec=1.0),
+                    planning_pipeline=self._planning_pipeline(),
+                    planner_id=self._moveit_planner_id(),
+                    joint_tolerance=self.joint_tolerance,
+                    normalize_periodic_targets=self.planner == "ompl",
+                )
+
+            return self._send_hybrid_goal(
+                build_hybrid_joint_goal(),
+                label,
+                joint_targets=joint_targets,
+                retry_goal_builder=build_hybrid_joint_goal,
+            )
         if self._curobo_backend is not None:
             return self._send_curobo_joint_goal(joint_targets, label)
         return self._send_move_group_joint_goal(joint_targets, label)
@@ -518,6 +807,16 @@ class SimpleMotionBenchmark(Node):
 
         if "goal_pose" in case_spec:
             target_pose = self.pose_from_case_spec(case_spec["goal_pose"])
+            if self.planner == "hybrid":
+                goal = build_pose_goal(
+                    target_pose,
+                    current_joint_positions=self._wait_for_recent_joint_positions(timeout_sec=1.0),
+                    planning_pipeline=self._planning_pipeline(),
+                    planner_id=self._moveit_planner_id(),
+                    position_tolerance_m=float(case_spec.get("goal_position_tolerance_m", 0.02)),
+                    orientation_tolerance_rad=float(case_spec.get("goal_orientation_tolerance_rad", 0.35)),
+                )
+                return self._send_hybrid_goal(goal, label)
             if self._curobo_backend is not None:
                 return self._send_curobo_pose_goal(target_pose, label)
             return self._send_move_group_pose_goal(target_pose, case_spec, label)
@@ -529,6 +828,16 @@ class SimpleMotionBenchmark(Node):
             )
             if target_pose is None:
                 return MotionResult(False)
+            if self.planner == "hybrid":
+                goal = build_pose_goal(
+                    target_pose,
+                    current_joint_positions=self._wait_for_recent_joint_positions(timeout_sec=1.0),
+                    planning_pipeline=self._planning_pipeline(),
+                    planner_id=self._moveit_planner_id(),
+                    position_tolerance_m=float(case_spec.get("goal_position_tolerance_m", 0.02)),
+                    orientation_tolerance_rad=float(case_spec.get("goal_orientation_tolerance_rad", 0.35)),
+                )
+                return self._send_hybrid_goal(goal, label)
             if self._curobo_backend is not None:
                 return self._send_curobo_pose_goal(target_pose, label)
             return self._send_move_group_pose_goal(target_pose, case_spec, label)

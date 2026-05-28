@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import time
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 import rclpy
@@ -22,12 +24,29 @@ LIMBS = [
     ("human_shin_l", "LeftShin_Skele", "LeftFoot_Skele", 0.075),
 ]
 
+HUMAN_FRAMES = sorted(
+    {frame for _, start, end, _ in LIMBS for frame in (start, end)}
+    | {
+        "LeftThigh_Skele",
+        "RightThigh_Skele",
+        "LeftShoulder_Skele",
+        "RightShoulder_Skele",
+        "Head_Skele",
+    }
+)
+
 class CuroboHumanCollisionPublisher(Node):
     def __init__(self):
         super().__init__("curobo_human_collision_publisher")
         self.world_frame = self.declare_parameter("world_frame", "world").value
         rate = self.declare_parameter("publish_rate_hz", 20.0).value
         self.marker_topic = self.declare_parameter("marker_topic", "/curobo_human_collision_markers").value
+        self.frame_position_tolerance_m = float(
+            self.declare_parameter("frame_position_tolerance_m", 0.005).value
+        )
+        self.add_retry_timeout_sec = float(
+            self.declare_parameter("add_retry_timeout_sec", 15.0).value
+        )
         
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -38,6 +57,8 @@ class CuroboHumanCollisionPublisher(Node):
         self.move_client = self.create_client(UpdateObjectPoses, "/unified_planner/update_object_poses")
         
         self.active_shapes = {}
+        self.pending_adds = {}
+        self.last_frame_positions = {}
         self.create_timer(1.0 / rate, self.update_scene)
 
     def get_pos(self, frame):
@@ -52,6 +73,49 @@ class CuroboHumanCollisionPublisher(Node):
             position=Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
             orientation=Quaternion(x=float(quat[0]), y=float(quat[1]), z=float(quat[2]), w=float(quat[3]))
         )
+
+    def get_frame_positions(self):
+        positions = {}
+        for frame in HUMAN_FRAMES:
+            pos = self.get_pos(frame)
+            if pos is not None:
+                positions[frame] = pos
+        return positions
+
+    def moved_frames(self, frame_positions):
+        moved = set()
+        for frame, pos in frame_positions.items():
+            previous = self.last_frame_positions.get(frame)
+            if previous is None:
+                moved.add(frame)
+            elif np.linalg.norm(pos - previous) > self.frame_position_tolerance_m:
+                moved.add(frame)
+        return moved
+
+    def collect_pending_adds(self):
+        now = time.monotonic()
+        for name, (future, shape_sig, requested_at) in list(self.pending_adds.items()):
+            if not future.done():
+                if now - requested_at > self.add_retry_timeout_sec:
+                    del self.pending_adds[name]
+                    self.get_logger().warn(
+                        f"Timed out adding cuRobo human collision '{name}'; retrying"
+                    )
+                continue
+
+            del self.pending_adds[name]
+            try:
+                result = future.result()
+            except Exception as exc:
+                self.get_logger().warn(f"Failed to add cuRobo human collision '{name}': {exc}")
+                continue
+
+            if result.success:
+                self.active_shapes[name] = shape_sig
+            else:
+                self.get_logger().warn(
+                    f"cuRobo rejected human collision '{name}': {result.message}"
+                )
 
     def publish_markers(self, objects):
         marker_array = MarkerArray()
@@ -92,11 +156,12 @@ class CuroboHumanCollisionPublisher(Node):
         self.marker_pub.publish(marker_array)
 
     def update_scene(self):
+        frame_positions = self.get_frame_positions()
         new_objects = {}
         
         # 1. Limbs (Cylinders)
         for name, start_f, end_f, radius in LIMBS:
-            p1, p2 = self.get_pos(start_f), self.get_pos(end_f)
+            p1, p2 = frame_positions.get(start_f), frame_positions.get(end_f)
             if p1 is None or p2 is None: continue
             
             vec = p2 - p1
@@ -109,12 +174,15 @@ class CuroboHumanCollisionPublisher(Node):
             new_objects[name] = {
                 "type": AddObject.Request.CYLINDER, 
                 "dims": [radius, dist, dist], 
-                "pose": self.create_pose((p1 + p2) / 2, rot.as_quat())
+                "pose": self.create_pose((p1 + p2) / 2, rot.as_quat()),
+                "frames": {start_f, end_f},
             }
 
         # 2. Torso (Cuboid)
-        l_h, r_h = self.get_pos("LeftThigh_Skele"), self.get_pos("RightThigh_Skele")
-        l_s, r_s = self.get_pos("LeftShoulder_Skele"), self.get_pos("RightShoulder_Skele")
+        l_h = frame_positions.get("LeftThigh_Skele")
+        r_h = frame_positions.get("RightThigh_Skele")
+        l_s = frame_positions.get("LeftShoulder_Skele")
+        r_s = frame_positions.get("RightShoulder_Skele")
         
         if all(p is not None for p in [l_h, r_h, l_s, r_s]):
             hip_mid, sh_mid = (l_h + r_h) / 2, (l_s + r_s) / 2
@@ -131,47 +199,66 @@ class CuroboHumanCollisionPublisher(Node):
             new_objects["human_torso"] = {
                 "type": AddObject.Request.CUBOID, 
                 "dims": [0.2, np.linalg.norm(shoulders), np.linalg.norm(spine)], 
-                "pose": self.create_pose((hip_mid + sh_mid) / 2, q_torso)
+                "pose": self.create_pose((hip_mid + sh_mid) / 2, q_torso),
+                "frames": {
+                    "LeftThigh_Skele",
+                    "RightThigh_Skele",
+                    "LeftShoulder_Skele",
+                    "RightShoulder_Skele",
+                },
             }
 
         # 3. Head (Sphere)
-        hp = self.get_pos("Head_Skele")
+        hp = frame_positions.get("Head_Skele")
         if hp is not None:
             new_objects["human_head"] = {
                 "type": AddObject.Request.SPHERE, 
                 "dims": [0.12, 0.12, 0.12], 
-                "pose": self.create_pose(hp)
+                "pose": self.create_pose(hp),
+                "frames": {"Head_Skele"},
             }
 
-        # --- Publisher & Service Logic ---
-        self.publish_markers(new_objects)
-
         if not (self.add_client.service_is_ready() and self.remove_client.service_is_ready() and self.move_client.service_is_ready()):
+            self.last_frame_positions = frame_positions
             return
 
-        for old_id in list(self.active_shapes.keys()):
-            if old_id not in new_objects:
-                self.remove_client.call_async(RemoveObject.Request(name=old_id))
-                del self.active_shapes[old_id]
+        self.collect_pending_adds()
+        moved_frames = self.moved_frames(frame_positions)
+        scene_changed = False
+
 
         move_req = UpdateObjectPoses.Request()
         for name, obj in new_objects.items():
             shape_sig = (obj["type"], tuple(round(float(d), 3) for d in obj["dims"]))
+            active_shape = self.active_shapes.get(name)
 
-            if name not in self.active_shapes or self.active_shapes[name] != shape_sig:
-                if name in self.active_shapes:
+            if active_shape is None or active_shape[0] != shape_sig[0]:
+                if name in self.pending_adds:
+                    continue
+
+                if active_shape is not None:
                     self.remove_client.call_async(RemoveObject.Request(name=name))
-                
+                    self.active_shapes.pop(name, None)
+
                 req = AddObject.Request(name=name, type=obj["type"], pose=obj["pose"])
                 req.dimensions.x, req.dimensions.y, req.dimensions.z = float(obj["dims"][0]), float(obj["dims"][1]), float(obj["dims"][2])
-                self.add_client.call_async(req)
-                self.active_shapes[name] = shape_sig
-            else:
+                self.pending_adds[name] = (
+                    self.add_client.call_async(req),
+                    shape_sig,
+                    time.monotonic(),
+                )
+                scene_changed = True
+            elif obj["frames"] & moved_frames:
                 move_req.names.append(name)
                 move_req.poses.append(obj["pose"])
+                scene_changed = True
 
         if move_req.names:
             self.move_client.call_async(move_req)
+
+        if scene_changed:
+            self.publish_markers(new_objects)
+        self.last_frame_positions = frame_positions
 
 def main():
     rclpy.init()
