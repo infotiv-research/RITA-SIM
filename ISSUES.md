@@ -14,7 +14,7 @@ Getting these errors:
 
 solution: `xhost + `
 
-### Issac sim issue
+### Isaac Sim issue
 
 If Isaac Sim does not start:
 
@@ -125,15 +125,15 @@ When running `./control.sh curobo` you might get the following error. Try to cha
 
 ### [cumotion_planner_upstream_framefix.py-6] torch.OutOfMemoryError: CUDA out of memory.
 
-It is recomended by Isaac sim to have a GPU with 16gb vram. If you want to run it on a 8gb, it may
-work with the following adjustment:
+Isaac Sim recommends a GPU with at least 16 GB of VRAM. If you want to run it with 8 GB, it may work
+with the following adjustment:
 
 ```
       cumotion_num_graph_seeds_value=5
       cumotion_num_trajopt_seeds_value=5
 ```
 
-If you have two GPUs (2\*8 gm), both isaac-sim and cumotion use the same GPU and you get this error
+If you have two GPUs (2×8 GB), both Isaac Sim and cuMotion use the same GPU and you get this error
 message as well. You can fix it by specifying which GPU to be used as below:
 
 ```

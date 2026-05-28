@@ -59,7 +59,7 @@ Conventional commit message:
 
 - A conventional commit message uses the imperative mood in the subject line
 
-Example of
+Example:
 
 - feat(auth): add login functionality
 - fix(ui): resolve button color issue
@@ -80,7 +80,7 @@ Example of
 - Error handling and synchronization should be done by the consumer of the information. (e.g. if a
   node needs to read a ros message, it is responsible to check if the ros is accessible and it is up
   and running).
-- Bash should preferably not be used for synchronization. Bash is suppose to be sequential.
+- Bash should preferably not be used for synchronization. Bash is supposed to be sequential.
 - Bash can be used for sync between execution of stand alone script. (e.g running 100 test scripts)
 
 ### Documentation

@@ -20,7 +20,7 @@ With the containers already running, build the workspace packages with
 ./test.sh build
 ```
 
-once the command above executed succcessfully, run the automated pick-and-place.
+Once the command above has executed successfully, run the automated pick-and-place.
 
 ```bash
 ./test.sh pick_and_place curobo
@@ -55,7 +55,7 @@ Suite outputs are written under [`test_data/benchmark_suite/`](./test_data/bench
 `./test.sh hybrid_benchmark ...` runs still write JSON results under
 [`benchmark_results/hybrid/`](./benchmark_results/hybrid/).
 
-to stop the stack
+To stop the stack
 
 ```bash
 ./test.sh stop
