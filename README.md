@@ -4,6 +4,18 @@ RITA (Robot In The Air) is a collaborative robot project developed as a use case
 collaboration (HRC) within the manufacturing industry, specifically for Volvo Group Trucks
 Operations (GTO).
 
+The current implementation was developed by Elias Wilsborn and Marcus Olsson under supervision of
+Hamid Ebadi as part of a master thesis at Chalmers University of Technology with the title
+**"Collaborative Robotic Arm and Humanoid Interaction for Kitting Tasks in Simulated Factory
+Environment"**. The thesis evaluates simulation-based motion planning for a gantry-mounted UR10e
+robot in an industrial kitting task, comparing OMPL, cuMotion, cuRobo, and hybrid planning
+approaches in static and dynamic environments. A published version of the thesis is available here:
+[PDF](resources/rita-thesis-MO-EW.pdf).
+
+<a href="resources/rita-thesis-MO-EW.pdf">
+  <img src="resources/rita-thesis-MO-EW-title-page.png" alt="Master thesis title page" width="260">
+</a>
+
 This repository has three components:
 
 - ROS 2 container for robot control, MoveIt, and controllers.
@@ -169,56 +181,11 @@ In the cuMotion container, open a new terminal and run the following commands:
 # Default: MoveIt backend with cuMotion pipeline
 ./control.sh pick_and_place
 
-# Specify other planners like this:
-./control.sh pick_and_place planning_pipeline:=ompl
-
-./control.sh pick_and_place motion_backend:=curobo_ros
-
-./control.sh pick_and_place motion_backend:=curobo_ros curobo_planner_type:=mpc
-
-./control.sh pick_and_place motion_backend:=hybrid
 ```
-
-- The launch command starts `pick_and_place_main.py`.
-- `motion_backend:=moveit` connects to MoveIt at `/move_action`.
-- `motion_backend:=curobo_ros` requests trajectories from `/unified_planner/generate_trajectory` and
-  executes them through the existing arm controller action.
-- `motion_backend:=curobo_ros curobo_planner_type:=mpc` uses curobo MPC for each fixed-goal phase so
-  the arm can react to moving obstacles while tracking the current phase target.
-- `motion_backend:=hybrid` routes transport motions through MoveIt Hybrid Planning
-- It publishes the target object as a planning-scene collision object and toggles attach/detach
-  during grasp and release.
-- The launch argument `planning_pipeline` defaults to `cumotion` and can be set to `ompl` only for
-  the MoveIt backend.
 
 ### Dynamic Environment
 
 In the Isaac Sim container, open a new terminal to modify the environment as below
-
-### moving cylinder
-
-[![SIMLAN demo](https://img.youtube.com/vi/3uVEBaCn-WE/0.jpg)](https://www.youtube.com/watch?v=3uVEBaCn-WE)
-
-```bash
-# Set the cylinder to vertical up/down motion
-./control.sh cylinder set 2
-
-# Start the cylinder using the currently selected path
-./control.sh cylinder start
-
-# Stop the cylinder
-./control.sh cylinder stop
-```
-
-Available path presets:
-
-- `2`: Vertical up/down motion
-- `3`: Triangle motion in front of the flow rack
-- `4`: Square motion in front of the flow rack
-
-Set the path first with `./control.sh cylinder set <number>`, then run
-`./control.sh cylinder start`. The selected path is reused until you change it with another `set`
-command.
 
 ### moving human
 
