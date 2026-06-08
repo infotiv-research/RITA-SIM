@@ -66,8 +66,6 @@ Core commands:
 
 UR10 ROS2 container commands:
   ros             Start ROS 2 launch
-  planning        Start MoveIt/planning launch
-  ur10            Start both launches
 
 Isaac container commands:
   sim             Start Isaac Sim loaded with main_scene.usd
@@ -94,6 +92,7 @@ Isaac container commands:
 
 
 UR10 cuMotion container commands:
+  ompl            Start MoveIt with the OMPL planner.
   cumotion        Start cuMotion with 7dof UR10e gantry config by default.
   curobo          Start curobo_ros with dedicated RViz workflow.
   hybrid          Start MoveIt Hybrid Planning (cuRobo MotionGen + MPC).
@@ -239,7 +238,7 @@ isaac_sim_cylinder() {
 
 isaac_sim_humanoid() {
     echo "---[ starting Isaac Sim with humanoid ]---"
-    ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/flowrack_crates_and_robot_humanoid.usd"
+    ./startup_scripts/post_install_ros2_isaac_start.sh "assets/ur10e_robotiq2f-140/main_scene_with_humanoid.usd"
 }
 
 build_gaussian_splats() {

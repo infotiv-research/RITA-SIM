@@ -52,3 +52,17 @@ Available path presets:
 Set the path first with `./control.sh cylinder set <number>`, then run
 `./control.sh cylinder start`. The selected path is reused until you change it with another `set`
 command.
+
+
+# simulation with human character
+
+Start the humanoid simulation with `./control.sh sim_humanoid`.
+
+Inside Isaac Sim, open the `Content` tab below the viewport. Go to `My Computer`, then
+`/ros2_ws`, then `assets`, then `ur10e_robotiq2f-140`, and open
+`main_scene_with_human_character.usd`.
+
+In the Isaac Sim container, open a new terminal and run `./control.sh humanoid play pick` to move the human character.
+
+If the humanoid or human character does not move into the start position, or nothing happens when you run a movement
+command, reopen the USD file from the Content window.
