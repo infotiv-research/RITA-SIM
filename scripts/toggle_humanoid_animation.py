@@ -17,6 +17,7 @@ CHARACTER_PATH_CANDIDATES = tuple(
         os.environ.get("HUMANOID_CHARACTER_PATH", "").strip(),
         "/Characters/dab/Rokoko_Video_Character_Skele",
         "/Characters/pick/Rokoko_Video_Character_Skele",
+        "/Characters/humanoid/Armature",
     )
     if path
 )
