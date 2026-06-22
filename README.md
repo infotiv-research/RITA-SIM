@@ -10,7 +10,7 @@ Hamid Ebadi as part of a master thesis at Chalmers University of Technology with
 Environment"**. The thesis evaluates simulation-based motion planning for a gantry-mounted UR10e
 robot in an industrial kitting task, comparing OMPL, cuMotion, cuRobo, and hybrid planning
 approaches in static and dynamic environments. A published version of the thesis is available here:
-[PDF](resources/rita-thesis-MO-EW.pdf).
+[rita-thesis-MO-EW.pdf](resources/rita-thesis-MO-EW.pdf).
 
 <a href="resources/rita-thesis-MO-EW.pdf">
   <img src="resources/rita-thesis-MO-EW-title-page.png" alt="Master thesis title page" width="260">
@@ -22,7 +22,8 @@ This repository has three components:
 - Isaac Sim container for simulation.
 - cuMotion container planning.
 
-[![Isaac sim pick and place with table placement](https://img.youtube.com/vi/ICLsGB9Ihvs/0.jpg)](https://www.youtube.com/watch?v=ICLsGB9Ihvs)
+[![Isaac sim pick and place with table placement](https://img.youtube.com/vi/1CZqq8Toe9c/0.jpg)](https://www.youtube.com/watch?v=1CZqq8Toe9c)
+
 
 ## Prerequisites and dependencies
 
@@ -45,7 +46,7 @@ xhost +local:docker
 and place the gaussian_splats folder in \[`assets/`\] folder. It contains 3D Gaussian Splats that
 are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3dgrut). On the host
 system: Run `./control.sh build_gaussian_splats` to convert all source `.ply` files under `assets/`
-into USDZ files with embedded collision that Isaac Sim can reference.
+into USDZ files with embedded collision that Isaac Sim can reference. [Demo video](https://www.youtube.com/watch?v=ICLsGB9Ihvs)
 
 ## DevContainers
 
