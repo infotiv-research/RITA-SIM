@@ -6,24 +6,19 @@ Operations (GTO).
 
 The current implementation was developed by Elias Wilsborn and Marcus Olsson under supervision of
 Hamid Ebadi as part of a master thesis at Chalmers University of Technology with the title
-**"Collaborative Robotic Arm and Humanoid Interaction for Kitting Tasks in Simulated Factory
-Environment"**. The thesis evaluates simulation-based motion planning for a gantry-mounted UR10e
+[**"Collaborative Robotic Arm and Humanoid Interaction for Kitting Tasks in Simulated Factory
+Environment"**](resources/rita-thesis-MO-EW.pdf). The thesis evaluates simulation-based motion planning for a gantry-mounted UR10e
 robot in an industrial kitting task, comparing OMPL, cuMotion, cuRobo, and hybrid planning
-approaches in static and dynamic environments. A published version of the thesis is available here:
-[rita-thesis-MO-EW.pdf](resources/rita-thesis-MO-EW.pdf).
+approaches in static and dynamic environments.
 
 <a href="resources/rita-thesis-MO-EW.pdf">
   <img src="resources/rita-thesis-MO-EW-title-page.png" alt="Master thesis title page" width="260">
 </a>
 
-This repository has three components:
 
-- ROS 2 container for robot control, MoveIt, and controllers.
-- Isaac Sim container for simulation.
-- cuMotion container planning.
+Click below to watch a demonstration of the system:
 
 [![Isaac sim pick and place with table placement](https://img.youtube.com/vi/1CZqq8Toe9c/0.jpg)](https://www.youtube.com/watch?v=1CZqq8Toe9c)
-
 
 ## Prerequisites and dependencies
 
@@ -48,6 +43,14 @@ are rendered in Isaac Sim 5.1 via NVIDIA [3DGRUT](https://github.com/nv-tlabs/3d
 system: Run `./control.sh build_gaussian_splats` to convert all source `.ply` files under `assets/`
 into USDZ files with embedded collision that Isaac Sim can reference. [Demo video](https://www.youtube.com/watch?v=ICLsGB9Ihvs)
 
+
+
+This repository has three components running on separate containers:
+
+- ROS 2 container for robot control, MoveIt, and controllers.
+- Isaac Sim container for simulation.
+- cuMotion container planning.
+
 ## DevContainers
 
 Open the project in VS Code. If VS Code does not prompt automatically, open command palette
@@ -66,7 +69,7 @@ entrypoints is open a new terminal by going to `Terminal -> New terminal` and ty
 ./control.sh help
 ```
 
-### ROS2
+### 1 - ROS2
 
 > in `UR10 ROS2 DevContainer` vscode container open a new terminal and run the following commands:
 
@@ -84,7 +87,7 @@ Start robot control:
 ./control.sh ros
 ```
 
-### IsaacSim simulation
+### 2 - IsaacSim simulation
 
 > in `IsaacSim DevContainer` vscode container open a new terminal and run the following commands:
 
@@ -118,7 +121,7 @@ available in Isaac Sim through the Content Browser in 'My computer' under`/ros2_
 one to your scene, locate the asset you want and drag it from the Content Browser into the viewport
 or onto the Stage.
 
-### UR10e motion backend
+### 3 - UR10e motion backend
 
 > in `UR10e cuMotion DevContainer` vscode container open a new terminal and run the following
 > commands:
