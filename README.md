@@ -181,7 +181,6 @@ In the cuMotion container, open a new terminal and run the following commands:
 ```bash
 # Default: MoveIt backend with cuMotion pipeline
 ./control.sh pick_and_place
-
 ```
 
 ### Dynamic Environment
@@ -208,21 +207,6 @@ In the Isaac Sim container, open a new terminal to control the humanoid animatio
 ## Automated testing
 
 For the automated test workflow, see [TESTING.md](./TESTING.md).
-
-## Code quality
-
-Install the pre-commit hooks once on the host:
-
-```bash
-sudo apt install pre-commit
-pre-commit install              # runs on git commit
-```
-
-Run all hooks manually against the full repo:
-
-```bash
-pre-commit run --all-files
-```
 
 # Credits
 
@@ -266,12 +250,6 @@ and adapted for this project
 
 This repository vendors the cuRobo ROS packages directly in `src/`:
 
-- `src/curobo_msgs`
-- `src/curobo_ros`
-- `src/curobo_rviz`
-
-These packages originated from the following upstream repositories:
-
-- `curobo_ros`: `https://github.com/Lab-CORO/curobo_ros.git`
-- `curobo_msgs`: `https://github.com/Lab-CORO/curobo_msgs.git`
-- `curobo_rviz`: `https://github.com/Lab-CORO/curobo_rviz.git`
+- [`src/curobo_msgs`](https://github.com/Lab-CORO/curobo_msgs.git)
+- [`src/curobo_ros`](https://github.com/Lab-CORO/curobo_ros.git)
+- [`src/curobo_rviz`](https://github.com/Lab-CORO/curobo_rviz.git)
