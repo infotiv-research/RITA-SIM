@@ -170,12 +170,11 @@ bridge, and the MoveIt Hybrid Planning components in a single command.
 intercepts the MoveGroup action, routes it through the hybrid pipeline, and streams MPC commands to
 the robot.
 
-### Running Control Scenarios
+### Control (Pick and Place) Scenarios
 
 Make sure that a motion backend (preferably curobo or cumotion) is up and running before executing
 the control commands and the **simulation is started**.
 
-#### Pick and Place Scenario
 
 [![SIMLAN demo](https://img.youtube.com/vi/3d-NdI3MTQc/0.jpg)](https://www.youtube.com/watch?v=3d-NdI3MTQc)
 
@@ -190,7 +189,6 @@ In the cuMotion container, open a new terminal and run the following commands:
 
 In the Isaac Sim container, open a new terminal to modify the environment as below
 
-### moving human
 
 [![SIMLAN demo](https://img.youtube.com/vi/47wNTquTGOw/0.jpg)](https://www.youtube.com/watch?v=47wNTquTGOw)
 
