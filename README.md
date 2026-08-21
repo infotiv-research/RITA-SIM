@@ -15,6 +15,9 @@ approaches in static and dynamic environments.
   <img src="resources/rita-thesis-MO-EW-title-page.png" alt="Master thesis title page" width="260">
 </a>
 
+The thesis is also available in the Chalmers ODR:
+[https://hdl.handle.net/20.500.12380/311775](https://hdl.handle.net/20.500.12380/311775)
+
 
 Click below to watch a demonstration of the system:
 
